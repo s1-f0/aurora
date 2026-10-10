@@ -119,6 +119,14 @@ jobs:
       # no stable-pass test may fail reproducibly, and no package's coverage may drop > 0.5 pp.
       - name: Test suite
         run: uv run poe test
+      # The snapshot holds every test's outcome; with it, a red oracle is read, not rerun.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: always()
+        with:
+          name: oracle-suite-snapshot
+          path: tooling-upgrade/snapshots/suite
+          retention-days: 14
+          if-no-files-found: ignore
 
   ty:
     name: ty (advisory)
