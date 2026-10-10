@@ -66,5 +66,6 @@ Fixed in code: the curator benches a lesson only when it showed 10 times or more
 | `AKASHIC_AGENT_ID` | unset | Your agent id. The repo's Claude Code settings set it to `claude`, so all Claude sessions share one id. |
 | `AKASHIC_STORE_BACKEND` | file | Set `sqlite` to keep the durable copy in SQLite. See [Hybrid storage](/docs/concepts/foundations/hybrid-storage). |
 | `AKASHIC_EMBED_THEMES` | unset | Set `1` to find story themes by meaning. Needs the optional embedding model; see [Embeddings](/docs/concepts/memory/ranker-and-distiller). |
+| `AURORA_HOME` | `~/.aurora` | Where each world keeps its local state, such as session logs, the transcript index and the embedded Redis files. Aurora uses `<AURORA_HOME>/<world>` only once that folder exists. Until then the state stays in the repo. |
 
 See [Recall at action](/docs/concepts/memory/recall-at-action), [Recall loop](/docs/concepts/memory/recall-loop) and [Boot](/docs/concepts/memory/boot) for what each part does.
