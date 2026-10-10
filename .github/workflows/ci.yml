@@ -109,8 +109,12 @@ jobs:
         run: |
           uvx --from 'maturin>=1.9,<2' maturin build --release -m aurora-rs/py/Cargo.toml --out "$RUNNER_TEMP/whl"
           cargo build --manifest-path aurora-rs/Cargo.toml -p aurora-linkd
-          echo "ORACLE_WHEELS=$(ls "$RUNNER_TEMP"/whl/*.whl | tr '\n' ' ')" >> "$GITHUB_ENV"
-          echo "AURORA_LINKD=$GITHUB_WORKSPACE/aurora-rs/target/debug/aurora-linkd" >> "$GITHUB_ENV"
+          {
+            printf 'ORACLE_WHEELS='
+            printf '%s ' "$RUNNER_TEMP"/whl/*.whl
+            echo
+            echo "AURORA_LINKD=$GITHUB_WORKSPACE/aurora-rs/target/debug/aurora-linkd"
+          } >> "$GITHUB_ENV"
       # The full suite (REDIS_DB=15) with branch coverage, compared with the g0 baseline:
       # no stable-pass test may fail reproducibly, and no package's coverage may drop > 0.5 pp.
       - name: Test suite
