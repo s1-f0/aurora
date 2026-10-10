@@ -2040,7 +2040,10 @@ def compare_dirs(
     components: Sequence[str] | None = None,
     partial: bool = False,  # noqa: FBT001, RUF100  # positional flag kept: signature probed by the oracle (O5); FBT is ratchet-only
     intended: list[dict[str, Any]] | None = None,
+    detail: list[str] | None = None,
 ) -> tuple[list[str], bool]:
+    """Compare two snapshots, one summary line per component. A DIFF line names its first three
+    items; pass `detail` to collect every open item (key: what changed), one per entry."""
     intended = load_intended() if intended is None else intended
     lines: list[str] = []
     equal = 0
@@ -2081,6 +2084,8 @@ def compare_dirs(
             lines.append("{} EQUAL{}".format(c, " (intended: {})".format(", ".join(ids)) if ids else ""))
         else:
             summary = "; ".join("{}: {}".format(*d) for d in open_[:3])
+            if detail is not None:
+                detail.extend("{} {}: {}".format(c, *d) for d in open_)
             lines.append(f"{c} DIFF {len(open_):d} {summary}")
     lines.append(f"ORACLE: {equal:d}/{len(comps):d} EQUAL")
     return lines, equal == len(comps)
@@ -2101,8 +2106,11 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
 
 def cmd_compare(args: argparse.Namespace) -> int:
     comps = args.components.split(",") if args.components else None
-    lines, ok = compare_dirs(snapshot_dir(args.a), snapshot_dir(args.b), comps, args.partial)
+    detail: list[str] = []
+    lines, ok = compare_dirs(snapshot_dir(args.a), snapshot_dir(args.b), comps, args.partial, detail=detail)
     print("\n".join(lines))
+    if detail:  # CI keeps no snapshot, so the log has to carry every open item
+        print("open items:\n  " + "\n  ".join(detail))
     return 0 if ok else 1
 
 
