@@ -1214,7 +1214,12 @@ def compare_o1(a: dict[str, Any], b: dict[str, Any], partial: bool = False) -> l
         return max((r["counts"].get("skipped", 0) for r in s["runs"]), default=0)
 
     if skips(b) > skips(a):
-        diffs.append(("skips", f"skip count {skips(b):d} > baseline {skips(a):d}"))
+        # name the newcomers: a count alone sends the reader to rerun the suite to find them
+        new = sorted(
+            n for n, t in b["tests"].items() if t["class"] == "skip" and a["tests"].get(n, {}).get("class") != "skip"
+        )
+        named = " (now skipping: {})".format(", ".join(new[:10])) if new else ""
+        diffs.append(("skips", f"skip count {skips(b):d} > baseline {skips(a):d}{named}"))
 
     def cerr(s: dict[str, Any]) -> int:
         return max((len(r["collect_errors"]) for r in s["runs"]), default=0)
