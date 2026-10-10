@@ -4,7 +4,7 @@ Status: current
 Class: reference
 
 > Do NOT edit by hand. Regenerate with `py scripts/generators/gen_physics_sheet.py`.
-> Derived at 94d2ba4f. A bound you discover by collision is not awareness -- this sheet
+> Derived at dbf9045c. A bound you discover by collision is not awareness -- this sheet
 > exists so every clip, cap, timeout and flag is READABLE before it is HIT.
 > Dynamic envelopes (throughput, latency, limits-under-load) are NOT here: they require
 > measurement, not grep -- see the master-map charter M2b (benchmark half).
@@ -197,7 +197,6 @@ Class: reference
 | `AURORA_ORACLE_OUT` | `` | tooling-upgrade/pytest_plugin/aurora_oracle_plugin.py |
 | `AURORA_RELEASE_BASE` | `` | aurora-cli/src/aurora_cli/bundle.py |
 | `AURORA_REPO` | `` | aurora-cli/src/aurora_cli/launcher.py |
-| `AURORA_RS_FIND_LINKS` | `` | aurora-cli/src/aurora_cli/bundle.py |
 | `BIFROST_AGENT` | `` | scripts/wire_journal.py |
 | `BIFROST_AGENT_ID` | `` | core/comm/conductor_gate.py |
 | `BIFROST_APPROACHING_WEDGE_SECONDS` | `"150"` | core/comm/liveness.py |
@@ -269,6 +268,7 @@ Class: reference
 | `GETSONGBPM_API_KEY` | `` | arsenal/keylab/tempo.py |
 | `GET_SONG_BPM_KEY` | `` | arsenal/keylab/tempo.py |
 | `GITHUB_ACTIONS` | `` | scripts/rust_gate.py |
+| `GITHUB_REPOSITORY` | `` | scripts/release/releases.py |
 | `GIT_AUTHOR_NAME` | `` | scripts/mirror.py |
 | `KIMI_API_KEY` | `` | scripts/kimi_chat.py |
 | `KIMI_BASE_URL` | `"https://api.moonshot.ai/v1"` | core/comm/ask.py |
@@ -331,7 +331,7 @@ Class: reference
 | `TMP` | `` | agent/harness/hooks/snippet_autofile.py |
 | `XDG_CACHE_HOME` | `` | core/tools/locate.py |
 
-## Mechanical bounds (394 numeric constants)
+## Mechanical bounds (395 numeric constants)
 
 | Constant | Value | Site | Note |
 |---|---|---|---|
@@ -581,6 +581,7 @@ Class: reference
 | `MUD_FLOOR` | 55 | arsenal/band.py | G3: no minor second is stacked with its lower note under this |
 | `NAME_MAX` | 24 | arsenal/jam/schemas.py |  |
 | `NEIGHBOUR_STEP_MS` | 1,200 | arsenal/practice.py | ...or a step away from one note and back to it, each at most this far apart in time |
+| `NOTES_LIMIT` | 60,000 | scripts/release/releases.py |  |
 | `NUDGE_TTL` | 120 | core/comm/nudge.py | a nudge auto-expires so a missed pick-up never sticks |
 | `NUMBER_MAX` | 24 | arsenal/jam/schemas.py |  |
 | `ONSET_GROUP_MS` | 50 | arsenal/practice.py | note-ons within 50 ms of a group's first onset are one attack (a window can start there) |

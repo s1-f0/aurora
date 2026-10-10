@@ -217,8 +217,26 @@ def sync(root: Path, version: str) -> None:
     if rc != 0:
         raise SystemExit(f"aurora: `{' '.join(cmd)}` failed (exit {rc}).")
     install_accel(root, version)
-    install_accel(root, version, package=LINKD_PACKAGE, missing="fleet links (`aurora link`) stay off on this machine")
+    install_accel(
+        root,
+        version,
+        package=LINKD_PACKAGE,
+        missing="fleet links (`aurora link`) stay off on this machine",
+        find_links_env="AURORA_LINKD_FIND_LINKS",
+    )
     _sync_marker(root).write_text(_lock_digest(root), encoding="utf-8")
+
+
+def _release_index(version: str) -> str | None:
+    """The release's own asset list as a package index: GitHub serves every asset of a release
+    as links on releases/expanded_assets/<tag>, which uv reads with --find-links. So the wheels
+    attached to the release install even before (or without) PyPI publishing."""
+    base = release_base(version)
+    marker = "/releases/download/"
+    if base.startswith("https://github.com/") and marker in base:
+        repo, tag = base.split(marker, 1)
+        return f"{repo}/releases/expanded_assets/{tag}"
+    return None
 
 
 def install_accel(
@@ -227,11 +245,12 @@ def install_accel(
     *,
     package: str = ACCEL_PACKAGE,
     missing: str = "using the pure-Python paths (same results)",
+    find_links_env: str = "AURORA_RS_FIND_LINKS",
 ) -> bool:
     """Best effort: a Rust wheel matching this release (the aurora-rs accelerator, or the linkd
     daemon). Aurora runs without either, so a miss is a note, never an error."""
     cmd = [uv_bin(), "pip", "install", "--quiet", "--python", str(venv_python(root)), "--only-binary", ":all:"]
-    links = (os.environ.get("AURORA_RS_FIND_LINKS") or "").strip()
+    links = (os.environ.get(find_links_env) or "").strip() or _release_index(version)
     if links:
         cmd += ["--find-links", links]
     cmd.append(f"{package}=={version}")
