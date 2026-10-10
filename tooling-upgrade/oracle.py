@@ -981,6 +981,17 @@ def run_tree(ref: str, python: str | None = None) -> Generator[Path, None, None]
             check=True,
             timeout=1800,
         )
+        # Optional builds the caller made (CI: the aurora-rs wheel), installed into this venv so
+        # the tests that need them run instead of skipping. Space-separated wheel paths.
+        wheels = (os.environ.get("ORACLE_WHEELS") or "").split()
+        if wheels:
+            run(
+                ["uv", "pip", "install", "--quiet", "--python", str(venv_python(tree)), *wheels],
+                cwd=tree,
+                env=oracle_env(),
+                check=True,
+                timeout=600,
+            )
         yield tree
     finally:
         _rmtree(base)
