@@ -69,14 +69,52 @@ jobs:
       - name: Door-parity guardrail (CLI<->MCP verb surface)
         run: uv run poe guardrails --only check_door_parity
 
-  test:
-    name: Test suite (poe test)
+  rs-build:
+    # One build of the Rust pieces the suite needs, shared by every shard. The suite's Rust-backed
+    # tests (accel parity, the PyO3 surface, fleet links end to end) skip without them.
+    name: Build the aurora-rs wheel and aurora-linkd
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          version: "0.12.21"
+          enable-cache: true
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
+        with:
+          workspaces: "aurora-rs -> target"
+          shared-key: rs-build
+      - name: Build
+        run: |
+          uvx --from 'maturin>=1.9,<2' maturin build --release -m aurora-rs/py/Cargo.toml --out "$RUNNER_TEMP/rs"
+          cargo build --manifest-path aurora-rs/Cargo.toml -p aurora-linkd
+          cp aurora-rs/target/debug/aurora-linkd "$RUNNER_TEMP/rs/"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: rs-build
+          path: ${{ runner.temp }}/rs
+          retention-days: 3
+
+  suite:
+    # The full suite (REDIS_DB=15) in one pass per shard, under branch coverage and with the O1
+    # outcome plugin (oracle.py suite-shard); `test` below merges the shards and compares with g0.
+    # A public repo's runners are free, so wall time is bought with width.
+    name: Test suite shard ${{ matrix.shard }}/8
+    needs: rs-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     env:
       AI_SETUP: ${{ github.workspace }}
       REDIS_HOST: localhost
       REDIS_PORT: "16379"
+      SHARD: ${{ matrix.shard }}/8
     services:
       redis:
         image: redis:7
@@ -100,25 +138,51 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync --locked
-      # The suite's Rust-backed tests (accel parity, the PyO3 surface, fleet links end to end)
-      # skip without the wheel and the daemon; build both so they run here too.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          workspaces: "aurora-rs -> target"
-      - name: Build the aurora-rs wheel and aurora-linkd
+          name: rs-build
+          path: ${{ runner.temp }}/rs
+      - name: Point the oracle at the Rust builds
         run: |
-          uvx --from 'maturin>=1.9,<2' maturin build --release -m aurora-rs/py/Cargo.toml --out "$RUNNER_TEMP/whl"
-          cargo build --manifest-path aurora-rs/Cargo.toml -p aurora-linkd
+          chmod +x "$RUNNER_TEMP/rs/aurora-linkd"
           {
             printf 'ORACLE_WHEELS='
-            printf '%s ' "$RUNNER_TEMP"/whl/*.whl
+            printf '%s ' "$RUNNER_TEMP"/rs/*.whl
             echo
-            echo "AURORA_LINKD=$GITHUB_WORKSPACE/aurora-rs/target/debug/aurora-linkd"
+            echo "AURORA_LINKD=$RUNNER_TEMP/rs/aurora-linkd"
           } >> "$GITHUB_ENV"
-      # The full suite (REDIS_DB=15) with branch coverage, compared with the g0 baseline:
-      # no stable-pass test may fail reproducibly, and no package's coverage may drop > 0.5 pp.
-      - name: Test suite
-        run: uv run poe test
+      - name: Suite shard
+        run: uv run python tooling-upgrade/oracle.py suite-shard "$SHARD" --out "$RUNNER_TEMP/shard"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: suite-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/shard
+          retention-days: 3
+
+  test:
+    # No stable-pass test may fail reproducibly, and no package's coverage may drop > 0.5 pp.
+    name: Test suite (poe test)
+    needs: suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          version: "0.12.21"
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: suite-shard-*
+          path: ${{ runner.temp }}/shards
+      - name: Merge the shards and compare with g0
+        run: |
+          uv run python tooling-upgrade/oracle.py suite-merge suite "$RUNNER_TEMP"/shards/*
+          uv run python tooling-upgrade/oracle.py compare g0 suite --components O1,O10
       # The snapshot holds every test's outcome; with it, a red oracle is read, not rerun.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: always()

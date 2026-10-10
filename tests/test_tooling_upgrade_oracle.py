@@ -836,3 +836,73 @@ def test_an_escaped_exclusion_entry_discounts_nothing():
     """With any backslash in pyproject.toml, parsed entries may differ from their raw text: fail closed."""
     text = '[tool.ruff]\nextend-exclude = ["research\\\\a\\\\b.py"]\n[tool.poe.tasks]\nx = "python research/a/b.py"\n'
     assert O.only_in_exclusions("pyproject.toml", text) == (set(), set())
+
+
+# ----------------------------------------------------------------------------- sharded suite (CI)
+
+
+def test_shard_plan_covers_every_file_once_and_balances_by_measured_time():
+    """Each file lands in exactly one shard; a measured slow file gets a shard to itself."""
+    files = {f"tests/test_{i:02d}.py": 10 for i in range(12)}
+    durations = {"tests/test_00.py": 600.0, **{f"tests/test_{i:02d}.py": 10.0 for i in range(1, 12)}}
+    plan = O.shard_plan(files, 3, durations)
+    assert sorted(f for s in plan for f in s) == sorted(files)
+    assert ["tests/test_00.py"] in plan
+    assert O.shard_plan(files, 3, durations) == plan  # deterministic
+
+
+def test_shard_plan_without_durations_weighs_by_test_count():
+    """With no measurements, a file's weight is its test count."""
+    plan = O.shard_plan({"tests/test_big.py": 100, "tests/test_a.py": 50, "tests/test_b.py": 50}, 2, {})
+    assert sorted(plan) == [["tests/test_a.py", "tests/test_b.py"], ["tests/test_big.py"]]
+
+
+def test_durations_sum_per_file_from_junit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """junit classnames (module path plus test classes) become per-file seconds."""
+    xml = tmp_path / "j.xml"
+    xml.write_text(
+        '<testsuites><testsuite><testcase classname="tests.test_a" name="t1" time="1.5"/>'
+        '<testcase classname="tests.test_a.TestThing" name="t2" time="2.0"/>'
+        '<testcase classname="tests.sub.test_b" name="t3" time="0.25"/></testsuite></testsuites>',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(O, "DURATIONS", tmp_path / "durations.json")
+    assert O.write_durations([xml]) == {"tests/test_a.py": 3.5, "tests/sub/test_b.py": 0.25}
+    assert json.loads((tmp_path / "durations.json").read_text(encoding="utf-8"))["tests/test_a.py"] == 3.5
+
+
+def test_suite_merge_refuses_a_missing_shard(tmp_path: Path):
+    """A merge with a shard missing would read as tests no longer collected: refuse it."""
+    for i in (1, 3):
+        d = tmp_path / f"s{i:d}"
+        d.mkdir()
+        (d / "shard.json").write_text(json.dumps({"shard": [i, 3]}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="every shard must be present"):
+        O.suite_merge("x", [tmp_path / "s1", tmp_path / "s3"])
+
+
+def test_suite_merge_joins_shards_into_one_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Outcomes and collection errors from every shard become one O1 run, as a single pass would."""
+    for i, (nid, out) in enumerate((("tests/test_a.py::t", "passed"), ("tests/test_b.py::t", "failed")), 1):
+        d = tmp_path / f"s{i:d}"
+        d.mkdir()
+        run = {
+            "results": {nid: {"setup": "passed", "call": out}},
+            "collect_errors": ["tests/test_c.py"] if i == 2 else [],
+            "exitstatus": 0 if i == 1 else 1,
+            "duration_s": 10.0 * i,
+        }
+        tests = {nid: {"outcomes": [out]} | ({"reruns": ["failed", "failed"]} if out == "failed" else {})}
+        (d / "shard.json").write_text(json.dumps({"shard": [i, 2], "run": run, "tests": tests}), encoding="utf-8")
+    monkeypatch.setattr(O, "SNAPSHOTS", tmp_path / "snaps")
+    monkeypatch.setattr(O, "run_tree", lambda _c: __import__("contextlib").nullcontext(tmp_path))
+    monkeypatch.setattr(O, "run", lambda *a, **k: None)
+    monkeypatch.setattr(O, "git", lambda *a, **k: "c0ffee\n")
+    monkeypatch.setattr(O, "relevant_digest", lambda _c: "d1g3st")
+    monkeypatch.setattr(O, "o10_record", lambda *a: {"packages": {"core": 70.0}})
+    dest = O.suite_merge("suite", [tmp_path / "s1", tmp_path / "s2"])
+    o1 = json.loads((dest / "O1.json").read_text(encoding="utf-8"))
+    assert o1["runs"][0]["counts"] == {"failed": 1, "passed": 1}
+    assert o1["runs"][0]["collect_errors"] == ["tests/test_c.py"]
+    assert o1["tests"]["tests/test_b.py::t"]["class"] == O.o1_class(["failed"])
+    assert json.loads((dest / "O10.json").read_text(encoding="utf-8"))["packages"] == {"core": 70.0}

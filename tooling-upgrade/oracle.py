@@ -1080,8 +1080,13 @@ def suite_runs(tree: Path, raw: Path, runs: int, reruns: int, select: Sequence[s
     for i, data in enumerate(run_data):
         for nid, rec in data["results"].items():
             tests.setdefault(nid, {"outcomes": [None] * runs})["outcomes"][i] = _final_outcome(rec)
-    # Every id that did not pass somewhere is rerun alone, twice, so "fails reproducibly" is a
-    # measured fact rather than a single-run accident.
+    rerun_failures(tree, raw, tests, reruns)
+    return o1_record(run_data, side_effects, tests)
+
+
+def rerun_failures(tree: Path, raw: Path, tests: dict[str, dict[str, Any]], reruns: int) -> None:
+    """Every id that did not pass somewhere is rerun alone, `reruns` times, so "fails
+    reproducibly" is a measured fact rather than a single-run accident."""
     todo = [n for n, t in tests.items() if not all(o in ("passed", "skipped", "xfailed") for o in t["outcomes"] if o)]
     progress(f"O1 isolated reruns: {len(todo):d} ids x {reruns:d}")
     for k, nid in enumerate(sorted(todo)):
@@ -1095,9 +1100,14 @@ def suite_runs(tree: Path, raw: Path, runs: int, reruns: int, select: Sequence[s
             out.parent.mkdir(parents=True, exist_ok=True)
             _r, d = _pytest(tree, [nid, "-q", "-p", "no:cacheprovider", "-p", "no:randomly"], out, 600)
             rerun_outcomes.append(_final_outcome(d["results"].get(nid, {})))
+
+
+def o1_record(
+    run_data: list[dict[str, Any]], side_effects: list[list[str]], tests: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """O1.json from raw run records (plugin output) and per-id outcomes (with reruns)."""
     for t in tests.values():
         t["class"] = o1_class(t["outcomes"])
-    tests = {public_id(k): v for k, v in tests.items()}
     return {
         "runs": [
             {
@@ -1109,7 +1119,7 @@ def suite_runs(tree: Path, raw: Path, runs: int, reruns: int, select: Sequence[s
             }
             for d, fx in zip(run_data, side_effects, strict=False)
         ],
-        "tests": tests,
+        "tests": {public_id(k): v for k, v in tests.items()},
     }
 
 
@@ -1879,6 +1889,12 @@ def surface_o10(tree: Path, raw: Path, select: Sequence[str] = ()) -> dict[str, 
         *select,
     ]
     r = run_logged(cmd, raw / "O10-run.log", cwd=tree, env=env, timeout=SUITE_TIMEOUT_S)
+    return o10_record(tree, raw, data, r.returncode)
+
+
+def o10_record(tree: Path, raw: Path, data: Path, suite_exitstatus: int) -> dict[str, Any]:
+    """O10.json from a coverage data file measured in `tree`: per-package line+branch percent."""
+    env = oracle_env()
     js = raw / "coverage.json"
     run(
         [
@@ -1914,7 +1930,7 @@ def surface_o10(tree: Path, raw: Path, select: Sequence[str] = ()) -> dict[str, 
         a[0] += s["covered_lines"] + s.get("covered_branches", 0)
         a[1] += s["num_statements"] + s.get("num_branches", 0)
     pct = {k: round(100.0 * c / t, 2) if t else 100.0 for k, (c, t) in sorted(agg.items())}
-    return {"packages": pct, "suite_exitstatus": r.returncode, "coverage_version": COVERAGE_VERSION}
+    return {"packages": pct, "suite_exitstatus": suite_exitstatus, "coverage_version": COVERAGE_VERSION}
 
 
 def compare_o10(a: dict[str, Any], b: dict[str, Any], partial: bool = False) -> list[tuple[str, str]]:  # noqa: FBT001, RUF100  # positional flag kept: signature probed by the oracle (O5); FBT is ratchet-only
@@ -2024,6 +2040,195 @@ def snapshot(
     return dest
 
 
+# ----------------------------------------------------------------------------- sharded suite (CI)
+#
+# `poe test` runs the suite twice on one machine: once under coverage (O10), once for outcomes
+# (O1). CI instead runs ONE pass per shard, under coverage and with the outcome plugin, on as many
+# runners as it likes, then merges: the same O1.json and O10.json, so `compare` is unchanged.
+# Each shard reruns its own failures in isolation, exactly as suite_runs does.
+
+DURATIONS = HERE / "test-durations.json"
+
+
+def collect_test_files(tree: Path) -> dict[str, int]:
+    """{test file: collected tests} as pytest itself collects the suite. A file that fails
+    collection counts 1, so it still lands in a shard and reports its error there."""
+    r = run(
+        [venv_python(tree), "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", "-p", "no:randomly"],
+        cwd=tree,
+        env=oracle_env(),
+        timeout=1800,
+    )
+    files: dict[str, int] = {}
+    for line in r.stdout.splitlines():
+        counted = re.fullmatch(r"(\S+\.py): (\d+)", line.strip())  # -qq (addopts already has -q)
+        if counted:
+            files[counted.group(1)] = int(counted.group(2))
+        elif "::" in line and not line.startswith(" "):  # node ids, at plain -q
+            f = line.split("::", 1)[0]
+            files[f] = files.get(f, 0) + 1
+        m = re.search(r"ERROR collecting (\S+\.py)", line)
+        if m:
+            files.setdefault(m.group(1), 1)
+    if not files:  # an empty split would hand pytest no paths, and pytest would run EVERYTHING
+        raise SystemExit("collect_test_files: pytest --collect-only listed no test files:\n" + r.stdout[-2000:])
+    return files
+
+
+def shard_plan(files: dict[str, int], total: int, durations: dict[str, float]) -> list[list[str]]:
+    """Split test files into `total` shards that should finish together: longest first, each to
+    the lightest shard. A file's weight is its measured seconds (test-durations.json), else the
+    median seconds per test times its test count. Deterministic for a given tree."""
+    rates = sorted(durations[f] / n for f, n in files.items() if f in durations and n)
+    per_test = rates[len(rates) // 2] if rates else 1.0
+    weight = {f: durations.get(f, per_test * n) for f, n in files.items()}
+    shards: list[list[str]] = [[] for _ in range(total)]
+    load = [0.0] * total
+    for f in sorted(weight, key=lambda f: (-weight[f], f)):
+        i = min(range(total), key=lambda k: (load[k], k))
+        shards[i].append(f)
+        load[i] += weight[f]
+    return [sorted(x) for x in shards]
+
+
+def suite_shard(index: int, total: int, out: Path, reruns: int = 2) -> dict[str, Any]:
+    """Run shard `index` of `total` (1-based) in a throwaway tree of HEAD: one pytest pass under
+    coverage with the O1 plugin, then isolated reruns of its failures. Writes `out`/shard.json
+    and `out`/coverage.data (plus the junit XML and the log)."""
+    out.mkdir(parents=True, exist_ok=True)
+    with run_tree(git("rev-parse", "HEAD").strip()) as t:
+        files = collect_test_files(t)
+        durations: dict[str, float] = load_json(DURATIONS) if DURATIONS.exists() else {}
+        mine = shard_plan(files, total, durations)[index - 1]
+        if not mine:
+            raise SystemExit(f"shard {index:d}/{total:d} has no test files ({len(files):d} files, {total:d} shards)")
+        progress(f"shard {index:d}/{total:d}: {len(mine):d} of {len(files):d} test files")
+        results = out / "results.json"
+        env = oracle_env({"PYTHONPATH": str(PLUGIN_DIR), "AURORA_ORACLE_OUT": str(results)})
+        cmd = [
+            "uv",
+            "run",
+            "--frozen",
+            "--with",
+            "coverage==" + COVERAGE_VERSION,
+            "python",
+            "-m",
+            "coverage",
+            "run",
+            "--branch",
+            "--source=" + ",".join(COVERAGE_SOURCES),
+            "--data-file=" + str(out / "coverage.data"),
+            "-m",
+            "pytest",
+            "-q",
+            "-rfE",
+            "-p",
+            "no:cacheprovider",
+            "--continue-on-collection-errors",
+            "--junitxml=" + str(out / "junit.xml"),
+            "-p",
+            "aurora_oracle_plugin",
+            *mine,
+        ]
+        t0 = time.time()
+        r = run_logged(cmd, out / "run.log", cwd=t, env=env, timeout=SUITE_TIMEOUT_S)
+        data: dict[str, Any] = (
+            load_json(results)
+            if results.exists()
+            else {"results": {}, "collect_errors": [], "exitstatus": r.returncode}
+        )
+        data["duration_s"] = round(time.time() - t0, 1)
+        tests = {nid: {"outcomes": [_final_outcome(rec)]} for nid, rec in data["results"].items()}
+        rerun_failures(t, out, tests, reruns)
+    record = {"shard": [index, total], "files": mine, "run": data, "tests": tests}
+    dump_json(out / "shard.json", record)
+    return record
+
+
+def suite_merge(label: str, shard_dirs: Sequence[Path]) -> Path:
+    """Merge every shard of one sharded pass into snapshots/<label>/ O1.json and O10.json: the
+    same records a single-machine `snapshot <label> --components O1,O10 --runs 1` writes."""
+    shards = [load_json(d / "shard.json") for d in shard_dirs]
+    total = {s["shard"][1] for s in shards}
+    got = sorted(s["shard"][0] for s in shards)
+    if len(total) != 1 or got != list(range(1, next(iter(total)) + 1)):
+        raise SystemExit(f"suite-merge: shards {got} of {sorted(total)} -- every shard must be present once")
+    dest = SNAPSHOTS / label
+    raw = dest / "raw"
+    raw.mkdir(parents=True, exist_ok=True)
+    commit = git("rev-parse", "HEAD").strip()
+    runs = [s["run"] for s in shards]
+    exitstatus = max(int(r["exitstatus"]) for r in runs)
+    merged: dict[str, Any] = {
+        "results": {k: v for r in runs for k, v in r["results"].items()},
+        "collect_errors": sorted({e for r in runs for e in r["collect_errors"]}),
+        "exitstatus": exitstatus,
+        "duration_s": max(float(r["duration_s"]) for r in runs),
+    }
+    tests = {k: v for s in shards for k, v in s["tests"].items()}
+    common: dict[str, Any] = {
+        "commit": commit,
+        "digest": relevant_digest(commit),
+        "dirty": False,
+        "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "select": [],
+        "partial_modules": None,
+        "shards": len(shards),
+    }
+    with run_tree(commit) as t:  # coverage json reads the sources at the paths the shards measured
+        data = raw / ".coverage"
+        run(
+            [
+                "uv",
+                "run",
+                "--frozen",
+                "--with",
+                "coverage==" + COVERAGE_VERSION,
+                "python",
+                "-m",
+                "coverage",
+                "combine",
+                "--keep",
+                "--data-file=" + str(data),
+                *[str(d / "coverage.data") for d in shard_dirs],
+            ],
+            cwd=t,
+            env=oracle_env(),
+            check=True,
+            timeout=600,
+        )
+        o10 = o10_record(t, raw, data, exitstatus)
+    o1 = o1_record([merged], [[]], tests)
+    for comp, rec in (("O1", o1), ("O10", o10)):
+        rec["_meta"] = common
+        dump_json(dest / (comp + ".json"), rec)
+        progress(f"{comp} merged from {len(shards):d} shards")
+    meta_path = dest / "meta.json"
+    meta: dict[str, Any] = load_json(meta_path) if meta_path.exists() else {}
+    meta.update({"label": label, "commit": commit, "digest": common["digest"], "dirty": False, "shards": len(shards)})
+    meta["suite_runs"], meta["reruns"] = 1, 2
+    dump_json(meta_path, meta)
+    return dest
+
+
+def write_durations(junit_files: Sequence[Path]) -> dict[str, float]:
+    """Per-file seconds from junit XML (the shards' own), written to test-durations.json for the
+    next split. pytest's junit classname is the dotted module path plus any test classes."""
+    import xml.etree.ElementTree as ET  # only this maintenance command parses junit
+
+    secs: dict[str, float] = {}
+    for jf in junit_files:
+        for case in ET.parse(jf).getroot().iter("testcase"):
+            parts = (case.get("classname") or "").split(".")
+            while parts and parts[-1][:1].isupper():  # TestSomething classes, not modules
+                parts.pop()
+            if parts and parts[0]:
+                f = "/".join(parts) + ".py"
+                secs[f] = round(secs.get(f, 0.0) + float(case.get("time") or 0.0), 2)
+    dump_json(DURATIONS, dict(sorted(secs.items())))
+    return secs
+
+
 COMPARATORS = {
     "O1": compare_o1,
     "O3": compare_o3,
@@ -2117,6 +2322,26 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
     sel = tuple(args.select.split(",")) if args.select else ()
     dest = snapshot(args.label, args.ref, args.runs, args.reruns, comps, mods, select=sel, python=args.python)
     print(f"snapshot written: {dest.relative_to(ROOT)}")
+    return 0
+
+
+def cmd_suite_shard(args: argparse.Namespace) -> int:
+    index, total = (int(x) for x in args.shard.split("/"))
+    if not 1 <= index <= total:
+        raise SystemExit(f"suite-shard: {args.shard} is not INDEX/TOTAL with 1 <= INDEX <= TOTAL")
+    suite_shard(index, total, Path(args.out).resolve(), args.reruns)
+    return 0
+
+
+def cmd_suite_merge(args: argparse.Namespace) -> int:
+    dest = suite_merge(args.label, [Path(d).resolve() for d in args.dirs])
+    print(f"snapshot written: {dest.relative_to(ROOT)}")
+    return 0
+
+
+def cmd_durations(args: argparse.Namespace) -> int:
+    secs = write_durations([Path(j) for j in args.junit])
+    print(f"{DURATIONS.relative_to(ROOT)}: {len(secs):d} files, {sum(secs.values()):.0f} s")
     return 0
 
 
@@ -2583,6 +2808,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     s.add_argument("--modules", help="restrict O3/O5 to these modules (impacted oracle)")
     s.add_argument("--select", help="test paths for O1/O10 (smoke only; verify-snapshot rejects it)")
     s.add_argument("--python", help="interpreter for the tree's venv (G1.P2 candidates)")
+    s = sub.add_parser("suite-shard", help="CI: one shard of the suite (coverage + outcomes in one pass)")
+    s.add_argument("shard", help="INDEX/TOTAL, 1-based (e.g. 3/8)")
+    s.add_argument("--out", required=True)
+    s.add_argument("--reruns", type=int, default=2)
+    s = sub.add_parser("suite-merge", help="CI: merge suite-shard outputs into snapshots/<label>/")
+    s.add_argument("label")
+    s.add_argument("dirs", nargs="+")
+    s = sub.add_parser("durations", help="write test-durations.json from junit XML (the shards' own)")
+    s.add_argument("junit", nargs="+")
     s = sub.add_parser("compare", help="compare two snapshots component by component")
     s.add_argument("a")
     s.add_argument("b")
@@ -2613,6 +2847,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "inventory": cmd_inventory,
         "snapshot": cmd_snapshot,
         "compare": cmd_compare,
+        "suite-shard": cmd_suite_shard,
+        "suite-merge": cmd_suite_merge,
+        "durations": cmd_durations,
         "ast-equal": cmd_ast_equal,
         "impacted": cmd_impacted,
         "verify-snapshot": cmd_verify_snapshot,
