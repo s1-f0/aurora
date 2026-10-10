@@ -845,7 +845,7 @@
 | tests/test_task_ledger.py | 232 | `pyright: ignore[reportAttributeAccessIssue]` | optional surface, hasattr-probed |
 | tests/test_task_ledger.py | 236 | `ty: ignore[redundant-condition]` | ledger_view is an optional, hasattr-probed surface |
 | tests/test_tooling_upgrade_oracle.py | 1 | `pyright: strict` |  |
-| tests/test_tooling_upgrade_oracle.py | 422 | `noqa: FBT001, RUF100` | pytest parametrize value, passed by pytest; FBT is ratchet-only |
+| tests/test_tooling_upgrade_oracle.py | 423 | `noqa: FBT001, RUF100` | pytest parametrize value, passed by pytest; FBT is ratchet-only |
 | tests/test_vault_refuses_mangled_paste.py | 30 | `noqa: E402` | sys.path bootstrap |
 | tests/test_w06_stdin_send.py | 15 | `noqa: E402` | sys.path bootstrap |
 | tests/test_w06_stdin_send.py | 63 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
@@ -902,6 +902,6 @@
 | tooling-upgrade/oracle.py | 1834 | `noqa: PT028` | not a pytest test: the O9 capture |
 | tooling-upgrade/oracle.py | 1851 | `noqa: FBT001, RUF100` | positional flag kept: signature probed by the oracle (O5); FBT is ratchet-only |
 | tooling-upgrade/oracle.py | 1936 | `noqa: FBT001, RUF100` | positional flag kept: signature probed by the oracle (O5); FBT is ratchet-only |
-| tooling-upgrade/oracle.py | 2262 | `noqa: FBT001, RUF100` | positional flag kept: signature probed by the oracle (O5); FBT is ratchet-only |
-| tooling-upgrade/oracle.py | 2461 | `noqa: T201` | CLI output: the guardrails verdict line |
+| tooling-upgrade/oracle.py | 2263 | `noqa: FBT001, RUF100` | positional flag kept: signature probed by the oracle (O5); FBT is ratchet-only |
+| tooling-upgrade/oracle.py | 2462 | `noqa: T201` | CLI output: the guardrails verdict line |
 | tooling-upgrade/pytest_plugin/aurora_oracle_plugin.py | 1 | `pyright: strict` |  |

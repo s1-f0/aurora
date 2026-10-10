@@ -2050,38 +2050,25 @@ def snapshot(
 DURATIONS = HERE / "test-durations.json"
 
 
-def collect_test_files(tree: Path) -> dict[str, int]:
-    """{test file: collected tests} as pytest itself collects the suite. A file that fails
-    collection counts 1, so it still lands in a shard and reports its error there."""
-    r = run(
-        [venv_python(tree), "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", "-p", "no:randomly"],
-        cwd=tree,
-        env=oracle_env(),
-        timeout=1800,
-    )
-    files: dict[str, int] = {}
-    for line in r.stdout.splitlines():
-        counted = re.fullmatch(r"(\S+\.py): (\d+)", line.strip())  # -qq (addopts already has -q)
-        if counted:
-            files[counted.group(1)] = int(counted.group(2))
-        elif "::" in line and not line.startswith(" "):  # node ids, at plain -q
-            f = line.split("::", 1)[0]
-            files[f] = files.get(f, 0) + 1
-        m = re.search(r"ERROR collecting (\S+\.py)", line)
-        if m:
-            files.setdefault(m.group(1), 1)
-    if not files:  # an empty split would hand pytest no paths, and pytest would run EVERYTHING
-        raise SystemExit("collect_test_files: pytest --collect-only listed no test files:\n" + r.stdout[-2000:])
-    return files
+#: The test files that need the aurora-rs wheel or aurora-linkd. They run as shard 0, in CI's
+#: build job, so the other shards start without waiting for a Rust build.
+RUST_BACKED = ("tests/test_accel_parity.py", "tests/test_link_daemon_e2e.py", "tests/test_link_pyo3_surface.py")
 
 
-def shard_plan(files: dict[str, int], total: int, durations: dict[str, float]) -> list[list[str]]:
+def test_files(tree: Path) -> list[str]:
+    """Every file pytest's default patterns would collect under tests/ (conftest's collect_ignore
+    still applies when pytest is handed the path). A glob, not a collection: no imports."""
+    found = {p for pat in ("test_*.py", "*_test.py") for p in (tree / "tests").rglob(pat)}
+    return sorted(p.relative_to(tree).as_posix() for p in found)
+
+
+def shard_plan(files: Sequence[str], total: int, durations: dict[str, float]) -> list[list[str]]:
     """Split test files into `total` shards that should finish together: longest first, each to
-    the lightest shard. A file's weight is its measured seconds (test-durations.json), else the
-    median seconds per test times its test count. Deterministic for a given tree."""
-    rates = sorted(durations[f] / n for f, n in files.items() if f in durations and n)
-    per_test = rates[len(rates) // 2] if rates else 1.0
-    weight = {f: durations.get(f, per_test * n) for f, n in files.items()}
+    the lightest shard. A file weighs its measured seconds (test-durations.json); a file with no
+    measurement weighs the median measured file. Deterministic for a given file list."""
+    known = sorted(durations[f] for f in files if f in durations)
+    default = known[len(known) // 2] if known else 1.0
+    weight = {f: durations.get(f, default) for f in files}
     shards: list[list[str]] = [[] for _ in range(total)]
     load = [0.0] * total
     for f in sorted(weight, key=lambda f: (-weight[f], f)):
@@ -2091,18 +2078,27 @@ def shard_plan(files: dict[str, int], total: int, durations: dict[str, float]) -
     return [sorted(x) for x in shards]
 
 
-def suite_shard(index: int, total: int, out: Path, reruns: int = 2) -> dict[str, Any]:
-    """Run shard `index` of `total` (1-based) in a throwaway tree of HEAD: one pytest pass under
-    coverage with the O1 plugin, then isolated reruns of its failures. Writes `out`/shard.json
-    and `out`/coverage.data (plus the junit XML and the log)."""
+def shard_files(tree: Path, index: int, total: int) -> list[str]:
+    """Shard 0 is RUST_BACKED; shards 1..total split the rest by measured time."""
+    files = test_files(tree)
+    if index == 0:
+        return [f for f in RUST_BACKED if f in files]
+    durations: dict[str, float] = load_json(DURATIONS) if DURATIONS.exists() else {}
+    rest = [f for f in files if f not in RUST_BACKED]
+    return shard_plan(rest, total, durations)[index - 1]
+
+
+def suite_shard(index: int, total: int, out: Path, reruns: int = 2, baseline: str | None = None) -> dict[str, Any]:
+    """Run shard `index` of `total` in a throwaway tree of HEAD: one pytest pass under coverage
+    with the O1 plugin, then isolated reruns of its failures. With `baseline`, only failures that
+    were stable-pass there are rerun: compare_o1 asks "fails reproducibly" of no other test.
+    Writes `out`/shard.json and `out`/coverage.data (plus the junit XML and the log)."""
     out.mkdir(parents=True, exist_ok=True)
     with run_tree(git("rev-parse", "HEAD").strip()) as t:
-        files = collect_test_files(t)
-        durations: dict[str, float] = load_json(DURATIONS) if DURATIONS.exists() else {}
-        mine = shard_plan(files, total, durations)[index - 1]
+        mine = shard_files(t, index, total)
         if not mine:
-            raise SystemExit(f"shard {index:d}/{total:d} has no test files ({len(files):d} files, {total:d} shards)")
-        progress(f"shard {index:d}/{total:d}: {len(mine):d} of {len(files):d} test files")
+            raise SystemExit(f"shard {index:d}/{total:d} has no test files")
+        progress(f"shard {index:d}/{total:d}: {len(mine):d} test files")
         results = out / "results.json"
         env = oracle_env({"PYTHONPATH": str(PLUGIN_DIR), "AURORA_ORACLE_OUT": str(results)})
         cmd = [
@@ -2139,19 +2135,24 @@ def suite_shard(index: int, total: int, out: Path, reruns: int = 2) -> dict[str,
         )
         data["duration_s"] = round(time.time() - t0, 1)
         tests = {nid: {"outcomes": [_final_outcome(rec)]} for nid, rec in data["results"].items()}
-        rerun_failures(t, out, tests, reruns)
+        if baseline:
+            was = load_json(snapshot_dir(baseline) / "O1.json")["tests"]
+            stable = {n for n in tests if was.get(public_id(n), {}).get("class") == "stable-pass"}
+            rerun_failures(t, out, {n: v for n, v in tests.items() if n in stable}, reruns)
+        else:
+            rerun_failures(t, out, tests, reruns)
     record = {"shard": [index, total], "files": mine, "run": data, "tests": tests}
     dump_json(out / "shard.json", record)
     return record
 
 
 def suite_merge(label: str, shard_dirs: Sequence[Path]) -> Path:
-    """Merge every shard of one sharded pass into snapshots/<label>/ O1.json and O10.json: the
+    """Merge every shard (0..total) of one sharded pass into snapshots/<label>/ O1.json and O10.json: the
     same records a single-machine `snapshot <label> --components O1,O10 --runs 1` writes."""
     shards = [load_json(d / "shard.json") for d in shard_dirs]
     total = {s["shard"][1] for s in shards}
     got = sorted(s["shard"][0] for s in shards)
-    if len(total) != 1 or got != list(range(1, next(iter(total)) + 1)):
+    if len(total) != 1 or got != list(range(next(iter(total)) + 1)):
         raise SystemExit(f"suite-merge: shards {got} of {sorted(total)} -- every shard must be present once")
     dest = SNAPSHOTS / label
     raw = dest / "raw"
@@ -2327,9 +2328,9 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
 
 def cmd_suite_shard(args: argparse.Namespace) -> int:
     index, total = (int(x) for x in args.shard.split("/"))
-    if not 1 <= index <= total:
-        raise SystemExit(f"suite-shard: {args.shard} is not INDEX/TOTAL with 1 <= INDEX <= TOTAL")
-    suite_shard(index, total, Path(args.out).resolve(), args.reruns)
+    if not 0 <= index <= total:
+        raise SystemExit(f"suite-shard: {args.shard} is not INDEX/TOTAL with 0 <= INDEX <= TOTAL")
+    suite_shard(index, total, Path(args.out).resolve(), args.reruns, args.baseline)
     return 0
 
 
@@ -2809,9 +2810,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     s.add_argument("--select", help="test paths for O1/O10 (smoke only; verify-snapshot rejects it)")
     s.add_argument("--python", help="interpreter for the tree's venv (G1.P2 candidates)")
     s = sub.add_parser("suite-shard", help="CI: one shard of the suite (coverage + outcomes in one pass)")
-    s.add_argument("shard", help="INDEX/TOTAL, 1-based (e.g. 3/8)")
+    s.add_argument("shard", help="INDEX/TOTAL: 1..TOTAL split the suite by time, 0 is the Rust-backed files")
     s.add_argument("--out", required=True)
     s.add_argument("--reruns", type=int, default=2)
+    s.add_argument("--baseline", help="rerun only failures that were stable-pass in this snapshot")
     s = sub.add_parser("suite-merge", help="CI: merge suite-shard outputs into snapshots/<label>/")
     s.add_argument("label")
     s.add_argument("dirs", nargs="+")
