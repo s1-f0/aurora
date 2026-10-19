@@ -9,7 +9,9 @@ shareable, with the event name in the key so PostToolUse and PostToolUseFailure,
 hooks seeing one payload, never suppress each other.
 
 An ATOMIC marker (O_CREAT|O_EXCL, no load-then-mark race) in the temp dir, keyed by the event and
-the whole payload. Fails OPEN: on any error the caller does its work, because a double count is a
+the whole payload. The whole payload matters: tool events carry a per-call tool_use_id, so two
+genuine identical calls (the same Read twice) hash differently and both run, while the two
+registrations of ONE call share it and collapse (Heimdall's review, 2026-10-19). Fails OPEN: on any error the caller does its work, because a double count is a
 smaller harm than a swallowed fire.
 """
 

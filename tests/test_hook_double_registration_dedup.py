@@ -56,6 +56,18 @@ def test_the_event_is_part_of_the_key(dedup):
     assert dedup.first_fire("Stop", p) is True
 
 
+def test_two_real_identical_calls_both_fire(dedup):
+    """Heimdall's review finding 1 (2026-10-19): two GENUINE identical calls -- the same Read twice
+    within three seconds -- must not collapse. Claude Code stamps each tool call with its own
+    tool_use_id, and the key hashes the whole payload, so they differ; both registrations of ONE
+    call carry the same id and still collapse."""
+    first = _payload(tool_use_id="toolu_A")
+    again = dict(first, tool_use_id="toolu_B")
+    assert dedup.first_fire("PostToolUse", first) is True
+    assert dedup.first_fire("PostToolUse", again) is True
+    assert dedup.first_fire("PostToolUse", dict(first)) is False
+
+
 def test_different_payloads_both_fire(dedup):
     assert dedup.first_fire("PostToolUse", _payload()) is True
     assert dedup.first_fire("PostToolUse", _payload()) is True
