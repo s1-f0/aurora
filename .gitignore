@@ -100,7 +100,7 @@ Thumbs.db
 !.gitignore
 
 # local secrets (API keys) -- never commit
-.secrets/
+.secrets
 
 # Bifrost media blobs (content-addressed, not source)
 blobs/
