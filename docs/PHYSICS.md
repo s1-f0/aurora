@@ -4,12 +4,12 @@ Status: current
 Class: reference
 
 > Do NOT edit by hand. Regenerate with `py scripts/generators/gen_physics_sheet.py`.
-> Derived at cd43a14cf. A bound you discover by collision is not awareness -- this sheet
+> Derived at ba88fdfea. A bound you discover by collision is not awareness -- this sheet
 > exists so every clip, cap, timeout and flag is READABLE before it is HIT.
 > Dynamic envelopes (throughput, latency, limits-under-load) are NOT here: they require
 > measurement, not grep -- see the master-map charter M2b (benchmark half).
 
-## Configuration flags (288 names)
+## Configuration flags (290 names)
 
 | Flag | Default (as written) | Read sites |
 |---|---|---|
@@ -143,6 +143,7 @@ Class: reference
 | `AKASHIC_STOP_PROMISE` | `"1"` | agent/harness/hooks/claude_stop.py |
 | `AKASHIC_STOP_WAKE` | `"1"` | agent/harness/hooks/claude_stop.py |
 | `AKASHIC_STORE_BACKEND` | `""` | core/foundation/store.py, scripts/checkers/check_dual_authority.py |
+| `AKASHIC_SUPERVISED_SEATS` | `""` | core/comm/launcher.py |
 | `AKASHIC_TASKS_PATH` | `` | core/coord/conductor.py, core/coord/task_ledger.py, core/metaharness/corpus.py |
 | `AKASHIC_TEST_SHOW_CONSOLES` | `` | core/__init__.py, scripts/quiet/sitecustomize.py |
 | `AKASHIC_TIMELINE_FILE_LIMIT` | `"4000"` | core/coord/timeline.py |
@@ -152,6 +153,7 @@ Class: reference
 | `AKASHIC_TRACE` | `"1"` | agent/harness/hooks/claude_trace.py, agent/harness/trace.py |
 | `AKASHIC_TRANSCRIPT_CAP_MB` | `DEFAULT_CAP_MB` | core/metaharness/transcripts.py |
 | `AKASHIC_TRANSCRIPT_TAIL_BYTES` | `str(4 * 1024 * 1024` | agent/harness/hooks/claude_posttooluse.py |
+| `AKASHIC_UI_AUTOLAUNCH` | `""` | scripts/bifrost_ui.py |
 | `AKASHIC_UI_URL` | `"http://localhost:8787"` | scripts/ui_shot.py |
 | `AKASHIC_UNATTENDED_S` | `"300"` | core/comm/bus.py, core/comm/liveness.py |
 | `AKASHIC_VERB_FLOOR` | `"0.9"` | core/recall/at_action.py |
@@ -302,7 +304,7 @@ Class: reference
 | `STORM_REPEAT_THRESHOLD` | `5` | core/comm/storm_detect.py |
 | `XDG_CACHE_HOME` | `` | core/tools/locate.py |
 
-## Mechanical bounds (332 numeric constants)
+## Mechanical bounds (333 numeric constants)
 
 | Constant | Value | Site | Note |
 |---|---|---|---|
@@ -573,6 +575,7 @@ Class: reference
 | `STEER_TTL` | 900 | core/comm/nudge.py | a queued steer that's never picked up self-expires after 15 min |
 | `SURFACE_MAXLEN` | 6,000 | core/recall/at_action.py |  |
 | `SUS_HOLD_MS` | 300 | arsenal/practice.py | a suspension: the sus chord complete and held this long, then a pause this long before |
+| `SYSTEMCTL_TIMEOUT_S` | 10 | core/comm/launcher.py | --no-block returns once the job is queued; this bounds a hung user manager |
 | `T10_MIN_PHRASES` | 6 | arsenal/practice_riff.py |  |
 | `T13_MIN_NOTES` | 8 | arsenal/practice_riff.py | and each side of the comparison needs this many top-line notes |
 | `T13_MIN_PASSES` | 4 | arsenal/practice_riff.py |  |
