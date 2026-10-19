@@ -17620,6 +17620,32 @@ def _human_glance(console, doc):
     console.print(f"[dim]uncheckable: {out._esc(', '.join(doc['uncheckable']) or 'none')}[/]")
 
 
+def _secret_dialog(target: str, what: str) -> str | bool | None:
+    """A desktop's own password dialog, for a Python without tkinter. Returns the pasted value,
+    False when the person closed or cancelled the dialog, or None when no dialog tool exists.
+    The value comes back on the dialog's stdout to this process only -- never an argument, never
+    a log line -- so it keeps the vault's clipboard -> window -> file promise."""
+    import shutil
+    import subprocess
+
+    title = f"Akashic vault -- {target}"
+    for tool, argv in (
+        ("zenity", ["--password", f"--title={title}"]),
+        ("kdialog", ["--title", title, "--password", what]),
+    ):
+        exe = shutil.which(tool)
+        if not exe:
+            continue
+        try:
+            proc = subprocess.run([exe, *argv], capture_output=True, text=True, timeout=600, check=False)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if proc.returncode != 0:
+            return False
+        return (proc.stdout or "").rstrip("\r\n")
+    return None
+
+
 def cmd_secret(args):
     """The vault door (Daniil, 1:40am 2026-08-19: 'some kind of pop up window for
     credential capture that I can paste into and you can invoke with a verb'). The
@@ -17665,18 +17691,31 @@ def cmd_secret(args):
             exit_code=out.EXIT_USAGE,
         )
 
+    use_window = False
     if args.stdin:
         value = sys.stdin.read()
     else:
         try:
             import tkinter as tk
+
+            use_window = True
         except Exception as e:  # noqa: BLE001  # fail-soft: logged, caller continues
-            return out.fail(
-                f"no window available ({type(e).__name__}): pipe the value on stdin instead",
-                code="NO_WINDOW",
-                hints=[f"Get-Clipboard | {cli} secret {args.target} --stdin"],
-                exit_code=out.EXIT_USAGE,
-            )
+            # No tkinter (a system Python without python3-tk, the Ubuntu default): a desktop's own
+            # password dialog is the same window -- the paste returns on ITS stdout to this process
+            # alone, so the value still travels clipboard -> window -> file.
+            got = _secret_dialog(args.target, TARGETS[args.target])
+            if got is None:
+                clip = "Get-Clipboard" if os.name == "nt" else "wl-paste -n"
+                return out.fail(
+                    f"no window available ({type(e).__name__}, and no zenity or kdialog): pipe the value on stdin instead",
+                    code="NO_WINDOW",
+                    hints=[f"{clip} | {cli} secret {args.target} --stdin"],
+                    exit_code=out.EXIT_USAGE,
+                )
+            if got is False:
+                return out.fail("cancelled: nothing written", code="CANCELLED")
+            value = got
+    if use_window:
         captured: dict[str, str | None] = {"value": None}
         root = tk.Tk()
         root.title(f"Akashic vault -- {args.target}")
