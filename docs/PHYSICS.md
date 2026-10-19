@@ -4,7 +4,7 @@ Status: current
 Class: reference
 
 > Do NOT edit by hand. Regenerate with `py scripts/generators/gen_physics_sheet.py`.
-> Derived at 29d11a84c. A bound you discover by collision is not awareness -- this sheet
+> Derived at e21511b1b. A bound you discover by collision is not awareness -- this sheet
 > exists so every clip, cap, timeout and flag is READABLE before it is HIT.
 > Dynamic envelopes (throughput, latency, limits-under-load) are NOT here: they require
 > measurement, not grep -- see the master-map charter M2b (benchmark half).
@@ -322,7 +322,7 @@ Class: reference
 | `TMP` | `` | agent/harness/hooks/snippet_autofile.py |
 | `XDG_CACHE_HOME` | `` | core/tools/locate.py |
 
-## Mechanical bounds (380 numeric constants)
+## Mechanical bounds (381 numeric constants)
 
 | Constant | Value | Site | Note |
 |---|---|---|---|
@@ -436,6 +436,7 @@ Class: reference
 | `GEOMETRIC_CAP` | 4,096 | arsenal/shaders/glsl.py | a v *= k loop still running after this many steps is treated as unbounded |
 | `GIT_BUDGET` | 70 | scripts/ops/wishlist_triage_task.py | subprocess calls are the cost here, not tokens |
 | `GIT_CAP` | 10 | agent/harness/delta.py | commits listed before the pull pointer takes over |
+| `GIT_TIMEOUT_S` | 30 | arsenal/shaders/render.py |  |
 | `GRACE_MS` | 100 | arsenal/practice.py | ...except a grace note or crush sounding under this long, which is heard only while it sou |
 | `GROWTH_MS` | 1,000 | arsenal/practice.py | a window this short whose notes all belong to the next window, and which was still |
 | `GROWTH_STABLE_MS` | 500 | arsenal/practice.py | gaining pitch classes this close to its end, is that window's start (an unfolding arpeggio |

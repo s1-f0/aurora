@@ -18,6 +18,9 @@ one test only (the last), which is skipped when the corpus is absent and writes 
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -586,9 +589,46 @@ def test_write_refuses_a_path_outside_state(world):
     assert not (world["tmp"] / "elsewhere").exists()
 
 
-def test_the_default_index_lives_under_state():
+def _linked_world(tmp_path, monkeypatch):
+    """A checkout's state/ whose arsenal/shaders links into a temp world's state/ (as ~/.aurora/<world>/state is on a
+    machine whose world has a home), and state/out linked into a tracked repository. AI_SETUP names the world."""
+    if any((p / ".git").exists() for p in (tmp_path, *tmp_path.parents)):
+        pytest.skip("the temp directory lies inside a git work tree")
+    state = tmp_path / "repo" / "state"
+    (state / "arsenal").mkdir(parents=True)
+    world = tmp_path / "world" / "state" / "arsenal" / "shaders"
+    world.mkdir(parents=True)
+    tracked = tmp_path / "tracked"
+    (tracked / ".git").mkdir(parents=True)
+    try:
+        (state / "arsenal" / "shaders").symlink_to(world, target_is_directory=True)
+        (state / "out").symlink_to(tracked, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this account cannot create symlinks")
+    monkeypatch.setenv("AI_SETUP", str(tmp_path / "world"))
+    return state, world, tracked
+
+
+def test_write_follows_a_link_into_the_world_state_and_no_further(tmp_path, monkeypatch):
+    state, world, tracked = _linked_world(tmp_path, monkeypatch)
+    index = {"api": SH.API, "count": 0, "shaders": []}
+    SH.write(index, state / "arsenal" / "shaders" / "shelf" / "index.json", state_root=state)
+    assert json.loads((world / "shelf" / "index.json").read_text(encoding="utf-8"))["api"] == SH.API
+    with pytest.raises(ValueError, match="state"):
+        SH.write(index, state / "out" / "index.json", state_root=state)
+    assert not (tracked / "index.json").exists()
+
+
+def test_the_default_index_lives_under_state(monkeypatch):
+    from arsenal.shaders import render as R
+
     assert SH.OUT == ROOT / "state" / "arsenal" / "shaders" / "shelf" / "index.json"
-    assert SH.OUT.resolve().is_relative_to((ROOT / "state").resolve())
+    assert SH.STATE_ROOT == ROOT / "state"
+    # Where it really lands is the licence line's call: inside state/, or the world's state/ when state/arsenal/shaders
+    # links there (test_write_follows_a_link_into_the_world_state_and_no_further pins that with a temp world). Asked of
+    # this machine's real world, read-only: the suite's temp AI_SETUP is not it.
+    monkeypatch.delenv("AI_SETUP", raising=False)
+    assert R.under_state(SH.OUT, primary=SH.STATE_ROOT), (SH.OUT.resolve(), R.extra_state_roots())
 
 
 # --------------------------------------------------------------------------------------------------- the verb
@@ -639,3 +679,30 @@ def test_the_real_shelf_lists_all_42_loved_shaders_each_linked_to_the_atlas():
     assert warping["licence"]["corrected"] is True
     assert ".png" not in json.dumps(warping)
     assert index["summary"]["study_only"] == ["4s23zz"]
+
+
+def _ignoring_repo(tmp_path) -> Path:
+    """A temp repository whose .gitignore ignores state/* but re-includes state/drills/ and one name in state/ci/, as
+    this repository's does; its state/ is returned. The licence line asks git, not a list, where a file may land."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not on PATH")
+    if any((p / ".git").exists() for p in (tmp_path, *tmp_path.parents)):
+        pytest.skip("the temp directory lies inside a git work tree")
+    repo = tmp_path / "repo"
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True, env=env, timeout=60)
+    (repo / ".gitignore").write_text(
+        "state/*\n!state/drills/\n!state/drills/**\n!state/ci/\nstate/ci/*\n!state/ci/kept.json\n", encoding="utf-8"
+    )
+    (repo / "state").mkdir()
+    return repo / "state"
+
+
+def test_write_refuses_a_file_git_would_commit_under_state(tmp_path):
+    state = _ignoring_repo(tmp_path)
+    index = {"api": SH.API, "count": 0, "shaders": []}
+    for out in (state / "drills" / "index.json", state / "ci" / "kept.json"):  # a re-included dir; a re-included name
+        with pytest.raises(ValueError, match="state"):
+            SH.write(index, out, state_root=state)
+        assert not out.exists(), out
+    assert SH.write(index, state / "ci" / "index.json", state_root=state).is_file()  # ignored, beside it: written

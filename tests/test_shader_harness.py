@@ -538,10 +538,12 @@ def _url(port=51234, src="/corpus/abcDEF/shader.json", host="127.0.0.1", page="/
     return f"{base}{page}?src={base}{src}&t=0&w=8&h=4&fps=60&media={base}/corpus/media/&budget=25000"
 
 
-IN_STATE = str(STATE / "arsenal" / "shaders" / "renders" / "abcDEF")
+# Under state/ by a path that crosses none of this checkout's links: state/arsenal may lead into the world's state/,
+# which the world-state pins at the end of this file cover. These rows pin the driver's rule, not this machine's layout.
+IN_STATE = str(STATE / "driver-pins" / "renders" / "abcDEF")
 DRIVER_JOBS = [  # (job, should the driver load it?)
     ({"url": _url(), "out_dir": IN_STATE, "prefix": ""}, True),
-    ({"url": _url(), "out_dir": str(STATE / "arsenal" / "shaders" / "check" / "x"), "prefix": "abcDEF_"}, True),
+    ({"url": _url(), "out_dir": str(STATE / "driver-pins" / "check" / "x"), "prefix": "abcDEF_"}, True),
     ({"url": _url(port=8793), "out_dir": IN_STATE}, False),  # Daniel's server
     ({"url": _url(host="localhost"), "out_dir": IN_STATE}, False),  # 127.0.0.1, spelled exactly
     ({"url": _url(host="evil.example"), "out_dir": IN_STATE}, False),
@@ -563,6 +565,11 @@ DRIVER_JOBS = [  # (job, should the driver load it?)
     ({"url": _url(src="/jobs/local-x-0123456789.json"), "out_dir": str(NOT_STATE), "allow_tracked": True}, True),
     ({"url": _url(src="/jobs/local-x-0123456789.json"), "out_dir": str(NOT_STATE)}, False),
     ({"url": _url(src="/jobs/local-x-0123456789.json"), "out_dir": str(NOT_STATE), "allow_tracked": "yes"}, False),
+    # serve.py unquotes a path before it routes it, so a corpus src spelled with escapes (%2F, %63 for c) is served from
+    # the corpus all the same: still a corpus picture, and no flag lets it out. A path that cannot be unquoted is refused.
+    ({"url": _url(src="/corpus%252FabcDEF/shader.json"), "out_dir": str(NOT_STATE), "allow_tracked": True}, False),
+    ({"url": _url(src="/%2563orpus/abcDEF/shader.json"), "out_dir": str(NOT_STATE), "allow_tracked": True}, False),
+    ({"url": _url(src="/jobs/local-x-%25E0%25A4%25A.json"), "out_dir": str(NOT_STATE), "allow_tracked": True}, False),
 ]
 
 
@@ -1143,7 +1150,7 @@ def test_out_dir_policy_keeps_corpus_pictures_under_state(tmp_path, monkeypatch)
     corpus = _corpus_here(tmp_path, monkeypatch)
     theirs = R.resolve_source("abcDEF", corpus)
     assert theirs.corpus_subject
-    inside = STATE / "arsenal" / "shaders" / "renders" / "abcDEF"
+    inside = STATE / "policy-pins" / "renders" / "abcDEF"  # crosses no link (see IN_STATE); the world's state/: below
     assert R.out_dir_refusal(inside, theirs) is None
     for bad in (NOT_STATE, STATE / ".." / "design", tmp_path / "anywhere"):
         for allow in (False, True):
@@ -1216,3 +1223,645 @@ def test_allow_tracked_lets_your_own_shader_out_and_tells_the_driver(tmp_path, m
     ns.json = True
     ns.fn(ns)
     assert jobs_seen[0].allow_tracked is False
+
+
+# ---------------------------------------------------------------------------- the world's state, beside state/
+# On a machine whose world has a home (~/.aurora/<world>), state/arsenal/shaders is a link into that home's state/, which
+# every checkout shares. The licence line accepts that root too (render.py extra_state_roots), and only while no .git
+# lies at or above it: a picture still lands only where git cannot commit it. core.paths.state_root() answers the root;
+# here a bare AI_SETUP names a temp world, so no pin reads or writes the real one.
+LAB_SHOT = ROOT / "arsenal" / "shaders" / "lab_shot.mjs"
+
+
+def _git_free(path: Path) -> bool:
+    return not any((p / ".git").exists() for p in (path, *path.parents))
+
+
+def _link(target: Path, link: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this account cannot create symlinks")
+
+
+@pytest.fixture
+def world(tmp_path, monkeypatch):
+    """A checkout's state/ whose arsenal/shaders links to a temp world's state/, and a tracked repository beside both."""
+    if not _git_free(tmp_path):
+        pytest.skip("the temp directory lies inside a git work tree")
+    repo_state = tmp_path / "repo" / "state"
+    world_state = tmp_path / "world" / "state"
+    (world_state / "arsenal" / "shaders").mkdir(parents=True)
+    (repo_state / "arsenal").mkdir(parents=True)
+    tracked = tmp_path / "tracked"
+    (tracked / ".git").mkdir(parents=True)
+    (tracked / "design").mkdir()
+    _link(world_state / "arsenal" / "shaders", repo_state / "arsenal" / "shaders")
+    monkeypatch.setattr(R, "STATE_ROOT", repo_state)
+    monkeypatch.setattr(R, "RENDERS", repo_state / "arsenal" / "shaders" / "renders")
+    monkeypatch.setenv("AI_SETUP", str(tmp_path / "world"))  # a bare data dir: core.paths.state_root() answers it
+    return {"tmp": tmp_path, "repo_state": repo_state, "world_state": world_state, "tracked": tracked}
+
+
+def _sources(world, monkeypatch):
+    corpus = _corpus_here(world["tmp"], monkeypatch)
+    return R.resolve_source("abcDEF", corpus), R.resolve_source(str(_own_frag(world["tmp"])), corpus)
+
+
+def test_a_state_dir_linked_into_the_world_state_is_accepted(world, monkeypatch):
+    theirs, own = _sources(world, monkeypatch)
+    linked = world["repo_state"] / "arsenal" / "shaders" / "renders" / "abcDEF"
+    assert not linked.resolve().is_relative_to(world["repo_state"].resolve())  # the link really leads out of state/
+    for target in (linked, world["world_state"] / "arsenal" / "x"):
+        for source in (theirs, own):
+            assert R.out_dir_refusal(target, source) is None, (target, source.key)
+        assert R.leaves_state(target) is False  # the driver is not told allow_tracked: it is given the root instead
+    assert R.build_plan("pytest", [], 0)["state_roots"] == [str(world["world_state"].resolve())]
+
+
+@pytest.mark.parametrize("verb", ["render", "filmstrip"])
+def test_a_default_render_through_the_link_reaches_the_driver(world, monkeypatch, parser, verb):
+    _corpus_here(world["tmp"], monkeypatch)
+    plans = []
+    monkeypatch.setattr(S, "base_for", lambda port: (None, "http://127.0.0.1:1"))
+
+    def fake_run(jobs, label, lock_wait_min=10, quiet=False):
+        plans.append(R.build_plan(label, jobs, 0))
+        rows = {j.key: {"key": j.key, "status": "error", "error": "not rendered in a test"} for j in jobs}
+        return {
+            "run_dir": None,
+            "software": None,
+            "chrome": None,
+            "bursts": [],
+            "refused": None,
+            "error": None,
+            "rows": rows,
+        }
+
+    monkeypatch.setattr(R, "run_jobs", fake_run)
+    ns = parser.parse_args([verb, "abcDEF"])
+    ns.json = True
+    ns.fn(ns)
+    (plan,) = plans
+    (job,) = plan["jobs"]
+    assert job["allow_tracked"] is False
+    assert Path(job["out_dir"]).is_relative_to(world["world_state"].resolve())
+    assert plan["state_roots"] == [str(world["world_state"].resolve())]
+
+
+@pytest.mark.parametrize("via", ["AI_SETUP", "AURORA_HOME"])
+def test_a_world_state_inside_a_git_work_tree_is_not_accepted(world, monkeypatch, via):
+    from core import paths
+    from core.world import current
+
+    theirs, own = _sources(world, monkeypatch)
+    if via == "AI_SETUP":
+        data = world["tracked"] / "data"  # a bare data dir, but inside a repository
+        monkeypatch.setenv("AI_SETUP", str(data))
+    else:  # the world's home, ~/.aurora/<world> by default, moved into a repository
+        if current().name == "unknown":
+            pytest.skip("no world is named here, so no world home is looked for")
+        monkeypatch.delenv("AI_SETUP", raising=False)
+        monkeypatch.setenv("AURORA_HOME", str(world["tracked"] / "home"))
+        data = world["tracked"] / "home" / current().name
+    (data / "state").mkdir(parents=True)
+    assert paths.state_root() == data  # core.paths really names a root inside the repository
+    target = data / "state" / "arsenal" / "renders"
+    for allow in (False, True):
+        assert "state" in (R.out_dir_refusal(target, theirs, allow_tracked=allow) or "")
+    assert "--allow-tracked" in (R.out_dir_refusal(target, own) or "")
+    assert R.leaves_state(target) is True
+    assert R.build_plan("pytest", [], 0).get("state_roots", []) == []
+
+
+def test_a_link_into_a_tracked_tree_is_still_refused(world, monkeypatch):
+    theirs, own = _sources(world, monkeypatch)
+    design = world["tracked"] / "design"
+    _link(design, world["repo_state"] / "out")  # state/out -> a tracked folder
+    _link(design, world["world_state"] / "arsenal" / "shaders" / "out")  # ... and the same, inside the world's state/
+    clone = world["world_state"] / "clone"  # a repository cloned inside the world's state/ is tracked territory too
+    (clone / ".git").mkdir(parents=True)
+    for target in (
+        world["repo_state"] / "out" / "x",
+        world["repo_state"] / "arsenal" / "shaders" / "out" / "x",
+        world["world_state"] / "arsenal" / "shaders" / "out" / "x",
+        clone / "renders",
+    ):
+        for allow in (False, True):
+            why = R.out_dir_refusal(target, theirs, allow_tracked=allow)
+            assert why, (target, allow)
+            assert "state" in why, (target, allow)
+        assert "--allow-tracked" in (R.out_dir_refusal(target, own) or ""), target
+        assert R.leaves_state(target) is True, target
+
+
+@pytest.mark.parametrize("verb", ["render", "filmstrip"])
+def test_allow_tracked_never_lets_a_corpus_picture_into_a_tracked_tree(world, monkeypatch, parser, capsys, verb):
+    _corpus_here(world["tmp"], monkeypatch)
+    monkeypatch.setattr(S, "base_for", lambda port: pytest.fail("a lab server was started"))
+    monkeypatch.setattr(R, "run_jobs", lambda *a, **k: pytest.fail("the driver ran"))
+    for out in (world["tracked"] / "design" / "x", NOT_STATE):
+        ns = parser.parse_args([verb, "abcDEF", "--out", str(out), "--allow-tracked"])
+        ns.json = True
+        assert ns.fn(ns) == 2
+        assert "state" in capsys.readouterr().err
+        assert not out.exists()
+
+
+@needs_node
+def test_the_driver_accepts_only_the_state_roots_its_plan_names(world):
+    ws, tracked = world["world_state"], world["tracked"]
+    roots = [str(ws.resolve())]
+    _link(tracked / "design", ws / "arsenal" / "shaders" / "out")
+    (ws / "clone" / ".git").mkdir(parents=True)
+    (tracked / "data" / "state").mkdir(parents=True)
+    own = _url(src="/jobs/local-x-0123456789.json")
+
+    def job(out, url=None, **extra):
+        return {"url": url or _url(), "out_dir": str(out), "prefix": "", **extra}
+
+    in_world = job(ws / "arsenal" / "shaders" / "renders" / "abcDEF")
+    cases = [  # (plan, should the driver load it?)
+        ({"jobs": [in_world], "state_roots": roots}, True),  # the root render.py gives
+        ({"jobs": [in_world, job(IN_STATE)], "state_roots": roots}, True),  # <repo>/state/ still counts
+        ({"jobs": [job(ws / "x", url=own)], "state_roots": roots}, True),
+        ({"jobs": [in_world]}, False),  # no root given: the driver derives none of its own
+        ({"jobs": [in_world], "state_roots": []}, False),
+        ({"jobs": [in_world], "state_roots": ["state"]}, False),  # a relative root
+        ({"jobs": [in_world], "state_roots": [roots[0], "../state"]}, False),
+        ({"jobs": [in_world], "state_roots": roots[0]}, False),  # a list, not a string
+        ({"jobs": [in_world], "state_roots": [None]}, False),
+        ({"jobs": [job(ws / "arsenal" / "shaders" / "out" / "x")], "state_roots": roots}, False),  # a link out
+        ({"jobs": [job(ws / "clone" / "renders")], "state_roots": roots}, False),  # a repository inside the root
+        ({"jobs": [job(tracked / "data" / "state" / "x")], "state_roots": [str(tracked / "data" / "state")]}, False),
+        ({"jobs": [job(tracked / "design", allow_tracked=True)], "state_roots": roots}, False),  # corpus: never
+        ({"jobs": [job(tracked / "design", url=own, allow_tracked=True)], "state_roots": roots}, True),  # our own
+    ]
+    got = _node_module(f"{json.dumps([p for p, _ in cases])}.map((p) => H.planRefusal(p))")
+    for (plan, ok), why in zip(cases, got, strict=True):
+        assert (why is None) is ok, (plan, why)
+
+
+@needs_node
+def test_the_driver_refuses_a_relative_state_root_before_the_lock_or_chrome(world):
+    plan = world["tmp"] / "plan.json"
+    out = world["world_state"] / "arsenal" / "shaders" / "renders" / "abcDEF"
+    job = {"key": "abcDEF", "url": _url(), "out_dir": str(out), "prefix": "", "timeout_ms": 30000, "w": 8, "h": 4}
+    plan.write_text(
+        json.dumps(
+            {
+                "api": R.PLAN_API,
+                "label": "pytest",
+                "lock_wait_ms": 0,
+                "jobs": [job],
+                "state_roots": ["state"],
+                "chrome": str(world["tmp"] / "no-chrome.exe"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = world["tmp"] / "r.json"
+    run = subprocess.run(
+        [NODE, str(HEADLESS), "--plan", str(plan), "--result", str(result)], capture_output=True, text=True, timeout=60
+    )
+    assert run.returncode == R.EXIT_REFUSED, run.stdout + run.stderr
+    r = json.loads(result.read_text(encoding="utf-8"))
+    assert "state_roots" in r["refused"]
+    assert r["lock"] is None
+    assert [j["status"] for j in r["jobs"]] == ["refused"]
+    assert not out.exists()
+
+
+@needs_node
+def test_the_git_tree_rule_has_twins(world):
+    ws, tracked = world["world_state"], world["tracked"]
+    (ws / "wt").mkdir()
+    (ws / "wt" / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n", encoding="utf-8")  # a worktree's file
+    (ws / "dangling").mkdir()
+    try:
+        (ws / "dangling" / ".git").symlink_to(world["tmp"] / "nowhere")  # a broken link named .git counts too
+    except (OSError, NotImplementedError):
+        pytest.skip("this account cannot create symlinks")
+    _link(tracked / "design", ws / "into-tracked")  # both twins climb the real directories, not the link
+    # A dangling directory link: Python's resolve follows it to its target, Node's realish keeps it as a plain name, so
+    # the twins would judge different directories. Both refuse it instead, wherever it points. Likewise '..' after a
+    # link: the OS climbs the link's target, path.resolve climbs the name; both refuse a '..' in the path as given.
+    _link(tracked / "missing", ws / "dangling-into-tracked")
+    _link(world["tmp"] / "nowhere-dir", ws / "dangling-nowhere")
+    _link(tracked / "design", ws / "up")
+    cases = [
+        (tracked, True),
+        (tracked / "design" / "not" / "made", True),
+        (ws / "wt" / "x", True),
+        (ws / "dangling", True),
+        (ws / "into-tracked" / "x", True),
+        (ws / "dangling-into-tracked", True),
+        (ws / "dangling-into-tracked" / "x" / "y", True),
+        (ws / "dangling-nowhere", True),
+        (ws / "dangling-nowhere" / "x", True),
+        (ws / "up" / ".." / "x", True),  # tracked/x to the OS
+        (ws / "arsenal" / ".." / "x", True),  # no link crossed, but a '..' all the same
+        (ws, False),
+        (ws / "arsenal" / "not" / "made", False),
+        (world["repo_state"] / "arsenal" / "shaders" / "x", False),  # a link into the world's state/
+        (world["tmp"], False),
+    ]
+    assert [R.in_git_tree(p) for p, _ in cases] == [ok for _, ok in cases]
+    got = _node_module(f"{json.dumps([str(p) for p, _ in cases])}.map((p) => H.inGitTree(p))")
+    assert got == [ok for _, ok in cases]
+    # ... and the state/ rule built on it: under the world's root only through real, existing directories.
+    roots = [str(ws.resolve())]
+    under = [
+        (ws / "x", True),
+        (ws / "arsenal" / "not" / "made", True),
+        (ws / "dangling-into-tracked" / "x", False),
+        (ws / "dangling-nowhere" / "x", False),
+        (ws / "up" / ".." / "x", False),
+        (ws / "into-tracked" / "x", False),
+        (ws / "wt" / "x", False),
+    ]
+    assert [R.under_state(p) for p, _ in under] == [ok for _, ok in under]
+    got = _node_module(f"{json.dumps([str(p) for p, _ in under])}.map((p) => H.underState(p, {json.dumps(roots)}))")
+    assert got == [ok for _, ok in under]
+
+
+@needs_node
+def test_lab_shot_asks_render_py_for_the_state_roots(world):
+    """lab_shot.mjs writes its screenshots under the same roots the render verbs accept: it asks render.py for them
+    (it cannot import core.paths) and checks --out against them with headless.mjs's underState."""
+    url = LAB_SHOT.resolve().as_uri()
+    got = _node(f"import * as L from {json.dumps(url)}; console.log(JSON.stringify(L.stateRoots()));")
+    assert got == [str(p) for p in R.extra_state_roots()] == [str(world["world_state"].resolve())]
+
+
+@needs_node
+def test_the_default_dirs_are_accepted_where_this_checkouts_state_really_leads(tmp_path, monkeypatch):
+    """The pins above stand a temp world in; this one asks the real one, read-only (paths are resolved, nothing is
+    written). Wherever state/arsenal/shaders really leads (inside this checkout's state/, or into the world's state/ on
+    a machine whose world has a home), a default render of a corpus shader is accepted by render.py, and by the driver
+    given the plan render.py writes. Red on such a machine while <repo>/state/ was the only root."""
+    monkeypatch.delenv("AI_SETUP", raising=False)  # the suite's temp data dir is not this machine's world
+    theirs = R.resolve_source("abcDEF", _corpus_here(tmp_path, monkeypatch))
+    plan = R.build_plan("pytest", [], 0)
+    picked = [R.RENDERS / "abcDEF", R.RENDERS / "abcDEF" / "filmstrip"]  # render, filmstrip: through out_dir_for
+    for d in picked:
+        assert R.out_dir_refusal(d, theirs) is None, (d, d.resolve(), plan.get("state_roots"))
+        assert R.leaves_state(d) is False, d
+    outs = [str(d.resolve()) for d in picked] + [str(R.CHECKS / "20261019-000000")]  # check: as written, unresolved
+    plan["jobs"] = [{"key": "abcDEF", "url": _url(), "out_dir": out, "prefix": ""} for out in outs]
+    assert _node_module(f"H.planRefusal({json.dumps(plan)})") is None, plan
+
+
+# ------------------------------------------------------------------- at the moment of writing, not only at plan time
+# The realpath rule judges a directory when the plan is checked. Two ways round it remained: a link at a picture's own
+# file name inside an accepted out_dir (followed by a plain write), and a link swapped in for the out_dir while the
+# driver waited for the GPU lock or rendered (minutes). Each picture write is judged again and never follows a link at
+# its own name.
+_PNG = "data:image/png;base64,iVBORw0KGgo="  # the eight-byte PNG signature: enough for runJob's check
+
+
+def _fake_browser_js() -> str:
+    """A stand-in for headless.mjs's Browser that answers runJob's three page calls: one frame at t=0, SwiftShader."""
+    return (
+        "const fake = { events: [], renderer: 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), "
+        "SwiftShader driver)', page: { send: async () => ({}) }, evaluate: async (expr) => "
+        "expr.startsWith('window.__render.frames[') ? " + json.dumps(_PNG) + " : expr.includes('has_png') ? "
+        "{ renderer: fake.renderer, frames: [{ t: 0, ms: 1, has_png: true }] } : 'done' };"
+    )
+
+
+@needs_node
+def test_a_link_at_a_pictures_own_name_is_removed_not_followed(world):
+    pytest.importorskip("PIL")
+    out = world["world_state"] / "arsenal" / "shaders" / "renders" / "abcDEF"
+    out.mkdir(parents=True)
+    design = world["tracked"] / "design"
+    (design / "kept.png").write_bytes(b"theirs")
+    names = ("t0.00.png", "screenshot.png", "t1.00.png")
+    for name, target in zip(names, ("t0.00.png", "screenshot.png", "kept.png"), strict=True):
+        (out / name).symlink_to(design / target)  # dangling, dangling, and a link to a file that exists
+    url = HEADLESS.resolve().as_uri()
+    files = [str(out / n) for n in names]
+    _node(
+        f"import * as H from {json.dumps(url)}; for (const f of {json.dumps(files)}) H.writePicture(f, Buffer.from('png'));"
+        " console.log('null');"
+    )
+    (out / "filmstrip.png").symlink_to(design / "sheet.png")
+    R.contact_sheet([], "a header", out / "filmstrip.png")
+    for name in (*names, "filmstrip.png"):
+        assert not (out / name).is_symlink(), name
+        assert (out / name).is_file(), name
+    assert sorted(p.name for p in design.iterdir()) == ["kept.png"]
+    assert (design / "kept.png").read_bytes() == b"theirs"
+
+
+@needs_node
+@pytest.mark.parametrize("swap", [False, True])
+def test_the_driver_judges_the_out_dir_again_when_it_writes(world, swap):
+    out = world["world_state"] / "arsenal" / "shaders" / "renders" / "abcDEF"
+    design = world["tracked"] / "design"
+    roots = [str(world["world_state"].resolve())]
+    job = {"key": "abcDEF", "url": _url(), "out_dir": str(out), "prefix": "", "w": 8, "h": 4, "timeout_ms": 5000}
+    url = HEADLESS.resolve().as_uri()
+    got = _node(
+        f"import * as H from {json.dumps(url)}; import * as fs from 'node:fs';"
+        f"const job = {json.dumps(job)}, roots = {json.dumps(roots)};"
+        + _fake_browser_js()
+        + "const planned = H.jobRefusal(job, roots);"
+        + (
+            f"fs.mkdirSync(job.out_dir, {{ recursive: true }}); fs.rmSync(job.out_dir, {{ recursive: true }});"
+            f"fs.symlinkSync({json.dumps(str(design))}, job.out_dir);"  # swapped while the driver waited for the lock
+            if swap
+            else ""
+        )
+        + "const row = await H.runJob(fake, job, Date.now() + 5000, roots);"
+        "console.log(JSON.stringify({ planned, status: row.status, error: row.error, files: row.frames.map((f) => f.file) }));"
+    )
+    assert got["planned"] is None  # the plan passed its check before the lock
+    if swap:
+        assert got["status"] == "error", got
+        assert "refused at write time" in got["error"], got
+        assert list(design.iterdir()) == []
+    else:
+        assert got["status"] == "done", got
+        assert got["files"] == [str(out / "t0.00.png")]
+        assert (out / "t0.00.png").read_bytes()[:4] == b"\x89PNG"
+
+
+# ------------------------------------------------------------------- under state/, only where git ignores it
+# .gitignore ignores state/* but re-includes parts of it (state/coord/**, state/drills/** and state/rewrites/ today),
+# so "under state/" is not "ignored". A directory there counts only while git itself says a file in it is ignored (git
+# check-ignore --no-index from the root of the work tree that holds it, the caller's own git settings left out); no git,
+# or a git that cannot answer, refuses. These read this checkout's real .gitignore and write nothing.
+REINCLUDED = [
+    STATE / "coord" / "licence-pins",
+    STATE / "drills" / "licence-pins",
+    STATE / "rewrites" / "licence-pins",
+    STATE / "drills",
+]
+IGNORED = [STATE, STATE / "ci" / "licence-pins", STATE / "policy-pins" / "renders"]
+
+
+def _hostile_git_env(tmp_path, monkeypatch) -> None:
+    """Git settings of the caller's own that must not decide the verdict: a GIT_DIR and a work tree elsewhere (as a git
+    hook has), and a global excludes file that ignores everything (it ignores state/ itself, re-includes and all)."""
+    (tmp_path / "xdg" / "git").mkdir(parents=True)
+    (tmp_path / "xdg" / "git" / "ignore").write_text("*\n", encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("GIT_DIR", str(tmp_path / "not-a-repo"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(tmp_path))
+
+
+needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git is not on PATH")
+
+
+@needs_git
+@pytest.mark.parametrize("env", ["plain", "hostile"])
+def test_a_dir_git_would_commit_under_state_is_refused(tmp_path, monkeypatch, env):
+    corpus = _corpus_here(tmp_path, monkeypatch)
+    theirs = R.resolve_source("abcDEF", corpus)
+    own = R.resolve_source(str(_own_frag(tmp_path)), corpus)
+    if env == "hostile":
+        _hostile_git_env(tmp_path, monkeypatch)
+    for d in REINCLUDED:
+        for allow in (False, True):
+            why = R.out_dir_refusal(d, theirs, allow_tracked=allow)
+            assert why, (d, allow)
+            assert "state" in why, (d, allow)
+        assert "--allow-tracked" in (R.out_dir_refusal(d, own) or ""), d
+        assert R.leaves_state(d) is True, d  # so the driver is told, and judges it again
+    for d in IGNORED:
+        assert R.out_dir_refusal(d, theirs) is None, d
+        assert R.leaves_state(d) is False, d
+
+
+@needs_node
+@needs_git
+@pytest.mark.parametrize("env", ["plain", "hostile"])
+def test_the_driver_refuses_a_dir_git_would_commit_under_state(tmp_path, monkeypatch, env):
+    if env == "hostile":
+        _hostile_git_env(tmp_path, monkeypatch)
+    own = _url(src="/jobs/local-x-0123456789.json")
+    cases = [({"url": _url(), "out_dir": str(d), "prefix": ""}, False) for d in REINCLUDED]
+    cases += [({"url": _url(), "out_dir": str(d), "prefix": "", "allow_tracked": True}, False) for d in REINCLUDED]
+    cases += [({"url": own, "out_dir": str(d), "prefix": ""}, False) for d in REINCLUDED]
+    cases += [({"url": own, "out_dir": str(REINCLUDED[0]), "prefix": "", "allow_tracked": True}, True)]  # our own
+    cases += [({"url": _url(), "out_dir": str(d), "prefix": ""}, True) for d in IGNORED]
+    got = _node_module(f"{json.dumps([j for j, _ in cases])}.map((j) => H.jobRefusal(j))")
+    for (job, ok), why in zip(cases, got, strict=True):
+        assert (why is None) is ok, (job, why)
+
+
+@needs_node
+def test_under_state_is_refused_when_git_cannot_be_asked(tmp_path, monkeypatch):
+    """No git on PATH: nothing under <repo>/state/ can be judged, so nothing there is accepted (fail closed)."""
+    corpus = _corpus_here(tmp_path, monkeypatch)
+    theirs = R.resolve_source("abcDEF", corpus)
+    (tmp_path / "no-git").mkdir()
+    monkeypatch.setenv("PATH", str(tmp_path / "no-git"))
+    for d in IGNORED:
+        assert R.out_dir_refusal(d, theirs), d
+        assert R.leaves_state(d) is True, d
+    got = _node_module(f"{json.dumps([str(d) for d in IGNORED])}.map((d) => H.underState(d))")
+    assert got == [False] * len(IGNORED)
+
+
+def _git_env() -> dict:
+    return {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+
+
+@pytest.fixture
+def git_repo(tmp_path, monkeypatch):
+    """A temp repository whose .gitignore ignores state/* and re-includes state/drills/, as this repository's does;
+    R.STATE_ROOT is its state/. Refusals are pinned here by what they leave on disk, not only by what they say."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not on PATH")
+    if not _git_free(tmp_path):
+        pytest.skip("the temp directory lies inside a git work tree")
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True, env=_git_env(), timeout=60)
+    (repo / ".gitignore").write_text("state/*\n!state/drills/\n!state/drills/**\n", encoding="utf-8")
+    (repo / "state").mkdir()
+    monkeypatch.setattr(R, "STATE_ROOT", repo / "state")
+    monkeypatch.setattr(R, "RENDERS", repo / "state" / "arsenal" / "shaders" / "renders")
+    return repo
+
+
+@pytest.mark.parametrize("verb", ["render", "filmstrip"])
+def test_a_render_into_a_dir_git_would_commit_is_refused_before_any_work(
+    git_repo, tmp_path, monkeypatch, parser, capsys, verb
+):
+    _corpus_here(tmp_path, monkeypatch)
+    monkeypatch.setattr(S, "base_for", lambda port: pytest.fail("a lab server was started"))
+    monkeypatch.setattr(R, "run_jobs", lambda *a, **k: pytest.fail("the driver ran"))
+    out = git_repo / "state" / "drills" / "x"
+    for allow in ([], ["--allow-tracked"]):
+        ns = parser.parse_args([verb, "abcDEF", "--out", str(out), *allow])
+        ns.json = True
+        assert ns.fn(ns) == 2
+        assert "state" in capsys.readouterr().err
+    assert not out.exists()
+    assert R.leaves_state(git_repo / "state" / "renders" / "x") is False  # an ignored dir of the same tree still counts
+
+
+def test_under_state_is_refused_when_git_cannot_answer(git_repo, tmp_path):
+    """A .git git cannot open (a worktree whose repository was removed): git errors, and the answer is no."""
+    broken = tmp_path / "broken"
+    (broken / "state").mkdir(parents=True)
+    (broken / ".git").write_text(f"gitdir: {tmp_path / 'gone' / '.git'}\n", encoding="utf-8")
+    assert R.under_state(broken / "state" / "x", primary=broken / "state") is False
+    assert R.under_state(git_repo / "state" / "x") is True  # the same rule over a repository git can open
+
+
+# ----------------------------------------------------------------------------- the roots a plan may name
+# A hand-edited plan could name any absolute directory outside a detectable git tree as a state root ('/' included).
+# The driver cannot compute the world's root render.py would give, so it bounds what it accepts: a root named state,
+# not a filesystem root, not the user's home nor a directory above it, and not inside a git tree.
+@needs_node
+def test_the_driver_bounds_the_state_roots_a_plan_may_name(world):
+    tmp, ws = world["tmp"], world["world_state"]
+    (tmp / "elsewhere").mkdir()
+    (tmp / "to-root").mkdir()
+    _link(Path(tmp.anchor), tmp / "to-root" / "state")  # named state, and it is '/'
+    through = tmp / "to-root" / "state" / ws.resolve().relative_to(tmp.anchor) / "x"
+
+    def plan(out, *roots):
+        return {"jobs": [{"url": _url(), "out_dir": str(out), "prefix": ""}], "state_roots": [str(r) for r in roots]}
+
+    cases = [
+        (plan(ws / "x", ws), True),  # the root render.py gives
+        (plan(ws / "x", tmp.anchor), False),  # a filesystem root
+        (plan(tmp / "elsewhere" / "x", tmp / "elsewhere"), False),  # not named state
+        (plan(through, tmp / "to-root" / "state"), False),  # named state, but '/' once followed
+        (plan(ws / "x", ws, tmp.anchor), False),  # one bad root refuses the plan
+    ]
+    got = _node_module(f"{json.dumps([p for p, _ in cases])}.map((p) => H.planRefusal(p))")
+    for (p, ok), why in zip(cases, got, strict=True):
+        assert (why is None) is ok, (p, why)
+    assert _node_module(f"H.underState({json.dumps(str(ws / 'x'))}, [{json.dumps(tmp.anchor)}])") is False
+
+
+@needs_node
+@pytest.mark.parametrize("layout", ["home is the root", "home is under the root"])
+def test_the_driver_refuses_the_users_home_as_a_state_root(world, monkeypatch, layout):
+    home = world["tmp"] / "h" / "state"
+    root = home
+    if layout == "home is under the root":
+        home = home / "me"
+    home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    plan = {"jobs": [{"url": _url(), "out_dir": str(root / "x"), "prefix": ""}], "state_roots": [str(root)]}
+    assert _node_module(f"H.planRefusal({json.dumps(plan)})") is not None
+
+
+@pytest.mark.parametrize("layout", ["linked elsewhere", "home is under it"])
+def test_the_world_state_root_is_bounded_as_the_drivers_is(world, monkeypatch, layout):
+    """render.py names the world's root to the driver only when the driver would accept it: so a world whose state/
+    is a link to a directory of another name, or a state/ above the user's home, widens nothing."""
+    tmp = world["tmp"]
+    data = tmp / "w2"
+    data.mkdir()
+    if layout == "linked elsewhere":
+        (tmp / "elsewhere").mkdir()
+        _link(tmp / "elsewhere", data / "state")
+    else:
+        (data / "state" / "me").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(data / "state" / "me"))
+        monkeypatch.setenv("USERPROFILE", str(data / "state" / "me"))
+    monkeypatch.setenv("AI_SETUP", str(data))
+    assert R.extra_state_roots() == []
+    assert R.build_plan("pytest", [], 0)["state_roots"] == []
+
+
+# ------------------------------------------------------------------ lab_shot, at the moment of each screenshot
+# lab_shot.mjs judges --out once, then waits up to ten minutes for the GPU lock before its first screenshot: long
+# enough to swap the directory for a link into a tracked tree. Every screenshot write judges it again.
+def _fake_lab_browser_js() -> str:
+    """A stand-in for lab_shot.mjs's browser that answers shoot's and shootRun's page calls (the run view is refused by
+    its pre-flight, so it takes one picture and returns)."""
+    return (
+        "const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64');"
+        "const fake = { page: { send: async (m) => (m === 'Page.captureScreenshot' ? { data: png } : {}) },"
+        " evaluate: async (e) => e.includes('canvases') ? { canvases: 0, contexts: [] }"
+        " : e.includes('live: !!R.live') ? { ready: true, error: null, live: true }"
+        " : e.includes('const R = window.__lab') ? { ready: true, error: null, stage: null }"
+        " : e.includes('wb-receipt-sheet') ? null"
+        " : e.includes('stage.state()') ? { refused: 'a pin', running: false }"
+        " : e.startsWith('[...document.images]') ? 0 : true };"
+    )
+
+
+@needs_node
+@pytest.mark.parametrize("view", ["bench", "run"])
+@pytest.mark.parametrize("swap", [False, True])
+def test_lab_shot_judges_its_out_dir_again_at_every_screenshot(world, view, swap):
+    out = world["world_state"] / "arsenal" / "shaders" / "labshots" / "pin"
+    out.mkdir(parents=True)
+    design = world["tracked"] / "design"
+    roots = [str(world["world_state"].resolve())]
+    if swap:  # swapped for a link into a tracked tree while lab_shot waited for the GPU lock
+        out.rmdir()
+        _link(design, out)
+    call = (
+        "L.shoot(fake, 'http://127.0.0.1:1', 'bench', 8, 4, out, roots)"
+        if view == "bench"
+        else "L.shootRun(fake, 'http://127.0.0.1:1', 'abcDEF', null, 8, 4, out, 120000, 1, null, roots)"
+    )
+    got = _node(
+        f"import * as L from {json.dumps(LAB_SHOT.resolve().as_uri())};"
+        + _fake_lab_browser_js()
+        + f"const out = {json.dumps(str(out))}, roots = {json.dumps(roots)};"
+        + f"let r; try {{ const row = await {call}; r = {{ files: row.files || [row.file] }}; }}"
+        + " catch (e) { r = { error: e.message }; } console.log(JSON.stringify(r));"
+    )
+    if swap:
+        assert "refused at write time" in got.get("error", ""), got
+        assert list(design.iterdir()) == []
+    else:
+        assert got.get("files"), got
+        for f in got["files"]:
+            assert Path(f).parent == out, f
+            assert Path(f).read_bytes()[:4] == b"\x89PNG", f
+
+
+@needs_node
+@needs_git
+def test_the_git_ignore_and_state_root_rules_have_twins(world):
+    """git_ignores / gitIgnores and state_root_refusal / stateRootRefusal, run over the same paths."""
+    tmp, ws, tracked = world["tmp"], world["world_state"], world["tracked"]
+    repo = tmp / "ignoring"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True, env=_git_env(), timeout=60)
+    (repo / ".gitignore").write_text("state/*\n!state/drills/\n!state/drills/**\n", encoding="utf-8")
+    (repo / "state" / "drills" / "named").mkdir(parents=True)
+    _link(repo / "state" / "drills", repo / "state" / "to-drills")  # an ignored name that leads into drills
+    (repo / "state" / "drills" / "named" / R.GIT_PROBE).symlink_to(repo / "state" / "x" / "f.png")  # a link at the name
+    broken = tmp / "broken"
+    (broken / "state").mkdir(parents=True)
+    (broken / ".git").write_text(f"gitdir: {tmp / 'gone' / '.git'}\n", encoding="utf-8")
+    probes = [
+        (repo / "state" / "x" / R.GIT_PROBE, True),
+        (repo / "state" / R.GIT_PROBE, True),
+        (repo / "state" / "drills" / "x" / R.GIT_PROBE, False),
+        (repo / "state" / "to-drills" / R.GIT_PROBE, False),  # the directory is resolved: drills is asked about
+        (repo / "state" / "drills" / "named" / R.GIT_PROBE, False),  # the name is kept, not followed to state/x
+        (repo / "design" / R.GIT_PROBE, False),
+        (broken / "state" / R.GIT_PROBE, False),  # git cannot open that repository
+        (tmp / "no-repo" / R.GIT_PROBE, False),  # no work tree: nothing to ask, and the caller decides
+        (repo / "state" / "x" / ".." / R.GIT_PROBE, False),  # a '..'
+    ]
+    assert [R.git_ignores(p) for p, _ in probes] == [ok for _, ok in probes]
+    got = _node_module(f"{json.dumps([str(p) for p, _ in probes])}.map((p) => H.gitIgnores(p))")
+    assert got == [ok for _, ok in probes]
+    (tracked / "state").mkdir()
+    roots = [
+        (ws, True),
+        (Path(tmp.anchor), False),
+        (tmp / "elsewhere", False),
+        (tracked / "state", False),  # inside a git tree
+        (ws / ".." / "state", False),  # a '..'
+        (Path("state"), False),  # relative
+    ]
+    assert [R.state_root_refusal(p) is None for p, _ in roots] == [ok for _, ok in roots]
+    got = _node_module(f"{json.dumps([str(p) for p, _ in roots])}.map((p) => H.stateRootRefusal(p) === null)")
+    assert got == [ok for _, ok in roots]

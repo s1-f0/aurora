@@ -49,7 +49,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -1795,3 +1798,57 @@ def test_the_cli_load_list_names_explain():
     import inspect
 
     assert '"explain"' in inspect.getsource(cli._load_extensions)
+
+
+def _linked_world(tmp_path, monkeypatch):
+    """A checkout's state/ whose arsenal/shaders links into a temp world's state/ (as ~/.aurora/<world>/state is on a
+    machine whose world has a home), and state/out linked into a tracked repository. AI_SETUP names the world."""
+    if any((p / ".git").exists() for p in (tmp_path, *tmp_path.parents)):
+        pytest.skip("the temp directory lies inside a git work tree")
+    state = tmp_path / "repo" / "state"
+    (state / "arsenal").mkdir(parents=True)
+    world = tmp_path / "world" / "state" / "arsenal" / "shaders"
+    world.mkdir(parents=True)
+    tracked = tmp_path / "tracked"
+    (tracked / ".git").mkdir(parents=True)
+    try:
+        (state / "arsenal" / "shaders").symlink_to(world, target_is_directory=True)
+        (state / "out").symlink_to(tracked, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this account cannot create symlinks")
+    monkeypatch.setenv("AI_SETUP", str(tmp_path / "world"))
+    return state, world, tracked
+
+
+def test_ledger_path_follows_a_link_into_the_world_state_and_no_further(tmp_path, monkeypatch):
+    state, world, tracked = _linked_world(tmp_path, monkeypatch)
+    path = X.ledger_path("abcDEF", state / "arsenal" / "shaders" / "ledger", state_root=state)
+    assert path.resolve().is_relative_to(world.resolve())
+    with pytest.raises(ValueError, match="state"):
+        X.ledger_path("abcDEF", state / "out", state_root=state)
+    assert not (tracked / "abcDEF.json").exists()
+
+
+def _ignoring_repo(tmp_path) -> Path:
+    """A temp repository whose .gitignore ignores state/* but re-includes state/drills/ and one name in state/ci/, as
+    this repository's does; its state/ is returned. The licence line asks git, not a list, where a file may land."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not on PATH")
+    if any((p / ".git").exists() for p in (tmp_path, *tmp_path.parents)):
+        pytest.skip("the temp directory lies inside a git work tree")
+    repo = tmp_path / "repo"
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True, env=env, timeout=60)
+    (repo / ".gitignore").write_text(
+        "state/*\n!state/drills/\n!state/drills/**\n!state/ci/\nstate/ci/*\n!state/ci/kept.json\n", encoding="utf-8"
+    )
+    (repo / "state").mkdir()
+    return repo / "state"
+
+
+def test_ledger_path_refuses_a_file_git_would_commit_under_state(tmp_path):
+    state = _ignoring_repo(tmp_path)
+    for ledger_dir, sid in ((state / "drills", "abcDEF"), (state / "ci", "kept")):  # a re-included dir; name
+        with pytest.raises(ValueError, match="state"):
+            X.ledger_path(sid, ledger_dir, state_root=state)
+    assert X.ledger_path("abcDEF", state / "ci", state_root=state) == state / "ci" / "abcDEF.json"
