@@ -69,11 +69,18 @@ def test_a_cut_list_gives_the_total_and_how_to_see_the_rest(store, capsys):
     assert "list --limit 30" in text
 
 
-def test_long_lesson_text_is_cut_with_its_size_and_a_real_full_hint(store, capsys):
-    store.rows = [_lesson("long_one", "x " * 400), _lesson("short_one")]
-    _, text = _recall(capsys)
+def test_a_long_preview_column_is_cut_with_its_size_and_a_real_full_hint(store, capsys):
+    """The tried/result columns preview fields beyond the selected lesson: a long one is cut with
+    its size, and the hint names the real --full source that holds it whole. The lesson column is
+    the selected field and is never cut (tests/test_recall_intact.py)."""
+    store.rows = [_lesson("long_one", "y " * 400, what_tried="x " * 400), _lesson("short_one")]
+    _, text = _recall(capsys, fields="tried")
     assert "(truncated, 799 chars total)" in text
     assert "recall --full learn:experiment:long_one" in text
+    assert '"' + "y " * 400 + '"' in text  # the selected lesson, whole, as TOON quotes it
+    _, text = _recall(capsys)
+    assert "(truncated" not in text  # nothing is cut when no preview column is shown
+    assert "recall --full learn:experiment:<name>" in text
 
 
 def test_fields_adds_columns_and_rejects_unknown_ones(store, capsys):

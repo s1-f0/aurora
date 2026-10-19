@@ -30,6 +30,7 @@ import sys
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
 
 from core.comm import packet_spec
@@ -755,6 +756,13 @@ CLARIFY_TIMEOUT_S = 300
 
 
 class ToolBox:
+    #: The provenance environment every CLI call runs under; __init__ sets the real one. This
+    #: empty, read-only default is for a ToolBox built without __init__ (ToolBox.__new__, the way
+    #: tests/test_recall_intact.py builds one): its CLI calls then run in the caller's own
+    #: environment. Without it _agent_cli raised AttributeError, which it reports as
+    #: "ERROR: agent_cli failed", so every CLI door of that ToolBox failed.
+    _prov_env: Mapping[str, str] = MappingProxyType({})
+
     def __init__(
         self,
         root: Path,

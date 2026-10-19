@@ -1099,7 +1099,10 @@ def test_the_real_scope_is_every_file_git_would_commit_minus_state():
     assert before & after <= got <= before | after
     assert "tests/test_glsl_licence_line.py" in got
     assert "core/state/__init__.py" in got
-    assert ".claude/skills/shader-craft/references/house-glsl-cookbook.md" in got
+    # The shader cookbook is the house file most likely to hold shader code, and it sits under a dot-folder: the
+    # scope must reach it. .agents/skills is the one source and .claude/skills a symlink to it, so git lists the
+    # cookbook under .agents/skills and the link as a single entry, never the files behind it.
+    assert ".agents/skills/shader-craft/references/house-glsl-cookbook.md" in got
     assert not any(rel.startswith("state/") for rel in got)
 
 

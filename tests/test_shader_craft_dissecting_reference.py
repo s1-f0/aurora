@@ -13,6 +13,8 @@ RED before the section exists; RED again the day any of it drifts.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import re
 from pathlib import Path
 
@@ -158,7 +160,21 @@ def test_p5_every_verb_the_reference_names_is_registered():
     media = _read(REPO / "arsenal" / "media" / "__main__.py")
     assert '"filmstrip"' in media
     assert "py -m arsenal.media filmstrip" in ref
-    top = _read(REPO / "arsenal" / "__main__.py")
     for verb in ("boost", "floors"):
-        assert f'sub.add_parser("{verb}"' in top
+        assert _arsenal_registers(verb), f"`py -m arsenal {verb}` is not a registered arsenal verb"
         assert f"py -m arsenal {verb}" in ref
+
+
+def _arsenal_registers(verb: str) -> bool:
+    """Ask the arsenal parser itself: `<verb> --help` exits 0 for a registered verb that keeps argparse's own help
+    (boost and floors do; shader, add_help=False, does not) and 2 (invalid choice) for an unregistered one. A text
+    match on `sub.add_parser("<verb>"` went RED once ruff format split the call over two lines, with both verbs
+    still registered."""
+    from arsenal.__main__ import main
+
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        try:
+            main([verb, "--help"])
+        except SystemExit as exc:
+            return exc.code == 0
+    return False

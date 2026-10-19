@@ -124,7 +124,12 @@ def cmd_recall_at(args):
             {
                 "status": " ".join(words),
                 "by": author or None,
-                "lesson": out.truncate(it.get("text"), 800)[0],
+                # Whole, like render(): recall-at limits how many lessons it surfaces (--limit),
+                # never how much of each, and a lesson's qualification sits in its tail
+                # (508439e68; tests/test_recall_intact.py). The runner ToolBox reads THIS verb's
+                # output for its recall_at tool and its pre- and post-flight recall, so a cut here
+                # reaches every API-model seat.
+                "lesson": str(it.get("text") or ""),
                 "source": it.get("source"),
             }
         )
@@ -137,7 +142,7 @@ def cmd_recall_at(args):
         if counter.get("source") in {r["source"] for r in rows}:
             doc["disputed_by"] = counter.get("source")  # the counter is already listed above
         else:
-            doc["counter"] = {"lesson": out.truncate(counter["text"], 800)[0], "source": counter.get("source")}
+            doc["counter"] = {"lesson": str(counter["text"]), "source": counter.get("source")}
     if verbs:
         doc["verbs"] = [{"verb": v.get("verb"), "purpose": v.get("purpose", "")} for v in verbs]
     try:  # the staleness cue: an old lesson may name files and flags that have since moved

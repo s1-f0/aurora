@@ -16,6 +16,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
+from core.axi.toon import encode
 from core.comm.toolbox import MAX_CMD_OUT, ToolBox
 from core.recall import at_action as aa
 
@@ -65,37 +66,74 @@ def test_renderer_keeps_content_and_every_footer(selected):
     assert "[lock] peer" in out
 
 
+def assert_verb_selected_intact(out, selected):
+    """The recall-at VERB's agent view (core/recall/surface.py) is TOON, not render()'s prose
+    (the hook keeps render(); the verb has its own view). So the same complete content and the
+    same caveats are looked for in TOON's words. TOON writes a newline inside a value as the
+    escape \\n, so complete text is looked for as TOON writes it, encode(text)."""
+    for item in selected["lessons"] + [selected["counter"]]:
+        assert encode(item["text"]) in out
+        assert item["source"] in out
+    assert encode(selected["verbs"][0]["purpose"]) in out
+    assert "(truncated" not in out
+    assert "total: 7\nshown: 3\n" in out  # render(): "3 of 7 relevant lesson(s) shown"
+    assert "oldest_days: 100" in out  # render(): "verify named files/flags still exist ..."
+    assert "unverified=never confirmed" in out  # the legend of the status words on screen
+    assert "locked_by[1]: peer" in out
+
+
 def test_cli_and_mcp_use_complete_common_renderer(monkeypatch, capsys, selected):
+    """The CLI verb and the MCP door print through ONE renderer (cmd_recall_at), and it delivers
+    every selected lesson, the counter and the verb whole, with their sources, the count, the
+    staleness cue, the legend and the lock."""
     import agent_cli
 
+    monkeypatch.setenv("AURORA_OUTPUT", "agent")
     monkeypatch.setattr(aa, "recall_at", lambda **kw: selected)
     args = agent_cli.build_parser().parse_args(["recall-at", "--command", "example"])
     assert args.fn(args) == 0
-    assert_selected_intact(capsys.readouterr().out.rstrip(), selected)
+    cli_out = capsys.readouterr().out.rstrip()
+    assert_verb_selected_intact(cli_out, selected)
     import ai_setup_mcp
 
     # _run's thread-local stdout proxy is installed at module import.
     out = asyncio.run(ai_setup_mcp.recall_at(command="example"))
-    assert_selected_intact(out, selected)
+    assert_verb_selected_intact(out, selected)
+    assert out.rstrip() == cli_out
 
 
 @pytest.mark.parametrize("field", ["recommendation", "actual", "what_tried"])
 def test_keyword_pull_keeps_selected_field_sources_and_count(monkeypatch, capsys, field):
+    """A keyword pull limits how many lessons it prints, never how much of each: all 25 shown
+    lessons carry the complete field recall selected (whichever one it was), tail included; each
+    one can be traced to its source; the count says how many matched; the 26th is not printed.
+
+    The agent view is TOON (core/axi/toon.py), which writes a newline inside a value as the
+    escape \\n. So the complete text is looked for as TOON writes it, encode(text): every
+    character, none cut, no whitespace collapsed. The tail is also looked for as plain text.
+    The count is TOON's total/shown pair. The source column is opt-in there (--fields source);
+    the default rows carry the lesson name the source is built from."""
     import agent_cli
     from core.learning import learning_store
 
+    monkeypatch.setenv("AURORA_OUTPUT", "agent")
     text = long_text(field, 25)
     rows = [dict(experiment_name=f"lesson_{i}", category="test", **{field: text}) for i in range(26)]
     monkeypatch.setattr(
         learning_store, "get_learning_store", lambda: NS(search_learnings_by_keyword=lambda *a, **kw: rows)
     )
-    args = agent_cli.build_parser().parse_args(["recall", "query"])
-    assert args.fn(args) == 0
-    out = capsys.readouterr().out
-    assert out.count(text) == 25
+    parser = agent_cli.build_parser()
+    for argv in (["recall", "query"], ["recall", "query", "--fields", "source"]):
+        args = parser.parse_args(argv)
+        assert args.fn(args) == 0
+        out = capsys.readouterr().out
+        assert out.count(encode(text)) == 25, argv
+        assert out.count(f"QUALIFICATION: {field} TAIL — do not generalize.") == 25, argv
+        assert "(truncated" not in out, argv
+        assert "total: 26\nshown: 25\n" in out, argv
+        assert "\n  lesson_24,test," in out, argv
+        assert "lesson_25" not in out, argv
     assert "learn:experiment:lesson_24" in out
-    assert "25 of 26" in out
-    assert "lesson_25" not in out
 
 
 @pytest.mark.parametrize("altitude", ["action", "plan"])
@@ -336,6 +374,7 @@ def test_real_cli_process_returns_complete_selected_and_full_records(tmp_path):
         AKASHIC_RECALL_STATE_DIR=str(tmp_path / "recall"),
         PYTHONUTF8="1",
         _AISETUP_TEST_ISOLATED="1",
+        AURORA_OUTPUT="agent",
     )
     # The existing per-line FAITH gate expects one line carrying its source.
     # Multiline fidelity is tested above at the rendering/delivery boundary;
@@ -400,12 +439,16 @@ def test_real_cli_process_returns_complete_selected_and_full_records(tmp_path):
         assert lesson["text"] == text
         assert text in rendered
         assert lesson["source"] in rendered
-    assert "3 of 4 relevant lesson(s) shown" in rendered
+    # The CLI verbs print TOON for an agent (core/axi): the count is its total/shown pair, and a
+    # newline inside a value is the escape \n, so a multi-line field is looked for as TOON
+    # writes it. `text` itself has no newline, so it is looked for as it is.
+    assert "total: 4\nshown: 3\n" in rendered  # render(): "3 of 4 relevant lesson(s) shown"
+    assert "(truncated" not in rendered
     assert len(rendered) > 900
     pulled = cli("recall", "quasarrecall")
     assert pulled.count(text) == 4
     full = cli("recall", "--full", "learn:experiment:quasarrecall_0")
     assert text in full
-    assert rows[0]["what_tried"] in full
-    assert rows[0]["actual_outcome"] in full
+    assert encode(rows[0]["what_tried"]) in full
+    assert encode(rows[0]["actual_outcome"]) in full
     print(f"door receipt: recall-at={len(rendered)} chars; keyword={len(pulled)}; full={len(full)}; all tails intact")

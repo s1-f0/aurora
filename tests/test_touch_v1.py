@@ -223,23 +223,67 @@ def test_the_builder_never_raises_into_the_hook_and_counts_what_it_dropped():
 
 
 # ---------------------------------------------------------------- the twins stay in parity
+#
+# ONE COPY, TWO ENTRY PATHS (reconcile, 2026-10-19). These pins were written for the Windows line,
+# where scripts/hooks/ and agent/harness/hooks/ held twin FULL copies and a fix landed in one was
+# shipped to half the fleet. On the Linux line scripts/hooks/claude_*.py are stable-entry shims that
+# runpy the one canonical file (tests/test_hook_shims.py, scripts/checkers/check_wiring.py). The
+# guard is unchanged: whichever path a seat's settings register, it runs the touch emit, and the two
+# paths cannot drift in code. It is now asserted as "the emit is in the canonical file and the entry
+# path hands off to that file and does nothing else".
+CANON_POST = Path(REPO, "agent", "harness", "hooks", "claude_posttooluse.py")
+ENTRY_POST = Path(REPO, "scripts", "hooks", "claude_posttooluse.py")
+
+
+def _handoff_target(entry: Path) -> Path:
+    """The file a stable-entry shim runs, read from its syntax tree. Fails the calling pin when the
+    shim holds any code besides its docstring, `import os, runpy` and one
+    `runpy.run_path(os.path.join(<repo root>, ...), run_name="__main__")`."""
+    import ast
+
+    body = ast.parse(entry.read_text(encoding="utf-8")).body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]  # the docstring is prose
+    imports = sorted(a.name for n in body if isinstance(n, ast.Import) for a in n.names)
+    rest = [n for n in body if not isinstance(n, ast.Import)]
+    assert imports == ["os", "runpy"], f"{entry} imports {imports}: a shim needs only os and runpy"
+    extra = f"{entry} carries code besides the hand-off: {[ast.unparse(n)[:80] for n in rest]}"
+    assert len(rest) == 1, extra
+    assert isinstance(rest[0], ast.Expr), extra
+    assert isinstance(rest[0].value, ast.Call), extra
+    call = rest[0].value
+    assert ast.unparse(call.func) == "runpy.run_path", ast.unparse(call)
+    assert {k.arg: ast.unparse(k.value) for k in call.keywords} == {"run_name": "'__main__'"}, (
+        f"{entry} does not run its target as __main__, so the target's main() never fires"
+    )
+    join = call.args[0]
+    assert isinstance(join, ast.Call), ast.unparse(join)
+    assert ast.unparse(join.func) == "os.path.join", ast.unparse(join)
+    node, depth = join.args[0], 0
+    while isinstance(node, ast.Call) and ast.unparse(node.func) == "os.path.dirname":
+        node, depth = node.args[0], depth + 1
+    assert ast.unparse(node) == "os.path.abspath(__file__)", ast.unparse(join.args[0])
+    parts = [p.value for p in join.args[1:] if isinstance(p, ast.Constant)]
+    assert len(parts) == len(join.args) - 1, f"{entry} builds its target from non-literal parts"
+    root = Path(os.path.abspath(entry))
+    for _ in range(depth):
+        root = root.parent
+    return Path(root, *parts).resolve()
+
+
 def test_both_hook_copies_carry_the_touch_emit():
-    """This repo keeps seven hook pairs under scripts/hooks/ and agent/harness/hooks/ that differ
-    only by their sys.path depth. USER settings invoke the scripts/ copy and PROJECT settings the
-    agent/harness/ copy, so a home-rooted seat runs ONLY the copy check_wiring deliberately does
-    not walk. Patching one is shipping to half the fleet, invisibly."""
-    a = Path(REPO, "agent", "harness", "hooks", "claude_posttooluse.py").read_text(encoding="utf-8")
-    b = Path(REPO, "scripts", "hooks", "claude_posttooluse.py").read_text(encoding="utf-8")
-    for name, src in (("agent/harness/hooks", a), ("scripts/hooks", b)):
-        assert "touch" in src, f"{name} copy has no touch emit"
-        assert "core.events" in src, f"{name} copy has no touch emit"
+    """USER settings invoke the scripts/ path and PROJECT settings the agent/harness/ path, so a
+    home-rooted seat runs ONLY the scripts/ entry. Patching one is shipping to half the fleet,
+    invisibly -- so the emit must be in the file BOTH entry paths execute."""
+    src = CANON_POST.read_text(encoding="utf-8")
+    assert "touch" in src, "agent/harness/hooks copy has no touch emit"
+    assert "core.events" in src, "agent/harness/hooks copy has no touch emit"
+    assert _handoff_target(ENTRY_POST) == CANON_POST.resolve(), (
+        "scripts/hooks/claude_posttooluse.py does not run the canonical copy, so home-rooted seats "
+        "would not carry the touch emit"
+    )
 
 
 def test_the_twins_differ_only_by_their_path_depth_and_prose():
-    a = Path(REPO, "agent", "harness", "hooks", "claude_posttooluse.py").read_text(encoding="utf-8")
-    b = Path(REPO, "scripts", "hooks", "claude_posttooluse.py").read_text(encoding="utf-8")
-
-    def strip(s):
-        return [ln for ln in s.splitlines() if "sys.path.insert" not in ln and not ln.strip().startswith("#")]
-
-    assert strip(a) == strip(b), "the hook twins have drifted in CODE, not just in comments"
+    """The entry path holds no code but its hand-off, so the two paths cannot drift in CODE."""
+    assert _handoff_target(ENTRY_POST) == CANON_POST.resolve()

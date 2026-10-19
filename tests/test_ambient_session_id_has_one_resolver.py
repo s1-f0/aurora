@@ -160,8 +160,11 @@ def test_the_cli_capture_sites_resolve_a_session():
     import re
 
     src = (ROOT / "agent_cli.py").read_text(encoding="utf-8")
-    start = src.index('capture_event("learning"')
-    block = src[start : start + 600]
+    # ruff format puts each argument of a long call on its own line, so the call is found by its
+    # shape (`capture_event(` then the "learning" kind), not by one spelling of its whitespace.
+    call = re.search(r'capture_event\(\s*"learning"', src)
+    assert call, 'cmd_learn no longer calls capture_event("learning", ...): the lesson event is gone'
+    block = src[call.start() : call.start() + 600]
     assert re.search(r"session_id\s*=", block), (
         "cmd_learn's capture_event passes no session_id, so a filed lesson cannot be joined "
         "to the session that produced it (measured 0 of 4 over 24h)"

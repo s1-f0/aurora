@@ -1655,9 +1655,18 @@ def cmd_recall(args):
             status = f"other scope ({_scope.render(_scope.of(h))})"
         else:
             status = "active"
-        lesson, was_cut = out.truncate(h.get("recommendation") or h.get("actual") or h.get("what_tried", ""), 300)
+        # The lesson column is the field recall SELECTED, and it goes out whole: every character,
+        # its own whitespace, and its tail, which is where a lesson keeps its qualification ("...
+        # do not generalize"). Recall limits how MANY lessons it prints (--limit), never how much
+        # of each one (508439e68: "bound result COUNTS, not selected CONTENT"; the `list` alias
+        # included; pinned by tests/test_recall_intact.py). TOON escapes a newline without loss,
+        # so each row stays one line. tried/result are previews of fields beyond the selected
+        # one: cut at 300 with their size, and `--full` prints the whole record.
+        lesson = str(h.get("recommendation") or h.get("actual") or h.get("what_tried") or "")
         source = h.get("source") or f"learn:experiment:{name}"
-        if was_cut:
+        tried, tried_cut = out.truncate(h.get("what_tried"), 300)
+        result, result_cut = out.truncate(h.get("actual"), 300)
+        if ("tried" in fields and tried_cut) or ("result" in fields and result_cut):
             cut_sources.append(source)
         full_row = {
             "name": name,
@@ -1668,13 +1677,14 @@ def cmd_recall(args):
             "success": h.get("success") or None,
             "agent": h.get("agent_id") or h.get("agent") or None,
             "scope": _scope.render(_scope.of(h)),
-            "tried": out.truncate(h.get("what_tried"), 300)[0] or None,
-            "result": out.truncate(h.get("actual"), 300)[0] or None,
+            "tried": tried or None,
+            "result": result or None,
         }
         rows.append({f: full_row[f] for f in fields})
     doc["lessons"] = rows
-    # The --full hint names a real source when there is no guessing involved: the one lesson
-    # whose text was cut, or the only lesson shown. Otherwise a placeholder (AXI section 9).
+    # The --full hint names a real source when there is no guessing involved: the first lesson
+    # whose tried/result preview was cut, or the only lesson shown. Otherwise a placeholder
+    # (AXI section 9).
     if cut_sources:
         hints = [f"{cli} recall --full {cut_sources[0]}"]
     elif len(rows) == 1:

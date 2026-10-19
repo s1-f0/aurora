@@ -191,25 +191,39 @@ def test_aperture_values_refuse_unknown_physics_instead_of_guessing():
         build_orientation(SUBJECT, depth="omniscient", providers=_providers())
 
 
-def test_compact_renderer_names_focus_contours_truth_floor_and_effects():
-    from core.coord.orient import build_orientation, render_orientation
+def test_compact_renderer_names_focus_contours_truth_floor_and_effects(monkeypatch, capsys):
+    """The CLI's compact projection of the scene names the subject, the focus, every contoured landmark, the
+    five-axis truth floor and the effects, and folds the evidence. The projection is agent_cli's agent view
+    (_orient_doc); core.coord.orient's own text renderer had no caller left and was removed (e82255f96)."""
+    import agent_cli
+    from core.coord import orient as orient_module
 
-    text = render_orientation(
-        build_orientation(
-            SUBJECT,
-            "verb:capture",
-            density="compact",
-            depth="surface",
-            providers=_providers(),
-        )
+    real_build = orient_module.build_orientation
+    monkeypatch.setattr(
+        orient_module,
+        "build_orientation",
+        lambda subject, target, **kw: real_build(subject, target, **kw, providers=_providers()),
     )
+    monkeypatch.setenv("AURORA_OUTPUT", "agent")
+    ns = argparse.Namespace(
+        agent=SUBJECT, target="verb:capture", density="compact", depth="surface", per_stream=1000, json=False
+    )
+    assert agent_cli.cmd_orient(ns) == 0
+    text = capsys.readouterr().out
 
-    assert f"subject={SUBJECT}" in text
-    assert "focus verb:capture" in text
-    assert "periphery 3 contour" in text
-    assert "truth" in text.lower()
-    assert "effects=none" in text
-    assert len(text.splitlines()) <= 12
+    assert f"subject: {SUBJECT}" in text
+    assert 'target: "verb:capture"' in text
+    assert "landmarks_total: 4" in text
+    assert text.count(",contoured,") == 3, "compact density contours landmarks; it never drops them"
+    for axis in sorted(AXES):
+        assert f"\n  {axis}: " in text, f"the truth floor is missing {axis}"
+    assert "effects: none" in text
+    # Surface depth folds the evidence: the focus reports every field of the ground result as folded (depth=evidence
+    # reports 0), and neither the ground rung's claim nor the landmark details reach the render. There is no line cap:
+    # the old renderer's "<= 12 lines" went with it, as this view prints one line per truth value and per landmark.
+    assert f"\n  folded_fields: {len(_ground('verb:capture', subject=SUBJECT))}\n" in text
+    assert "fixture endpoint is present" not in text
+    assert "rank" not in text
 
 
 def test_cli_mcp_and_toolbox_share_the_native_scene_seam(monkeypatch, tmp_path):

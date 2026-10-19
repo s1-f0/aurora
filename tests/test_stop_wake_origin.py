@@ -61,6 +61,12 @@ def _run_hook(tmp, sid, hook=HOOK):
         "TEMP": str(tmp),
         "TMP": str(tmp),
         "TMPDIR": str(tmp),
+        # Each run here is its own Stop event, so its dedup marker lives in its own temp dir like
+        # everything else the hook writes. The conftest's per-TEST AKASHIC_HOOK_DEDUP_DIR would
+        # otherwise reach the hook through os.environ and outrank TMPDIR (agent/harness/dedup.py),
+        # and a second run of the same payload within three seconds is skipped as the other
+        # registration of one event -- which silenced the twin-parity run below.
+        "AKASHIC_HOOK_DEDUP_DIR": os.path.join(str(tmp), "akashic-hook-dedup"),
     }
     payload = json.dumps({"session_id": sid, "hook_event_name": "Stop"})
     return subprocess.run(
@@ -188,7 +194,7 @@ def test_stop_hook_twin_decides_what_the_canonical_hook_decides(tmp_path, sleepe
     sid = _sid()
     runs = []
     for i, hook in enumerate((HOOK, TWIN)):
-        tmp = tmp_path / f"run{i}"  # one tempdir each: the hook dedups an identical replayed payload
+        tmp = tmp_path / f"run{i}"  # one tempdir (and dedup dir, see _run_hook) each: two events
         tmp.mkdir()
         _seat(tmp, sid, sleeper, origin=ws.ORIGIN_DAEMON)
         runs.append(_run_hook(tmp, sid, hook=hook))

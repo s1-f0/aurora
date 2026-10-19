@@ -163,14 +163,34 @@ def test_the_import_failure_fallback_agrees_with_the_canonical_arm_command():
         "the canonical arm command still carries a lane prefix the door now sets itself"
     )
 
-    for rel in ("scripts/hooks/claude_stop.py", "agent/harness/hooks/claude_stop.py"):
-        text = (ROOT / rel).read_text(encoding="utf-8-sig")
-        # the fallback's shape, as written: f"py {_cli} " f"bifrost-standby {AGENT}" ...
-        assert "BIFROST_CONSUME_LANE=work BIFROST_WAKE_LANE=work" not in text, (
-            f"{rel} prescribes a lane prefix that wake_seat.arm_command no longer emits -- two "
-            "surfaces, two commands for one job, which is the 2026-10-02 defect"
-        )
-        assert re.search(r"bifrost-standby \{AGENT\}", text), (
-            f"{rel} no longer contains the hand-built fallback this pin tracks; if it now "
-            "delegates entirely, delete this assertion deliberately"
+    # ONE COPY HOLDS THE FALLBACK (reconcile, 2026-10-19). This loop read both
+    # scripts/hooks/claude_stop.py and agent/harness/hooks/claude_stop.py, because on the Windows
+    # line they were twin full copies and either one could carry a stale prescription. On the
+    # Linux line the scripts/ path is a stable-entry shim that runpy's the canonical file, so the
+    # hand-built fallback lives in the canonical copy alone and the shim can carry no command at
+    # all. The pin keeps both halves of what it guarded: the fallback still exists and still has
+    # no lane prefix, and no second surface the stop hook runs from builds an arm string of its own.
+    canonical = "agent/harness/hooks/claude_stop.py"
+    text = (ROOT / canonical).read_text(encoding="utf-8-sig")
+    # the fallback's shape, as written: f"{_launch} {_cli} bifrost-standby {AGENT}" ...
+    assert "BIFROST_CONSUME_LANE=work BIFROST_WAKE_LANE=work" not in text, (
+        f"{canonical} prescribes a lane prefix that wake_seat.arm_command no longer emits -- two "
+        "surfaces, two commands for one job, which is the 2026-10-02 defect"
+    )
+    assert re.search(r"bifrost-standby \{AGENT\}", text), (
+        f"{canonical} no longer contains the hand-built fallback this pin tracks; if it now "
+        "delegates entirely, delete this assertion deliberately"
+    )
+
+    entry = "scripts/hooks/claude_stop.py"
+    sys.path.insert(0, str(ROOT / "scripts" / "checkers"))
+    import check_wiring
+
+    assert [v for v in check_wiring.hook_shim_violations() if v[0] == "claude_stop.py"] == [], (
+        f"{entry} is no longer a policy-free shim onto {canonical}, so it can drift from it again"
+    )
+    shim = (ROOT / entry).read_text(encoding="utf-8-sig")
+    for token in ("bifrost-standby", "BIFROST_CONSUME_LANE"):
+        assert token not in shim, (
+            f"{entry} builds an arm command of its own -- a second surface for one job, the 2026-10-02 defect"
         )
