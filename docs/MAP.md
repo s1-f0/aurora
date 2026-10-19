@@ -11,7 +11,7 @@ Class: reference
 > Companions: ARCHITECTURE.md (skeleton) - MODULE_INDEX.md (docstrings) -
 > PHYSICS.md (bounds+flags) - the charter docs/library/brief/20260719_the-master-map-documentation-as-projecti_a26fd3.md.
 
-## GAP queue (46 of 204 modules lack both pin and paper by name)
+## GAP queue (44 of 213 modules lack both pin and paper by name)
 
 - core/foundation/durable_reconcile.py
 - core/foundation/filelock.py
@@ -39,7 +39,6 @@ Class: reference
 - core/comm/thread_capture.py
 - core/comm/timescale.py
 - core/coord/capability_search.py
-- core/coord/intent_shadow.py
 - core/coord/observations.py
 - core/coord/task_costs.py
 - core/learning/domains.py
@@ -51,7 +50,6 @@ Class: reference
 - core/narrative/chapter_lifecycle.py
 - core/narrative/theme_assigner.py
 - core/trust/action_authority.py
-- core/trust/capabilities.py
 - core/trust/grant_writer.py
 - core/fleet/model_roster.py
 - core/state/session_checkpoint.py
@@ -77,13 +75,15 @@ Class: reference
 | `streams.py` | streams -- process plumbing for long-lived agent processes (T030 L3 / RB-28). | tests/test_t150_runner_streams_are_watchable.py | GAP |  |
 | `timeutil.py` | timeutil -- one deterministic, timezone-safe way to turn an ISO timestamp into a | GAP | GAP |  |
 
-## core/events/  (3 modules)
+## core/events/  (5 modules)
 
 | Module | One-line spec | Pin | Paper | Flags |
 |---|---|---|---|---|
 | `event_index.py` | EventIndex (Slice V1) -- a Store-backed time index over the raw event firehose. | tests/test_event_index.py | GAP |  |
 | `event_log.py` | EventLog (Slice 1) -- capture raw cross-agent events on an append-only Ledger. | tests/test_event_log.py | GAP |  |
 | `event_query.py` | EventQuery (Slice 3) -- search and time-window the raw event firehose. | tests/test_event_query.py | GAP |  |
+| `touch.py` | touch.v1 -- what a seat actually touched, as one record the spine can join. | tests/test_touch_stats_v1.py | GAP | `AKASHIC_AGENT_ID`, `AKASHIC_TOUCH_DROPS_DIR` |
+| `touch_stats.py` | W0.4 -- the instrument: what the touch stream costs, and what it covers. | tests/test_touch_stats_v1.py | GAP |  |
 
 ## core/signals/  (2 modules)
 
@@ -92,7 +92,7 @@ Class: reference
 | `agent_signal_ledger.py` | Agent Signal Ledger: the ordered record of every signal agents emit | GAP | GAP |  |
 | `coordinator_api.py` | Coordinator API: Minimal signal-based logging for agents | GAP | GAP |  |
 
-## core/comm/  (69 modules)
+## core/comm/  (70 modules)
 
 | Module | One-line spec | Pin | Paper | Flags |
 |---|---|---|---|---|
@@ -142,14 +142,15 @@ Class: reference
 | `presets.py` | Fan presets: a named answer contract bound to the parser that reads it back. | tests/test_arsenal_presets.py | GAP |  |
 | `promoter.py` | Bifrost B2 -- the durable projection. Promote SALIENT bus messages into the append-only Ledger. | tests/test_bifrost_promoter.py | GAP | `AKASHIC_ACK_UNHANDLED_HOURS` |
 | `reaper.py` | reaper -- S4: a dead seat's unread directed mail re-homes, loudly. Never stranded. | tests/test_t108_s4_reaper_hardening.py | research/reviewed/fence-lite-s4-reaper-kimi-2026-07-28.md |  |
+| `resume_on_deaf.py` | resume_on_deaf -- S2 of the wake ladder (T420, Daniel 2026-10-01). | tests/test_resume_on_deaf.py | GAP | `AKASHIC_WAKE_EXPECTED_DIR`, `AKASHIC_WAKE_RESUMES_DIR` |
 | `role_queue.py` | role_queue -- T108 S1: load-balanced role-addressed work with claim semantics. | tests/test_t108_role_queue.py | GAP |  |
 | `room_feed.py` | Namespace-aware feed-stream discovery -- the backend half of readable side rooms. | tests/test_room_feed_namespace.py | GAP |  |
 | `roster.py` | roster -- S2: the lobby. Per-seat liveness the whole fleet can read. | tests/test_axi_roster.py | docs/library/design/20260718_frontier-roster-playbook-opening-positio_fde0ed.md | `AKASHIC_RESUME_GAP_S`, `AKASHIC_ROSTER_CHURN_AT`, `AKASHIC_ROSTER_CHURN_WINDOW_S`, `AKASHIC_WORKLIVE_FRESH_S`, `AKASHIC_WORKLIVE_TTL_S` |
-| `router.py` | T060 N0: pure route explanation and bounded shadow-delivery counters. | tests/test_router_confusables.py | docs/library/report/20260717_t060-n0-shadow-router-deepseek-review-pe_bf6b68.md |  |
+| `router.py` | T060 N0: pure route explanation and bounded shadow-delivery counters. | tests/test_deconstruct_skill_router.py | docs/library/report/20260717_t060-n0-shadow-router-deepseek-review-pe_bf6b68.md |  |
 | `runner_lib.py` | core.comm.runner_lib -- shared hardening for OpenAI-compatible seat transports (K0, 2026-07-18). | GAP | GAP | `BIFROST_INCARNATION`, `BIFROST_NAMESPACE` |
 | `runner_lock.py` | Bifrost runner singleton-lock -- at most ONE live runner per agent id. | GAP | GAP | `BIFROST_NAMESPACE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_SESSION_ID` |
 | `runtime_age.py` | runtime_age (T116) -- how much code a RUNNING process cannot possibly contain. | GAP | GAP | `BIFROST_NAMESPACE` |
-| `seat_identity.py` | seat_identity -- WHO AM I, resolved per SESSION instead of per PROCESS. | tests/test_axi_seat_identity.py | GAP | `AKASHIC_AGENT_ID` |
+| `seat_identity.py` | seat_identity -- WHO AM I, resolved per SESSION instead of per PROCESS. | tests/test_axi_seat_identity.py | GAP | `AKASHIC_AGENT_ID`, `AKASHIC_CLAIM_TTL_S`, `BIFROST_NAMESPACE` |
 | `secret_intake.py` | Secret intake — credentials travel window -> file, never through a transcript. | tests/test_secret_intake_pins.py | GAP | `AKASHIC_SECRETS_DIR` |
 | `self_restart.py` | self_restart (A1) -- a runner that knows it is stale restarts itself. | tests/test_a1_stale_self_restart.py | GAP | `AKASHIC_SELF_RESTART_MIN_BEHIND`, `AKASHIC_SELF_RESTART_MIN_UPTIME_S` |
 | `sender_guard.py` | Is this string a seat id, or is it somebody's message wearing the sender slot? | tests/test_bifrost_send_sender_guard.py | GAP |  |
@@ -159,14 +160,14 @@ Class: reference
 | `storm_detect.py` | storm_detect — S0-beta storm signature detection (lane-depth spike + repeat-delivery). | GAP | GAP | `STORM_DEPTH_THRESHOLD`, `STORM_DEPTH_WINDOW`, `STORM_REPEAT_THRESHOLD` |
 | `thread_capture.py` | Subject-bound, non-consuming Bifrost thread capture (T084 S2). | GAP | GAP |  |
 | `timescale.py` | Timescale (T030 L1 follow-up) -- ONE seam for BUGGIFY-style timeout shrinking. | GAP | GAP | `AKASHIC_TIMEOUT_MULTIPLIER` |
-| `toolbox.py` | core.comm.toolbox -- the fleet's guarded tool surface (schemas + executor), shared seam. | tests/test_k0_toolbox_extraction.py | docs/library/report/20260715_deepseek-t067-1-design-toolbox-third-doo_ae2b37.md | `AKASHIC_AGENT_ID`, `AURORA_LAUNCHER`, `DEEPSEEK_MAX_CMD_TIMEOUT`, `DEEPSEEK_RECALL_AT` |
+| `toolbox.py` | core.comm.toolbox -- the fleet's guarded tool surface (schemas + executor), shared seam. | tests/test_k0_toolbox_extraction.py | docs/library/report/20260715_deepseek-t067-1-design-toolbox-third-doo_ae2b37.md | `AKASHIC_AGENT_ID`, `AURORA_LAUNCHER`, `CLAUDE_CODE_SESSION_ID`, `DEEPSEEK_MAX_CMD_TIMEOUT`, `DEEPSEEK_RECALL_AT` |
 | `triage_park.py` | Triage park (S0-alpha) -- the scry-to-bottom bench. | tests/test_s0_triage_park.py | GAP | `AURORA_LAUNCHER`, `BIFROST_NAMESPACE` |
 | `turn_metrics.py` | Turn metrics (progress-bars data half; co-designed claude+deepseek 2026-07-11). | tests/test_turn_metrics.py | GAP | `BIFROST_NAMESPACE` |
-| `wake_seat.py` | wake_seat -- the per-session wake-seat protocol (T029 Wave 2, the R1/R16 fix). | tests/test_wake_seat.py | docs/library/design/20260701_wave-2-design-claude-fenced-wake-seat-ow_7c4aaf.md | `AKASHIC_TOMBSTONE`, `AKASHIC_WAKE_MARKER_FRESH_MIN`, `BIFROST_NAMESPACE` |
+| `wake_seat.py` | wake_seat -- the per-session wake-seat protocol (T029 Wave 2, the R1/R16 fix). | tests/test_wake_seat.py | docs/library/design/20260701_wave-2-design-claude-fenced-wake-seat-ow_7c4aaf.md | `AKASHIC_TOMBSTONE`, `AKASHIC_WAKE_MARKER_FRESH_MIN`, `AKASHIC_WAKE_RECEIPTS_DIR`, `BIFROST_NAMESPACE`, `PYTEST_CURRENT_TEST` |
 | `wake_tiers.py` | wake tiers -- the priority dimension the wake decision was missing. | tests/test_wake_tiers.py | GAP |  |
 | `wedge_discriminator.py` | wedge_discriminator (T376 S5) -- the wedged-vs-thinking decision rule. | tests/test_t376_s5_wedge_discriminator.py | GAP |  |
 
-## core/coord/  (31 modules)
+## core/coord/  (35 modules)
 
 | Module | One-line spec | Pin | Paper | Flags |
 |---|---|---|---|---|
@@ -182,7 +183,7 @@ Class: reference
 | `forecast_registry.py` | T375 -- the engineering forecast registry (append-only, fold-not-table). | tests/test_t375_forecast_registry.py | GAP |  |
 | `ground.py` | Truthful evidence ladders for Aurora subjects. | tests/test_axi_ground.py | docs/library/chronicle/20260721_session-reflection-the-grounding-point-f_aa816c.md | `AURORA_LAUNCHER` |
 | `intent.py` | Intent declaration -- Policy 0 of the coordination layer. | tests/test_boot_intent_surface.py | docs/library/report/20260711_claude-s-diagnosis-half-the-boot-intent_794515.md | `BIFROST_NAMESPACE` |
-| `intent_shadow.py` | Deterministic, renderer-neutral previews of proposed Aurora actions. | GAP | GAP |  |
+| `intent_shadow.py` | Deterministic, renderer-neutral previews of proposed Aurora actions. | tests/test_t084_intent_shadow.py | GAP |  |
 | `lens_ledger.py` | lens_ledger -- score fan lenses by what SURVIVED, not by whether the model replied. | tests/test_w168_lens_ledger.py | GAP | `AKASHIC_LENS_LEDGER` |
 | `method_drift.py` | method_drift -- the one method number that reaches a channel people actually read. | tests/test_boot_surfaces_method_drift.py | GAP |  |
 | `metrics.py` | Solution-Space-Shrinkage Tracker — the Metric C cross-run watchdog. | tests/narrative_metrics.py | GAP |  |
@@ -190,10 +191,14 @@ Class: reference
 | `observations.py` | Shared schema for bounded, subject-explicit observations. | GAP | GAP |  |
 | `orient.py` | Renderer-neutral orientation scene over Aurora's native read verbs. | tests/test_axi_orient.py | docs/bifrost-new-seat-orientation.md | `AURORA_LAUNCHER` |
 | `preregistration.py` | preregistration -- M3's pre-registration metric, as numbers (T123 boundary fix). | GAP | docs/library/report/20260807_t207-grounding-ab-preregistration_b423f7.md |  |
-| `session_focus.py` | Session focus -- which task THIS session's tool calls belong to, and a nudge when they drift. | tests/test_t056b_session_focus.py | GAP | `AKASHIC_SESSION_ID`, `AURORA_LAUNCHER`, `BIFROST_NAMESPACE`, `CLAUDE_CODE_SESSION_ID` |
+| `scene.py` | context.scene.v1 -- one anchor, every plane, and silence that is typed. | tests/test_context_scene_v1.py | docs/library/design/20261007_presentation-grammar-screens-scenes_236d39.md |  |
+| `session_focus.py` | Session focus -- which task THIS session's tool calls belong to, and a nudge when they drift. | tests/test_t056b_session_focus.py | GAP | `AURORA_LAUNCHER`, `BIFROST_NAMESPACE` |
+| `session_id.py` | One session identity, resolved one way, with its provenance attached. | tests/test_ambient_session_id_has_one_resolver.py | GAP | `DSH_SESSION_ID` |
 | `shift_loop.py` | Autonomous shift loop — the missing cadence between existing primitives. | tests/test_shift_loop.py | docs/library/design/autonomous-shift-loop-design.md |  |
 | `sift.py` | sift -- the nested ask: a tiered read that returns dissent instead of consensus. | tests/test_axi_sift.py | GAP |  |
 | `suite_baseline.py` | suite_baseline — the test-suite receipt the next seat diffs instead of re-deriving (W34/B4). | tests/test_axi_suite_baseline.py | GAP |  |
+| `suite_read.py` | suite_read — the READ-ONLY half of the suite verb family (wired 2026-10-01). | tests/test_suite_read.py | GAP |  |
+| `target.py` | context.target.v1 -- the one key every plane joins a code location on. | tests/test_context_target_v1.py | docs/library/design/20260722_p3-prose-door-inventory-counter-target-f_28a325.md |  |
 | `task_costs.py` | Task cost telemetry (T056 / wishlist R5) -- per-slice ROI, honestly attributed. | GAP | GAP | `BIFROST_NAMESPACE` |
 | `task_ledger.py` | Governed task ledger — the deterministic coordination substrate (Phase 1: sequential-correct). | tests/test_task_ledger.py | GAP | `AKASHIC_PROPOSED_STALE_DAYS`, `AKASHIC_TASKS_PATH`, `BIFROST_PREMISE_GATE_MIN_AGE_MS` |
 | `terms.py` | terms -- the vocabulary a codebase TALKS ABOUT, as a comparable set (T214). | tests/test_t214_terms_domain.py | GAP |  |
@@ -213,13 +218,14 @@ Class: reference
 | `scope.py` | Lesson scope -- WHERE a lesson applies, as opposed to what it is about. | tests/test_axi_scope.py | docs/library/design/20260722_security-schema-amendment-scoped-admin-g_17c9ca.md | `AKASHIC_SCOPE_FILTER` |
 | `vfx_chunk_lessons.py` | Adopt the VFX chunk rules into recall — as a PROJECTION, not a migration. | GAP | GAP |  |
 
-## core/recall/  (18 modules)
+## core/recall/  (19 modules)
 
 | Module | One-line spec | Pin | Paper | Flags |
 |---|---|---|---|---|
 | `actions.py` | The importable recall-at-action contract for EXTERNAL consumers (deepseek harness posttool / | tests/test_harness_actions.py | docs/library/design/20260805_t196-ask-transaction-spec_b59657.md |  |
 | `anchors.py` | Lesson anchor resolver -- does a lesson's premise still hold? | tests/test_lesson_anchors.py | GAP |  |
-| `at_action.py` | Recall-at-action (`core/recall`) — read the right knowledge AT THE MOMENT of action. | GAP | GAP | `AKASHIC_AGENT_ID`, `AKASHIC_BENCH_PROBE_DAYS`, `AKASHIC_BENCH_PROBE_MAX`, `AKASHIC_RECALL_CACHE_TTL`, `AKASHIC_RECALL_FLOOR`, `AKASHIC_RECALL_SELF_ECHO_H`, `AKASHIC_RECALL_STATE_DIR`, `AKASHIC_STALE_CUE_DAYS`, `AKASHIC_VERB_FLOOR`, `AURORA_LAUNCHER` |
+| `at_action.py` | Recall-at-action (`core/recall`) — read the right knowledge AT THE MOMENT of action. | GAP | GAP | `AKASHIC_AGENT_ID`, `AKASHIC_BENCH_PROBE_DAYS`, `AKASHIC_BENCH_PROBE_MAX`, `AKASHIC_RECALL_CACHE_TTL`, `AKASHIC_RECALL_FLOOR`, `AKASHIC_RECALL_REL_FLOOR`, `AKASHIC_RECALL_SELF_ECHO_H`, `AKASHIC_RECALL_STATE_DIR`, `AKASHIC_STALE_CUE_DAYS`, `AKASHIC_VERB_FLOOR`, `AURORA_LAUNCHER` |
+| `bench.py` | W0.3 -- recall-bench: the first number recall has ever been judged on. | tests/test_axi_bench.py | docs/library/brief/20260822_semi-trader-case-bench_1b4dfc.md |  |
 | `curator.py` | Recall curator (vNext loop 1) -- the funnel's triage made an ACTOR, not a report. | GAP | GAP |  |
 | `dissent.py` | Dissent-finder (`core/recall`) — surface the strongest genuine COUNTER to a recalled lesson. | tests/test_dissent_capture.py | docs/library/report/20260718_kimi-fresh-eyes-dissent-round-t094-recal_71a6f9.md |  |
 | `forge.py` | Forge F1 -- the Tier-0 edit gate (docs/library/design/20260701_lesson-forge-evidence-gated-content-opti_fd3204 | tests/test_forge_gate.py | docs/library/design/20260701_lesson-forge-evidence-gated-content-opti_fd3204.md |  |
@@ -231,7 +237,7 @@ Class: reference
 | `pack_replay.py` | pack_replay (R2) -- replay the frozen census pack through TODAY's recall pipeline. | GAP | GAP |  |
 | `precision_audit.py` | precision_audit -- the missing instrument: is recall ACCURATE? | tests/test_precision_audit.py | research/reviewed/precision-audit-calibration-deepseek-2026-07-27.md | `AKASHIC_RECALL_STATE_DIR` |
 | `prevention.py` | prevention -- the missing consumer of the outcome stage log (S2, recall's AAR). | tests/test_axi_recall_prevention.py | docs/library/contract/20260724_unwedge-runbook-prevention-and-recovery_291f4b.md |  |
-| `replay.py` | Forge F0 -- replay harness + data-sufficiency audit (docs/library/design/20260701_lesson-forge-evidence-gated- | tests/test_arsenal_replay.py | docs/library/design/20260721_the-arc-replay-bench-opening-position-cl_551e03.md |  |
+| `replay.py` | Forge F0 -- replay harness + data-sufficiency audit (docs/library/design/20260701_lesson-forge-evidence-gated- | tests/test_arsenal_media_league_replay.py | docs/library/design/20260721_the-arc-replay-bench-opening-position-cl_551e03.md |  |
 | `shadow_shelf.py` | Offline shadow-shelf substrate for T370 Slice 0. | tests/test_t370_shadow_shelf_reader_red.py | GAP |  |
 | `staleness.py` | The stale-claim detector: a lesson's ANCHORS can resolve while its CLAIM has gone false. | tests/test_t116_retroactive_staleness.py | docs/library/brief/20260719_w04-staleness-stamps-design-brief-for-ki_4aad76.md |  |
 | `surface.py` | The recall cluster's CLI surface -- W169 slice 1 of the agent_cli extraction. | tests/test_boot_intent_surface.py | docs/library/design/20260901_discord-verb-surface-taxonomy-navi-00000_1b1008.md | `AKASHIC_AGENT_ID`, `AURORA_LAUNCHER` |
@@ -268,8 +274,8 @@ Class: reference
 | `event_bridge.py` | EventBridge (Slice 4) -- join the narrative timeline to the raw event firehose. | tests/test_event_bridge.py | GAP |  |
 | `event_promoter.py` | EventPromoter (Slice 5) -- promote salient raw events into narrative Beats. | tests/test_event_promoter.py | GAP |  |
 | `health.py` | Narrative health counters (Slice W-c) -- give the silent best-effort paths a voice. | tests/test_narrative_health.py | GAP |  |
-| `schema.py` | Narrative schema (Slice 0) — the data shapes of the multi-domain narrative spine. | tests/test_arsenal_jam_schemas.py | docs/library/design/20260709_agent-security-schema-design-proposal_cdccf1.md |  |
-| `session.py` | Session lifecycle (Slice 1 auto-capture) -- the spine fills itself. | tests/test_notes_supersession.py | docs/library/brief/20260723_charter-the-supersession-sweep-megaread_76cc41.md |  |
+| `schema.py` | Narrative schema (Slice 0) — the data shapes of the multi-domain narrative spine. | tests/test_arsenal_jam_schemas.py | docs/THE-FILING-SCHEMA.md |  |
+| `session.py` | Session lifecycle (Slice 1 auto-capture) -- the spine fills itself. | tests/test_ambient_session_id_has_one_resolver.py | docs/library/brief/20260723_charter-the-supersession-sweep-megaread_76cc41.md |  |
 | `tag_audit.py` | TagAuditor (Slice G2) -- detect likely mis-tags. FLAG-ONLY: it returns suspects and | tests/test_tag_audit.py | GAP |  |
 | `tag_governance.py` | TagGovernor (Slice G1) -- the append-only, confidence-gated re-tag write path. | tests/test_tag_governance.py | docs/library/design/20260709_tag-governance-safe-self-improving-taggi_1c9052.md |  |
 | `tagging.py` | Tag governance (Slice G0) -- tag-history + confidence schema. Pure data + selection | tests/test_tagging.py | GAP |  |
@@ -282,7 +288,7 @@ Class: reference
 | Module | One-line spec | Pin | Paper | Flags |
 |---|---|---|---|---|
 | `action_authority.py` | One read-only authority detector shared by ToolBox execution and intent shadows. | GAP | GAP |  |
-| `capabilities.py` | Capability tokens + role templates -- the atomic vocabulary of the security schema. | GAP | GAP |  |
+| `capabilities.py` | Capability tokens + role templates -- the atomic vocabulary of the security schema. | GAP | docs/library/report/20260924_duckdb-lane-capabilities_5d2414.md |  |
 | `grant_writer.py` | core.trust.grant_writer -- the WRITE side of security/acl.json (T163, S-3 of the security schema). | GAP | GAP |  |
 | `private_plane.py` | The private-plane leak guard: ingress, at the one place everything must pass. | tests/test_private_plane_guard.py | GAP |  |
 | `registry.py` | Grant registry -- the reader over security/acl.json (source of truth), mirroring core/fleet/model_roster.py (r | tests/test_audit_registry_wiring_kimi.py | docs/library/design/20260711_t034-registry-dial-consolidation-deepsee_a65322.md | `AKASHIC_ACL_PATH`, `AURORA_LAUNCHER` |
@@ -294,7 +300,7 @@ Class: reference
 | `app_package.py` | app_package -- the rung the ladder did not have on 2026-08-24. | tests/test_app_package_rung.py | GAP | `AKASHIC_APP_PACKAGE` |
 | `caller.py` | The direct caller -- one-shot invocation of a local model for a BOUNDED subtask. | tests/test_recall_error_is_not_silence.py | GAP |  |
 | `model_roster.py` | The fleet roster -- the single source of truth for local models (docs/library/design/20260709_fleet-dispatch-a | GAP | GAP |  |
-| `provenance.py` | Session provenance -- which harness, model, effort and environment a session ran in. | tests/test_axi_provenance.py | GAP |  |
+| `provenance.py` | Session provenance -- which harness, model, effort and environment a session ran in. | tests/test_axi_provenance.py | docs/library/contract/20261007_fact-sourcing-provenance-ladder_84c3e2.md |  |
 | `residents.py` | The resident registry -- who a seat IS, and the receipts that earned the name. | GAP | docs/library/design/20260809_residents-and-callsigns-design_b6c98c.md | `AURORA_LAUNCHER` |
 | `scout.py` | The scout -- the first calibrated role: read-only pre-flight, worn not owned. | tests/test_axi_scout.py | GAP |  |
 | `seat_launchers.py` | seat_launchers -- `!spawn <name>` launches THAT seat, instead of a claude session about it. | tests/test_seat_launcher_sunshine_red.py | GAP | `DSH_HOME` |
@@ -313,16 +319,16 @@ Class: reference
 | Module | One-line spec | Pin | Paper | Flags |
 |---|---|---|---|---|
 | `lifecycle.py` | Node lifecycle (Slice C2, delta E3) -- bi-temporal stamping + supersession as TYPE-AGNOSTIC | GAP | docs/library/design/20260718_gemini-t086-seat-wake-hook-lifecycle-pri_dc70d6.md |  |
-| `schema.py` | Resource schema (Slice C2) -- the knowledge-axis node + the structural bi-temporal contract. | tests/test_arsenal_jam_schemas.py | docs/library/design/20260709_agent-security-schema-design-proposal_cdccf1.md |  |
+| `schema.py` | Resource schema (Slice C2) -- the knowledge-axis node + the structural bi-temporal contract. | tests/test_arsenal_jam_schemas.py | docs/THE-FILING-SCHEMA.md |  |
 
 ## core/perspectives/  (2 modules)
 
 | Module | One-line spec | Pin | Paper | Flags |
 |---|---|---|---|---|
 | `reinforce.py` | ReinforcedGraph (Slice P1) -- an association graph whose edges STRENGTHEN with co-use | GAP | GAP |  |
-| `schema.py` | Perspectives schema (Slice P0) -- Lens + Map shapes. Pure data, no behavior. | tests/test_arsenal_jam_schemas.py | docs/library/design/20260709_agent-security-schema-design-proposal_cdccf1.md |  |
+| `schema.py` | Perspectives schema (Slice P0) -- Lens + Map shapes. Pure data, no behavior. | tests/test_arsenal_jam_schemas.py | docs/THE-FILING-SCHEMA.md |  |
 
-## agent/harness/  (15 modules)
+## agent/harness/  (16 modules)
 
 | Module | One-line spec | Pin | Paper | Flags |
 |---|---|---|---|---|
@@ -330,7 +336,8 @@ Class: reference
 | `capture.py` | Payload-truth capture shared by every harness adapter (Integration Tiers H1). | tests/test_axi_capture.py | docs/library/chronicle/20260723_last-session-draft-auto-captured-2026-07_1dd6ee.md | `AKASHIC_PAYLOAD_CAPTURE` |
 | `codex_app_server.py` | Owned Codex App Server stdio host. | tests/test_codex_app_server.py | GAP | `AKASHIC_CODEX_BINARY`, `LOCALAPPDATA` |
 | `codex_bifrost_wake.py` | Zero-model Bifrost level watcher with an owned Codex turn starter. | GAP | GAP | `AKASHIC_CALLSIGN_HINT`, `AKASHIC_CALLSIGN_STATUS`, `LOCALAPPDATA` |
-| `context.py` | The auto-boot whisper shared by every harness adapter (Integration Tiers H0). | tests/test_context_hints_gate.py | docs/library/design/20260620_research-context-handling-compaction-and_e5960c.md | `AKASHIC_AUTOBOOT`, `AKASHIC_WHISPER_LINES`, `AURORA_LAUNCHER` |
+| `context.py` | The auto-boot whisper shared by every harness adapter (Integration Tiers H0). | tests/test_context_hints_gate.py | docs/context-system.md | `AKASHIC_AUTOBOOT`, `AKASHIC_WHISPER_LINES`, `AURORA_LAUNCHER`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_SESSION_ID` |
+| `dedup.py` | first_fire: one hook event, one unit of work, however many surfaces registered the hook. | tests/test_hook_double_registration_dedup.py | GAP | `AKASHIC_HOOK_DEDUP_DIR` |
 | `delta.py` | The delta door (T052 / wishlist R1) -- "what changed since I was last here." | tests/test_axi_delta.py | docs/library/design/20260714_design-brief-r1-delta-door-t052-full-fen_a36fa9.md | `AURORA_LAUNCHER`, `BIFROST_NAMESPACE` |
 | `draft_keepalive.py` | draft_keepalive -- make the auto-handoff survive an UNGRACEFUL death. | tests/test_draft_keepalive.py | GAP |  |
 | `guards.py` | Action-veto policy shared by every harness adapter (Integration Tiers H1). | tests/test_birth_guard_scoping.py | docs/library/design/20260719_fable-opus-safeguards-downgrade-research_570a26.md |  |

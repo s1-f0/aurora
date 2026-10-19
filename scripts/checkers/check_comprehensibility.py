@@ -76,22 +76,25 @@ _ROOT_DOCS = ("AGENTS.md", "CLAUDE.md", "README.md", "bootstrap.md")
 # silent dumping ground. Keep this SMALL -- root-anchoring already excludes most false positives.
 REF_ALLOWLIST = {
     # "some/path.py": {"expires": "2026-12-31", "reason": "why this ref is legitimately not on disk"},
-    "docs/security-amendment-deepseek-scoped-admin-2026-07-22.md": {
-        "expires": "2026-11-30",
-        "reason": "RENEWED 2026-10-01 by claude (the 09-30 expiry blocked every commit again; "
-        "the ARCS/SHELVES full regen is still the fix and still waits on the uncommitted atom "
-        "lines). RENEWED 2026-09-16 by Daniel's call (the 09-15 expiry blocked every commit, "
-        "including the mirror.py publish guard; the atom fix would commit other seats' "
-        "uncommitted store/docs/design.jsonl). RENEWED 2026-08-24 (first expiry lapsed "
-        "mid-marathon): the path lives as "
-        "PROSE inside the SA-1 arc label on atoms, rendered into generated ARCS/"
-        "SHELVES; real file is docs/library/design/20260722_security-schema-"
-        "amendment-scoped-admin-g_17c9ca.md. ATOM SIDE DONE 2026-09-16: "
-        "art_20260723_sa-1-cap-enforcement-pre-registered-acce_1c0784 relabelled arc "
-        "'SA-1' (AtomFamily.set_arc, v3) and its projection re-rendered; its JSONL line "
-        "waits in the working tree with the other seats' uncommitted atom lines. What is "
-        "left: the ARCS/SHELVES full regen, which also cites ~10 uncommitted 09-01..05 "
-        "projections (21 F FAILs if committed alone). Remove this entry when it lands.",
+    **{
+        f"docs/library/{p}": {
+            "expires": "2026-11-30",
+            "reason": "2026-10-19 reconcile with Daniil's E: line: E:'s committed catalogs (ARCS, SHELVES, "
+            "docs/README) cite these seven 2026-08-15 spectrum projections, which exist only as "
+            "untracked files on E:'s disk -- never committed there, possibly on purpose (one is "
+            "operator testimony), so they are NOT committed here either. The catalogs cannot be "
+            "regenerated on the Linux box until the private-plane guard has markers (no private/ "
+            "here). Remove when the catalogs are regenerated or Daniil adopts the projections.",
+        }
+        for p in (
+            "brief/20260815_spectrum-analysis-brief_74b571.md",
+            "design/20260815_spectrum-heimdall-crossexam_200f85.md",
+            "design/20260815_spectrum-heimdall-half_147a5e.md",
+            "design/20260815_spectrum-heimdall-supp3-analysis_93eef2.md",
+            "design/20260815_spectrum-navi-half_a3c533.md",
+            "design/20260815_spectrum-navi-half-v2_041367.md",
+            "design/20260815_spectrum-operator-testimony_20a686.md",
+        )
     },
 }
 

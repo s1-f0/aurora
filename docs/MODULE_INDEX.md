@@ -18,16 +18,18 @@
 - `streams.py` — streams -- process plumbing for long-lived agent processes (T030 L3 / RB-28).
 - `timeutil.py` — timeutil -- one deterministic, timezone-safe way to turn an ISO timestamp into a
 
-## core/events/  (3 modules)
+## core/events/  (5 modules)
 - `event_index.py` — EventIndex (Slice V1) -- a Store-backed time index over the raw event firehose.
 - `event_log.py` — EventLog (Slice 1) -- capture raw cross-agent events on an append-only Ledger.
 - `event_query.py` — EventQuery (Slice 3) -- search and time-window the raw event firehose.
+- `touch.py` — touch.v1 -- what a seat actually touched, as one record the spine can join.
+- `touch_stats.py` — W0.4 -- the instrument: what the touch stream costs, and what it covers.
 
 ## core/signals/  (2 modules)
 - `agent_signal_ledger.py` — Agent Signal Ledger: the ordered record of every signal agents emit
 - `coordinator_api.py` — Coordinator API: Minimal signal-based logging for agents
 
-## core/comm/  (69 modules)
+## core/comm/  (70 modules)
 - `ask.py` — ask -- a synchronous helper call, with no seat behind it (T171).
 - `ask_bg.py` — ask_bg -- a helper call that outlives your turn without becoming a seat (T205).
 - `ask_state.py` — ask_state -- one durable ask's honest state (T196d).
@@ -74,6 +76,7 @@
 - `presets.py` — Fan presets: a named answer contract bound to the parser that reads it back.
 - `promoter.py` — Bifrost B2 -- the durable projection. Promote SALIENT bus messages into the append-only Ledger.
 - `reaper.py` — reaper -- S4: a dead seat's unread directed mail re-homes, loudly. Never stranded.
+- `resume_on_deaf.py` — resume_on_deaf -- S2 of the wake ladder (T420, Daniel 2026-10-01).
 - `role_queue.py` — role_queue -- T108 S1: load-balanced role-addressed work with claim semantics.
 - `room_feed.py` — Namespace-aware feed-stream discovery -- the backend half of readable side rooms.
 - `roster.py` — roster -- S2: the lobby. Per-seat liveness the whole fleet can read.
@@ -98,7 +101,7 @@
 - `wake_tiers.py` — wake tiers -- the priority dimension the wake decision was missing.
 - `wedge_discriminator.py` — wedge_discriminator (T376 S5) -- the wedged-vs-thinking decision rule.
 
-## core/coord/  (31 modules)
+## core/coord/  (35 modules)
 - `capability_search.py` — capability_search -- "does this system already do X?", asked at the level of MEANING.
 - `cognitive_metrics.py` — Cognitive Efficiency Metrics — live instrumentation for the Stage-3 evidence engine.
 - `compare.py` — compare -- the cross-domain set difference, with a name (T213).
@@ -119,10 +122,14 @@
 - `observations.py` — Shared schema for bounded, subject-explicit observations.
 - `orient.py` — Renderer-neutral orientation scene over Aurora's native read verbs.
 - `preregistration.py` — preregistration -- M3's pre-registration metric, as numbers (T123 boundary fix).
+- `scene.py` — context.scene.v1 -- one anchor, every plane, and silence that is typed.
 - `session_focus.py` — Session focus -- which task THIS session's tool calls belong to, and a nudge when they drift.
+- `session_id.py` — One session identity, resolved one way, with its provenance attached.
 - `shift_loop.py` — Autonomous shift loop — the missing cadence between existing primitives.
 - `sift.py` — sift -- the nested ask: a tiered read that returns dissent instead of consensus.
 - `suite_baseline.py` — suite_baseline — the test-suite receipt the next seat diffs instead of re-deriving (W34/B4).
+- `suite_read.py` — suite_read — the READ-ONLY half of the suite verb family (wired 2026-10-01).
+- `target.py` — context.target.v1 -- the one key every plane joins a code location on.
 - `task_costs.py` — Task cost telemetry (T056 / wishlist R5) -- per-slice ROI, honestly attributed.
 - `task_ledger.py` — Governed task ledger — the deterministic coordination substrate (Phase 1: sequential-correct).
 - `terms.py` — terms -- the vocabulary a codebase TALKS ABOUT, as a comparable set (T214).
@@ -139,10 +146,11 @@
 - `scope.py` — Lesson scope -- WHERE a lesson applies, as opposed to what it is about.
 - `vfx_chunk_lessons.py` — Adopt the VFX chunk rules into recall — as a PROJECTION, not a migration.
 
-## core/recall/  (18 modules)
+## core/recall/  (19 modules)
 - `actions.py` — The importable recall-at-action contract for EXTERNAL consumers (deepseek harness posttool /
 - `anchors.py` — Lesson anchor resolver -- does a lesson's premise still hold?
 - `at_action.py` — Recall-at-action (`core/recall`) — read the right knowledge AT THE MOMENT of action.
+- `bench.py` — W0.3 -- recall-bench: the first number recall has ever been judged on.
 - `curator.py` — Recall curator (vNext loop 1) -- the funnel's triage made an ACTOR, not a report.
 - `dissent.py` — Dissent-finder (`core/recall`) — surface the strongest genuine COUNTER to a recalled lesson.
 - `forge.py` — Forge F1 -- the Tier-0 edit gate (docs/library/design/20260701_lesson-forge-evidence-gated-content-opti_fd3204
@@ -251,7 +259,8 @@
 ## core/git/  (1 modules)  ⚠️ NOT in ARCHITECTURE.md layer order — add it there
 - `rewrite_map.py` — Turn a pre-rewrite commit SHA back into the commit it became.
 
-## core/infrastructure/  (1 modules)  ⚠️ NOT in ARCHITECTURE.md layer order — add it there
+## core/infrastructure/  (2 modules)  ⚠️ NOT in ARCHITECTURE.md layer order — add it there
+- `background_stdio.py` — Repair stdout/stderr for a process launched with no console — the windowed-task blind spot.
 - `health_check.py` — Startup Diagnostics: Report on initialization health
 
 ## core/library/  (6 modules)  ⚠️ NOT in ARCHITECTURE.md layer order — add it there
@@ -298,9 +307,22 @@
 - `stats.py` — Paired statistics for agent evals (meta-harness task 05). Pure functions, no I/O.
 - `transcripts.py` — Keep raw harness transcripts before they rotate away (meta-harness task 03, step 1).
 
-## core/screenspace/  (5 modules)  ⚠️ NOT in ARCHITECTURE.md layer order — add it there
+## core/oneworld/  (6 modules)  ⚠️ NOT in ARCHITECTURE.md layer order — add it there
+- `floor.py` — W3 -- the floor: a shadow-first, toggleable manifest of loud absence.
+- `journal.py` — W0 -- the authored world-state journal for the one-world UI core.
+- `mode.py` — W2 -- the mode primitive for the one-world UI core.
+- `projection.py` — W0.1 -- the projection reader over the one-world journal.
+- `sensors.py` — Real sensors for the floor (spec d622ac s4): each a small adapter that replaces one "not wired" entry.
+- `surface.py` — The one-world surface adapter -- the standalone "what to show" half (spec d622ac).
+
+## core/provenance/  (1 modules)  ⚠️ NOT in ARCHITECTURE.md layer order — add it there
+- `delta.py` — The DISK plane of the delta door -- what moved that no Aurora plane recorded.
+
+## core/screenspace/  (7 modules)  ⚠️ NOT in ARCHITECTURE.md layer order — add it there
+- `act.py` — Screenspace ACTUATOR — the act half (T386 sec.6 steps 1 and 3), refusal-first.
 - `canary.py` — Screenspace UIA availability — POSITIVE CANARY READ, not a context inference.
 - `capture.py` — Screenspace capture substrate — mss one-shot -> ScreenFrame (T386 §1.3, §2, §4.3).
+- `combo.py` — The compound verb: hand a brief to a NEW Claude Desktop session (T386 sec.6 step 5).
 - `engine.py` — Screenspace engine facade — digest verdicts (T386 §1, §2, §3, §4).
 - `foreground.py` — Screenspace foreground source — WinEventHook tracker (§1.1, the v1 shadow-model spine).
 - `shadow.py` — Screenspace shadow model — L0 pulse (T386 §1.1, F2-gated).
@@ -321,8 +343,9 @@
 - `tally.py` — tally — the blind-counter consensus matrix (W48).
 - `toast.py` — toast (T099 · tools-hunt BETA-2) -- gratitude with a receipt (kimi's hunt B3).
 
-## core/tools/  (1 modules)  ⚠️ NOT in ARCHITECTURE.md layer order — add it there
+## core/tools/  (2 modules)  ⚠️ NOT in ARCHITECTURE.md layer order — add it there
 - `everything.py` — core/tools/everything.py -- the Search Everything (voidtools) search seam.
+- `locate.py` — core/tools/locate.py -- the plocate engine for the ``find`` verb (Linux/macOS's Everything).
 
 ## core/web/  (1 modules)  ⚠️ NOT in ARCHITECTURE.md layer order — add it there
 - `door.py` — web door -- the house fetch/search engine (task W-slice v0, night of 2026-09-01).
@@ -377,9 +400,15 @@
 - `look.py` — look -- the visual plane for a seat that has none: capture -> describe -> record.
 - `map_generator.py` — T381 M1 -- the living map's first render (c-map-design reconciled).
 - `mcp_register.py` — T081-W2: make the akashic-aurora MCP door attach from ANY launch cwd.
+- `measure_credit_join.py` — Measure how much of the credit sensor's blindness the COARSE JOIN AXIS recovers.
+- `measure_lesson_fields.py` — What the lesson plane actually carries, and which of it anything reads.
+- `measure_rel_floor.py` — Score the RELATIVE FLOOR against the absolute one, both arms, on the recall bench.
+- `measure_target_join.py` — Measure whether the touch plane and the outcome plane can join on a target key.
 - `migrate_time_scores.py` — One-time migration (S5): re-score the persisted time-zsets with the unified `to_epoch`.
 - `mirror.py` — mirror.py -- the PUBLISH door: commit named paths and push them to the PUBLIC GitHub repo.
+- `mutate.py` — The mutation runner (W128, amended by W236).
 - `necropsy.py` — necropsy -- unclean deaths detected, then distilled (W151b, disaster-proofing Slice 1b).
+- `piano_card_art.py` — Card art for the piano Studio's instrument cards: a wireframe and a rendered preview of every instrument.
 - `piano_follow_frames.py` — Reconstruct what the 9:16 follow view actually SHOWED, at true scale.
 - `piano_roll_pack.py` — roll/1 door: pack a recorded session, or read one back.
 - `piano_roll_render.py` — Render a recorded performance session as a piano-roll scroll -- SVG and PNG.

@@ -51,7 +51,30 @@ SENTINEL = "SENTINEL-RECALL-AT-ACTION"
 # E:\\AI-Setup and DRIFTED is E:\\ (where the harness shell lands after a rebuild); anywhere
 # else they are the real checkout and its parent, so every case means the same thing.
 REPO = ROOT
-DRIFTED = os.path.dirname(ROOT)
+
+
+def _is_checkout(p: str) -> bool:
+    return os.path.isfile(os.path.join(p, "agent_cli.py")) and os.path.isdir(os.path.join(p, "core"))
+
+
+def _outside_every_checkout(p: str) -> str:
+    """The nearest ancestor of `p` that no Aurora checkout contains. From the main checkout that is
+    simply its parent; from a worktree under <repo>/.claude/worktrees/ the parent is still INSIDE
+    the main checkout, which the guard rightly treats as in-repo, so keep climbing."""
+    while any(_is_checkout(a) for a in [p, *_ancestors(p)]):
+        p = os.path.dirname(p)
+    return p
+
+
+def _ancestors(p: str) -> list[str]:
+    out = []
+    while os.path.dirname(p) != p:
+        p = os.path.dirname(p)
+        out.append(p)
+    return out
+
+
+DRIFTED = _outside_every_checkout(os.path.dirname(ROOT))
 ELSEWHERE = os.path.join(DRIFTED, "someone-else")  # any other non-repo cwd
 # How the guard spells the remedy (git-bash /e/AI-Setup on a Windows drive, else the path).
 CD = (lambda f: f"/{f[0].lower()}{f[2:]}" if len(f) > 1 and f[1] == ":" else f)(ROOT.replace("\\", "/").rstrip("/"))
@@ -239,3 +262,51 @@ def test_guard_never_changes_the_decision(hook, quiet_recall):
     hso = json.loads(out)["hookSpecificOutput"]
     assert hso["permissionDecision"] == "deny"
     assert "BLOCKED" in hso["permissionDecisionReason"]
+
+
+# ------------------------------------------- 2026-10-19: the guard measured the wrong checkout
+# Installed through the `aurora` launcher, the user-level hooks run from a release BUNDLE
+# (~/.aurora/versions/<v>/), so _REPO_ROOT is the bundle. Every repo-shaped command from a real
+# checkout -- the main one or any worktree -- then printed "[cwd-guard] ... NOT <bundle>" and
+# told the agent to cd into the bundle: measured on every shell call of a whole session. The
+# guard exists for a cwd that is in NO checkout; a cwd inside any checkout resolves repo-relative
+# paths fine. When it does speak, the remedy names the session's project, not the hook's home.
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_project(monkeypatch):
+    """Hooks get CLAUDE_PROJECT_DIR from the harness; a suite run under Claude Code inherits it."""
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+
+
+def _fake_checkout(base) -> str:
+    os.makedirs(os.path.join(base, "core"), exist_ok=True)
+    with open(os.path.join(base, "agent_cli.py"), "w", encoding="utf-8") as f:
+        f.write("")
+    return str(base)
+
+
+def test_cwd_inside_another_checkout_stays_quiet(hook, tmp_path):
+    other = _fake_checkout(tmp_path / "some-other-worktree")
+    os.makedirs(os.path.join(other, "tests"))
+    for cwd in (other, os.path.join(other, "tests")):
+        data = {"tool_name": "Bash", "tool_input": {"command": "grep -rn foo scripts/"}, "cwd": cwd}
+        assert hook._cwd_drift(data) == ""
+
+
+def test_bundle_hook_names_the_session_project_not_itself(hook, tmp_path, monkeypatch):
+    bundle = tmp_path / "versions" / "0.2.0"
+    bundle.mkdir(parents=True)
+    project = _fake_checkout(tmp_path / "project")
+    drifted = tmp_path / "elsewhere"
+    drifted.mkdir()
+    monkeypatch.setattr(hook, "_REPO_ROOT", str(bundle))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", project)
+    data = {"tool_name": "Bash", "tool_input": {"command": "grep -rn foo scripts/"}, "cwd": str(drifted)}
+    line = hook._cwd_drift(data)
+    assert line.startswith("[cwd-guard]"), line
+    assert str(bundle) not in line
+    assert project.replace("\\", "/") in line
+    # ...and the remedy it prescribes keeps it quiet
+    anchored = dict(data, tool_input={"command": f"cd {project} && grep -rn foo scripts/"})
+    assert hook._cwd_drift(anchored) == ""

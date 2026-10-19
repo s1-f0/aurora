@@ -13259,6 +13259,19 @@ def cmd_find(args):
     )
 
     query = str(getattr(args, "query", "") or "")
+    if getattr(args, "reindex", False):
+        from core.tools import locate
+
+        if locate.resolve_plocate() is None:
+            print("ERROR: --reindex needs plocate (Linux/macOS); on Windows, Everything keeps its own index")
+            return 1
+        status = locate.refresh_index(wait=True)
+        print(status)
+        if not query:
+            return 0 if status.startswith("index rebuilt") else 1
+    if not query:
+        print(f"ERROR: find needs a search term, e.g. {_cli()} find agent_cli.py")
+        return 2
     offset = int(getattr(args, "offset", 0) or 0)
     _limit = int(getattr(args, "limit", 0) or 0)
     _format = str(getattr(args, "format", "") or "")
@@ -13337,16 +13350,30 @@ def _emit_find(res, query: str, limit: int) -> int:
             res.error or "search unavailable",
             code="SEARCH_UNAVAILABLE",
             hints=[f"{cli} find {_quote_arg(query)} --timeout 60"],
-            details={"engine": res.engine or None, "fix": "install Everything and its es.exe CLI (voidtools.com)"},
+            details={"engine": res.engine or None}
+            if res.engine == "plocate"  # plocate ran and refused: the error says why
+            else {
+                "engine": res.engine or None,
+                "fix": "install Everything and its es.exe CLI (voidtools.com)"
+                if os.name == "nt"
+                else "install plocate (sudo apt install plocate), then: find --reindex",
+            },
         )
     doc: dict = {"query": query, "engine": "Everything index" if res.engine == "everything" else res.engine}
     if res.engine == "walk":
         doc["searched"] = f"{res.scanned_dirs} dirs under {len(res.roots)} roots in {res.elapsed_s}s"
+    if res.engine == "plocate":
+        from core.tools.everything import describe_age
+
+        # An index answers for the moment it was built: a file newer than that is not a miss.
+        doc["searched"] = f"{describe_age(res.index_age_s)}, answered in {res.elapsed_s * 1000:.0f}ms"
     doc["complete"] = bool(res.exhaustive)
     if not res.exhaustive:
         doc["note"] = (
             "the search stopped early (--limit or its time budget): more may exist, and a miss is not evidence of absence"
         )
+    elif res.notes:
+        doc["note"] = "; ".join(res.notes)
     doc["total"] = res.count
     base = _basename(query.strip().lower())
     by_path = {h.path: h for h in res.hits}
@@ -16847,9 +16874,19 @@ def build_parser():
     )
     bop.set_defaults(fn=cmd_boop)
 
-    fnd = sub.add_parser("find", help="find a file BY NAME anywhere on the machine (Search Everything / es.exe)")
+    fnd = sub.add_parser(
+        "find", help="find a file BY NAME anywhere on the machine (Search Everything / es.exe; plocate off Windows)"
+    )
     fnd.add_argument(
-        "query", help="Everything search term -- a bare word matches any filename substring, case-insensitive"
+        "query",
+        nargs="?",
+        default="",
+        help="Everything search term -- a bare word matches any filename substring, case-insensitive",
+    )
+    fnd.add_argument(
+        "--reindex",
+        action="store_true",
+        help="rebuild the plocate index now and wait for it (Linux/macOS; it otherwise refreshes itself in the background)",
     )
     fnd.add_argument("--limit", type=int, default=0, help="max results (default 0 = no cap, return everything)")
     fnd.add_argument(
@@ -18779,6 +18816,32 @@ def _human_glance(console, doc):
     console.print(f"[dim]uncheckable: {out._esc(', '.join(doc['uncheckable']) or 'none')}[/]")
 
 
+def _secret_dialog(target: str, what: str) -> str | bool | None:
+    """A desktop's own password dialog, for a Python without tkinter. Returns the pasted value,
+    False when the person closed or cancelled the dialog, or None when no dialog tool exists.
+    The value comes back on the dialog's stdout to this process only -- never an argument, never
+    a log line -- so it keeps the vault's clipboard -> window -> file promise."""
+    import shutil
+    import subprocess
+
+    title = f"Akashic vault -- {target}"
+    for tool, argv in (
+        ("zenity", ["--password", f"--title={title}"]),
+        ("kdialog", ["--title", title, "--password", what]),
+    ):
+        exe = shutil.which(tool)
+        if not exe:
+            continue
+        try:
+            proc = subprocess.run([exe, *argv], capture_output=True, text=True, timeout=600, check=False)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if proc.returncode != 0:
+            return False
+        return (proc.stdout or "").rstrip("\r\n")
+    return None
+
+
 def cmd_secret(args):
     """The vault door (Daniil, 1:40am 2026-08-19: 'some kind of pop up window for
     credential capture that I can paste into and you can invoke with a verb'). The
@@ -18824,18 +18887,31 @@ def cmd_secret(args):
             exit_code=out.EXIT_USAGE,
         )
 
+    use_window = False
     if args.stdin:
         value = sys.stdin.read()
     else:
         try:
             import tkinter as tk
+
+            use_window = True
         except Exception as e:  # noqa: BLE001  # fail-soft: logged, caller continues
-            return out.fail(
-                f"no window available ({type(e).__name__}): pipe the value on stdin instead",
-                code="NO_WINDOW",
-                hints=[f"Get-Clipboard | {cli} secret {args.target} --stdin"],
-                exit_code=out.EXIT_USAGE,
-            )
+            # No tkinter (a system Python without python3-tk, the Ubuntu default): a desktop's own
+            # password dialog is the same window -- the paste returns on ITS stdout to this process
+            # alone, so the value still travels clipboard -> window -> file.
+            got = _secret_dialog(args.target, TARGETS[args.target])
+            if got is None:
+                clip = "Get-Clipboard" if os.name == "nt" else "wl-paste -n"
+                return out.fail(
+                    f"no window available ({type(e).__name__}, and no zenity or kdialog): pipe the value on stdin instead",
+                    code="NO_WINDOW",
+                    hints=[f"{clip} | {cli} secret {args.target} --stdin"],
+                    exit_code=out.EXIT_USAGE,
+                )
+            if got is False:
+                return out.fail("cancelled: nothing written", code="CANCELLED")
+            value = got
+    if use_window:
         captured: dict[str, str | None] = {"value": None}
         root = tk.Tk()
         root.title(f"Akashic vault -- {args.target}")

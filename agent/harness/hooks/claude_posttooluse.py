@@ -360,6 +360,14 @@ def main() -> int:
         data = json.load(sys.stdin)
     except Exception:
         data = {}
+    if data:
+        try:
+            from agent.harness.dedup import first_fire
+
+            if not first_fire("posttooluse:" + str(data.get("hook_event_name") or "PostToolUse"), data):
+                return 0  # the other registration (user or project surface) already handled it
+        except Exception:
+            pass
     _beat_seat(data)
     # THE TOOL IS DONE, SO THE MODEL IS COMPOSING AGAIN. Beside _beat_seat and above every gate
     # below for the same reason liveness is: presence must not be a hostage of the recall

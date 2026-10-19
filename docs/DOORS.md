@@ -8,7 +8,7 @@ Class: reference
 > (argparse). Companion to MAP.md (modules), PHYSICS.md (bounds/flags). Guarded by
 > check_comprehensibility so it cannot silently rot.
 
-## CLI door -- `uv run agent_cli.py <verb>` (121 verbs)
+## CLI door -- `uv run agent_cli.py <verb>` (127 verbs)
 
 The agent's shell door. `*` marks a required argument; `{a,b}` shows the accepted values.
 
@@ -26,7 +26,7 @@ The agent's shell door. `*` marks a required argument; `{a,b}` shows the accepte
 | `bifrost-resume` | un-freeze bus auto-responders |  |
 | `bifrost-send` | send a message to another agent on the bus | `<agent_id>*` `<text>` `--text-file` `--to` `--kind` `--broadcast` `--answers` `--expect-reply-within` `--to-incarnation` `--json` |
 | `bifrost-skip-to-now` | T076a: advance an agent's consume cursors to stream tails (audited echo-mountain escape; requires pause + --reason) | `<agent_id>*` `--by*` `--reason*` `--json` |
-| `bifrost-standby` | T084-CL-2: turn-end ritual in ONE verb -- drain, seat report, then BLOCK as the wake listener's parent (run as a background task) | `<agent_id>*` `--session` `--no-listen` `--limit` |
+| `bifrost-standby` | T084-CL-2: turn-end ritual in ONE verb -- drain, seat report, then BLOCK as the wake listener's parent (run as a background task) | `<agent_id>*` `--session` `--no-listen` `--limit` `--min-tier {0,1,2,3}` |
 | `bifrost-sync` | Bifrost pull floor: presence + unread inbox peek | `<agent_id>*` `--limit` `--consume` `--digest` `--traces` `--json` |
 | `boop` | the smallest verb in the house: zero arguments, always answered | `--surface` `--agent` |
 | `boot` | print an agent's startup context | `<agent_id>*` `--task` `--json` `--sources-json` |
@@ -37,9 +37,10 @@ The agent's shell door. `*` marks a required argument; `{a,b}` shows the accepte
 | `compare` | what does one domain have that another does not -- the cross-domain set difference four of our guards each hand-rolled | `<a>` `<b>` `--list` `--limit` `--json` |
 | `compress` | meta-harness compression (task 11): pieces, usage telemetry, staged search for the pieces that matter | `<action>* {pieces,telemetry,run}` `--candidate` `--scenario` `--root` `--max-runs` `--trials` `--json` |
 | `console-log` | durable console events (interjection/bus_control/file_drop) | `--limit` `--since` `--until` `--json` |
+| `context` | W0.5/W0.6: one anchor, every plane -- or `--stats` to meter the stream | `<anchor>` `--level` `--stats` `--hours` `--limit` `--json` |
 | `corpus` | meta-harness task corpus (task 03): archive transcripts, mine, curate, validate, status | `<action>* {archive,mine,list,show,accept,reject,validate,retire,status}` `<id>` `--limit` `--status` `--reason` `--by` `--cap-mb` `--fields` `--json` |
 | `defer` | the capability-gated standing queue (W33): file a command awaiting an exec/write seat; boot surfaces it; discharge with a receipt | `<agent_id>*` `<cmd_text>` `--needs` `--why` `--list` `--done` `--receipt` `--fields` |
-| `delta` | what changed since this agent's last boot (T052 delta door) | `<agent_id>*` `--ack` |
+| `delta` | what changed since this agent's last boot (T052 delta door) | `<agent_id>*` `--ack` `--disk` `--hours` `--scope` |
 | `discord` | watch the fleet from your phone (T223, OUTBOUND ONLY). A webhook URL is write-only, so this opens no command channel -- inbound needs an identity gate and does not ship until it exists | `<action> {status,test,send}` `--text` `--kind` `--json` |
 | `discover` | list every verb + its purpose (the self-describing door) | `<query>` `--json` `--semantic` |
 | `doc` | seed a new doc with its header contract (library door) | `<sub> {new,adopt,arc}` |
@@ -48,7 +49,7 @@ The agent's shell door. `*` marks a required argument; `{a,b}` shows the accepte
 | `events` | search / drill / capture the raw event firehose | `--search` `--around` `--window` `--get` `--capture` `--promote` `--threshold` `--kind` `--summary` `--detail-json` `--refs` `--agent` `--track` `--since` `--until` `--limit` `--json` |
 | `eye` | THE EYE: the transcript plane as terrain -- ingest (incremental, coverage-honest), find (phrase, S0; the grammar lands S1), get (address -> verbatim L0) | `<eye_cmd>* {ingest,find,get,freq,stats,overview,zoom,trace,standing,look,go,back,since,inherit,route}` |
 | `fence` | fence workspace: slots + seal-time method checks; confabulated filenames unrepresentable (R2) | `<action>* {open,write,seal,pv,status,list}` `<fence_id>` `--question` `--tier {full,lite}` `--slot {brief,half_a,half_b,reconciliation}` `--text` `--file` `--by` `--json` |
-| `find` | find a file BY NAME anywhere on the machine (Search Everything / es.exe) | `<query>*` `--limit` `--offset` `--path` `--no-sort` `--timeout` `--sort` `--columns` `--format {,json,csv}` `--preset` `--bare` `--regex` `--case` `--word` `--dirs` `--files` `--scope` `--attrs` |
+| `find` | find a file BY NAME anywhere on the machine (Search Everything / es.exe; plocate off Windows) | `<query>` `--reindex` `--limit` `--offset` `--path` `--no-sort` `--timeout` `--sort` `--columns` `--format {,json,csv}` `--preset` `--bare` `--regex` `--case` `--word` `--dirs` `--files` `--scope` `--attrs` |
 | `fleet` | local-model dispatch: roster (list) + capability select + direct one-shot call | `<action> {list,select,call}` `--capability` `--status` `--probe` `--fields` `--max-vram` `--min-context` `--model` `--prompt` `--system` `--max-tokens` `--temperature` `--json-out` `--json` |
 | `flightdeck` | W25 (deepseek): cockpit one-pager — fleet at a glance. Composes doctor + pulse + lane-health + locks + commits. --agent drills one seat | `--agent` `--json` |
 | `flow` | OTel-style waterfall of recent message flows across lanes: asks, answers, gaps, duplicate copies exposed (R3) | `<agent>` `--window` `--limit` `--fields` `--json` |
@@ -60,7 +61,7 @@ The agent's shell door. `*` marks a required argument; `{a,b}` shows the accepte
 | `glance` | T079/T060: bounded read-only WorldSnapshot projections over named authorities | `<glance_projection>* {program}` |
 | `grade` | meta-harness graders (task 05): grade runs, compare candidates, power, calibration | `<action>* {run,compare,noise,power,label,agreement}` `--candidate` `--against` `--scenario` `--judge` `--scenarios-n` `--trials` `--delta` `--criterion` `--person` `--judge-call` `--ref` `--json` |
 | `graduate` | retire a lesson from recall surfacing -- automation now enforces its rule | `<agent_id>*` `--experiment` `--enforced-by` `--undo` `--json` |
-| `grant` | S-3: mint / revoke / list ACL grants (atomic + audited). NOT an auth boundary -- see the module docstring | `--bootstrap` `<agent_id>` `--role` `--by` `--reason` `--hours` `--permanent` `--caps` `--path-scope` `--request-ref` `--revoke` `--list` `--dry-run` `--json` |
+| `grant` | S-3: mint / revoke / list ACL grants (atomic + audited). NOT an auth boundary -- see the module docstring | `--bootstrap` `<agent_id>` `--role` `--by` `--reason` `--hours` `--permanent` `--caps` `--add-caps` `--drop-caps` `--replace` `--path-scope` `--request-ref` `--revoke` `--list` `--dry-run` `--json` |
 | `ground` | typed evidence for verb:<name>, or bounded recovery evidence for seat:<id> --continuity | `<target>*` `--agent` `--continuity` `--json` |
 | `handoff` | hand work to another agent (writes a briefing its next boot reads) | `<agent_id>*` `--to` `--task` `--note` `--blocker` `--list` `--json` |
 | `harnesses` | integration-tier matrix: what each harness (claude-code/cursor/bare-cli) actually delivers | `--json` |
@@ -79,6 +80,7 @@ The agent's shell door. `*` marks a required argument; `{a,b}` shows the accepte
 | `loop` | meta-harness proposer loop (task 07): archive, lineage, status, run within a daily budget | `<action>* {run,status,archive,lineage}` `--candidate` `--iterations` `--proposals` `--trials` `--mode {structural,prose}` `--daily-usd` `--proposer-model` `--json` |
 | `mailbox` | T095 M0 shadow mailbox: per-message state for an agent (observation only) | `<agent_id>*` `--explain` `--rebuild` `--retire-ghosts` `--apply` `--min-age-h` `--limit-scan` `--min-evidence {unhandled,consumed,replied,acked}` `--open` `--state` `--intent` `--as {act,decline,defer,delegate}` `--to` `--note` `--backfill` `--incarnation` `--json` |
 | `manual` | the manuals shelf: search reference manuals (Apple HIG, One UI, ...) as labelled passages; ingest a folder; list what is shelved | `<manual_cmd>* {search,ingest,list}` `<words>*` `--shelf` `--limit` `--max-chars` `--selector` `--mode {bm25,hybrid}` `--json` |
+| `media` | video toolbox (arsenal.media) instead of hand-rolled ffmpeg/ffprobe: probe streams and audio track names, grab frames, contact sheet, filmstrip, trim/cut to the exact frame, scene detection (scdet), loudness LUFS (ebur128, loudnorm), silencedetect, waveform peaks, demux and mix audio tracks, transcribe, League clock OCR, Riot timeline, export presets | `<rest>*` |
 | `memreplay` | meta-harness memory replay (task 08): does a lesson change outcomes? snapshot, queue, run, drain | `<action>* {snapshot,queue,run,drain}` `--lesson` `--base` `--scenario` `--trials` `--daily-usd` `--label` `--exclude` `--json` |
 | `modes` | meta-harness memory modes (task 10): show, compare the four arms, per-lesson placement, stale compiled lessons | `<action>* {show,compare,placement,stale}` `--base` `--compiled` `--scenario` `--trials` `--daily-usd` `--json` |
 | `note` | record a durable project note (write-once; re-note same title to update) | `<agent_id>*` `--title` `--note` `--context` `--category` `--supersedes` `--retire` `--get` `--session` `--json` |
@@ -92,6 +94,8 @@ The agent's shell door. `*` marks a required argument; `{a,b}` shows the accepte
 | `pulse` | W25 (deepseek): LIFEWORKERS pressure-map -- where is pressure building in the fleet? lane-depths to zones. Companion to vitals. READ-only | `<agent>` `--json` |
 | `recall` | search past lessons (no query = list all) | `<query>` `--tree` `--json` `--full` `--agent` `--limit` `--fields` |
 | `recall-at` | recall-at-action: relevant lessons/locks for a path or command | `--path` `--command` `--gesture` `--subject` `--domain` `--agent-id` `--limit` `--hint-style {cli,tool}` `--json` |
+| `recall-audit` | is recall ACCURATE? blind labelling pack + precision/recall/agreement score | `<action>* {pack,score}` `--n` `--seed` `--limit` `--out` `--labels` `--labels-file` `--misses` `--total-surfaced` `--json` |
+| `recall-bench` | W0.3: grade recall against the answer key (recall@k, abstention, chrome share) | `--set` `--limit` `--json` |
 | `recall-counters` | sharpening S2a: fold bare-slug + ghost recall:use:* counters (report; --fold applies) | `--fold` `--agent-id` |
 | `recall-curate` | bench surfaced-never-credited lessons + prune ghost counters (report; --apply stamps) | `--apply` `--forge-audit` `--forge-check` `--draft` `--forge-propose` `--forge-proposals` `--limit` `--json` |
 | `recall-feedback` | mark a recalled lesson useful/noise (teaches recall what helps) | `--source*` `--useful` `--noise` `--domain` |
@@ -107,6 +111,7 @@ The agent's shell door. `*` marks a required argument; `{a,b}` shows the accepte
 | `run` | execute a toolbelt alias: run <agent> <name> (explicit door -- a real verb can never be shadowed) | `<agent_id>*` `<name>*` `<args>` `--dry` |
 | `scope` | lesson applicability (task 02): show, set, widen by evidence, list proposals, tree | `<action>* {show,set,widen,proposals,tree}` `--experiment` `--scope` `--kinds` `--force` `--json` |
 | `scout` | read-only pre-flight: 'is a seat mid-flight here / has this been done' -- answers cite ledger ids, locks and the role's own verdicts; files itself as an unadjudicated verdict | `<text>*` `--wearer` `--by` `--blind` `--shape` `--json` |
+| `screen` | screenspace ACTUATOR: see the desktop, open a new session, hand it a brief -- refusal-first | `<action>* {status,locate,prompt}` `<text>*` `--window` `--hwnd` `--name` `--role` `--ttl` `--text-file` `--handoff` `--show` `--submit` `--timeout` `--agent` `--json` |
 | `season-score` | T165: score a Season 1 round, or --compare the two rule sets over the same claims | `--round-file` `--policy` `--compare` `--policies` `--json` |
 | `seat-identity` | declare/show THIS session's seat id (binding beats the shared env) | `<agent_id>` `--session` `--clear` |
 | `secret` | the vault door: capture a credential via a popup window -- paste lands in .secrets/<target>, never in any transcript. Bare `secret` lists targets. Receipts count bytes they never show. | `<target>` `--stdin` `--fields` |
@@ -119,6 +124,7 @@ The agent's shell door. `*` marks a required argument; `{a,b}` shows the accepte
 | `stats` | recall-value funnel: surfaced -> helped -> flips -> captured | `--hours` `--days` `--silence` `--json` |
 | `status` | honest system status | `--json` |
 | `story` | print narrative story views | `--chronicle` `--mark` `--session-end` `--track` `--theme` `--themes` `--at` `--chapter` `--beat` `--raw` `--json` |
+| `suite` | README-ONLY test-pipeline doors: diff / triage / rerun-failing / tail (projects over suite_baseline + pytest's lastfailed cache + the run log; writes nothing) | `<suite_sub>* {diff,triage,rerun-failing,tail}` |
 | `suite-baseline` | the test-suite receipt (W34): record a pytest run's failures + lanes; the next seat diffs (new/fixed/inherited) | `<agent_id>*` `--from-file` `--sha` `--check` `--show` `--whose` |
 | `sweep` | the awareness snapshot: bus, bench, health, moved -- one bounded read-only block | `<agent_id>` `--json` |
 | `tag-anti-pattern` | tag an EXISTING lesson as a reusable known-bad | `<agent_id>*` `--experiment*` `--name*` `--reason` `--json` |

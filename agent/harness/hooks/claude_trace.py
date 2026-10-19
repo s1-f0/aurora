@@ -35,6 +35,13 @@ def main() -> int:
     if not tool:
         return 0
     try:
+        from agent.harness.dedup import first_fire
+
+        if not first_fire("trace:" + str(data.get("hook_event_name") or "PreToolUse"), data):
+            return 0  # the other registration (user or project surface) already traced this call
+    except Exception:
+        pass
+    try:
         # Gate by SESSION cwd, not per-target: a read/glob has no path to scope by, and we want
         # every tool call in an in-repo session to show -- while staying a no-op everywhere else.
         from agent.harness.scope import session_in_scope

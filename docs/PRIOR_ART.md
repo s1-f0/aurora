@@ -23,24 +23,25 @@ Letta's plain files beat a graph memory system; Wikidata's three ranks run at ~1
 statements where ATMS dies around 100 beliefs. The cost of NOT sweeping is measured in
 rebuilt wheels and dead ends, so the sweep is now a standing artifact rather than a mood.
 
-## Coverage: 8 current, 14 drift, 0 gap (of 22 subsystems)
+## Coverage: 7 current, 15 drift, 0 gap (of 22 subsystems)
 
 **DRIFT -- surveyed, but the subsystem has changed size since:**
 
 - `core/foundation` -- DRIFT (8->12), reviewed 2026-07-26
-- `core/comm` -- DRIFT (36->69), reviewed 2026-07-26
-- `core/coord` -- DRIFT (11->31), reviewed 2026-07-26
+- `core/events` -- DRIFT (3->5), reviewed 2026-07-26
+- `core/comm` -- DRIFT (36->70), reviewed 2026-07-26
+- `core/coord` -- DRIFT (11->35), reviewed 2026-07-26
 - `core/learning` -- DRIFT (3->6), reviewed 2026-07-26
-- `core/recall` -- DRIFT (10->18), reviewed 2026-07-26
+- `core/recall` -- DRIFT (10->19), reviewed 2026-07-26
 - `core/primitives` -- DRIFT (7->8), reviewed 2026-07-26
 - `core/trust` -- DRIFT (2->5), reviewed 2026-07-26
 - `core/fleet` -- DRIFT (2->9), reviewed 2026-07-26
-- `agent/harness` -- DRIFT (9->15), reviewed 2026-07-26
-- `scripts/hooks` -- DRIFT (7->8), reviewed 2026-07-26
-- `scripts/checkers` -- DRIFT (12->22), reviewed 2026-07-26
+- `agent/harness` -- DRIFT (9->16), reviewed 2026-07-26
+- `scripts/hooks` -- DRIFT (7->13), reviewed 2026-07-26
+- `scripts/checkers` -- DRIFT (12->24), reviewed 2026-07-26
 - `scripts/generators` -- DRIFT (6->14), reviewed 2026-07-26
-- `scripts/ops` -- DRIFT (2->8), reviewed 2026-07-26
-- `tests` -- DRIFT (331->908), reviewed 2026-07-26
+- `scripts/ops` -- DRIFT (2->10), reviewed 2026-07-26
+- `tests` -- DRIFT (331->1052), reviewed 2026-07-26
 
 ---
 
@@ -67,7 +68,7 @@ rebuilt wheels and dead ends, so the sweep is now a standing artifact rather tha
 
 _Reviewed 2026-07-26 by claude._
 
-## `core/events` -- 3 modules  ·  current
+## `core/events` -- 5 modules  ·  DRIFT (3->5)
 
 **What it does.** The append-only event firehose and its time index -- every agent action, learning, decision and bus message, queryable by agent, kind and recency.
 
@@ -111,7 +112,7 @@ _Reviewed 2026-07-26 by claude._
 
 _Reviewed 2026-07-26 by claude._
 
-## `core/comm` -- 69 modules  ·  DRIFT (36->69)
+## `core/comm` -- 70 modules  ·  DRIFT (36->70)
 
 **What it does.** The Bifrost bus and everything around it -- purpose-keyed lanes (work / trace / sig), per-agent consume cursors, packet envelopes with integrity and fragmentation, expectations and redrives, the wake listener, the launcher, and the fidelity ladder (inform / steer / interrupt / halt). By far our largest subsystem.
 
@@ -134,7 +135,7 @@ _Reviewed 2026-07-26 by claude._
 
 _Reviewed 2026-07-26 by claude._
 
-## `core/coord` -- 31 modules  ·  DRIFT (11->31)
+## `core/coord` -- 35 modules  ·  DRIFT (11->35)
 
 **What it does.** Coordination primitives: advisory path locks, the RB-21 consumer seat with generations, the task ledger with gated transitions, the conductor, and expectation/redrive bookkeeping.
 
@@ -180,7 +181,7 @@ _Reviewed 2026-07-26 by claude._
 
 _Reviewed 2026-07-26 by claude._
 
-## `core/recall` -- 18 modules  ·  DRIFT (10->18)
+## `core/recall` -- 19 modules  ·  DRIFT (10->19)
 
 **What it does.** Retrieval over the lesson corpus: at_action (PreToolUse injection), funnel (surface/credit accounting), curator (bench/unbench), forge (lesson content optimisation), anchors, dissent, lookback, knowledge_map.
 
@@ -380,7 +381,7 @@ _Reviewed 2026-07-26 by claude._
 
 _Reviewed 2026-07-26 by claude._
 
-## `agent/harness` -- 15 modules  ·  DRIFT (9->15)
+## `agent/harness` -- 16 modules  ·  DRIFT (9->16)
 
 **What it does.** The seat side of the fleet: how an agent session is launched, kept alive, woken from idle, and stood down. Includes the wake listener, seat lifecycle and the runner glue that turns a bus message into a live turn.
 
@@ -426,7 +427,7 @@ _Reviewed 2026-07-26 by claude (partial), deepseek (p3 adjacent)._
 
 _Reviewed 2026-07-26 by claude._
 
-## `scripts/hooks` -- 8 modules  ·  DRIFT (7->8)
+## `scripts/hooks` -- 13 modules  ·  DRIFT (7->13)
 
 **What it does.** Seven Claude Code integration hooks: pretooluse (recall injection before every tool call), posttooluse (outcome capture, flip detection, learn nudge), sessionstart (cache warm), sessionend (wrap), userpromptsubmit (plan-time recall), stop (wake enforcement), trace (tool-call to bus).
 
@@ -449,7 +450,7 @@ _Reviewed 2026-07-26 by claude._
 
 _Reviewed 2026-07-26 by deepseek (swept), claude (folded)._
 
-## `scripts/checkers` -- 22 modules  ·  DRIFT (12->22)
+## `scripts/checkers` -- 24 modules  ·  DRIFT (12->24)
 
 **What it does.** Twelve guards run at ship/CI time: door parity, doc currency, pointer promises, comprehensibility, boundaries, clobber scan and others. They fail the build on drift.
 
@@ -494,7 +495,7 @@ _Reviewed 2026-07-26 by claude._
 
 _Reviewed 2026-07-26 by claude._
 
-## `scripts/ops` -- 8 modules  ·  DRIFT (2->8)
+## `scripts/ops` -- 10 modules  ·  DRIFT (2->10)
 
 **What it does.** Operator tools for the knowledge substrate: snapshot_knowledge.py (snapshot / list / restore / verify across Redis, the file tier and chronicles, keeping the last 20) and reheal_durable_tier.py (backfill the durable tier FROM Redis, added 2026-07-26).
 
@@ -517,7 +518,7 @@ _Reviewed 2026-07-26 by claude._
 
 _Reviewed 2026-07-26 by claude._
 
-## `tests` -- 908 modules  ·  DRIFT (331->908)
+## `tests` -- 1052 modules  ·  DRIFT (331->1052)
 
 **What it does.** 331 test modules plus conftest, providing universal backend isolation, a parity exerciser shared across store backends, and a differential harness that cross-verifies two implementations of the same semantics.
 

@@ -50,6 +50,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import uuid
 from typing import Any
 
@@ -93,6 +94,9 @@ def _run_hook(path: str, ns: str, payload: dict) -> subprocess.CompletedProcess:
     env.pop("AKASHIC_SEAT_HEARTBEAT", None)  # default-on must be what ships
     env.pop("BIFROST_INCARNATION", None)  # force the payload's session_id to be used
     env.pop("CLAUDE_CODE_SESSION_ID", None)
+    # Each run is its own event: the two-surface guard (agent/harness/dedup.py) would otherwise
+    # treat the scripts/ and agent_harness/ runs of one PAYLOAD as a double registration.
+    env["AKASHIC_HOOK_DEDUP_DIR"] = tempfile.mkdtemp(prefix="hb-dedup-")
     return subprocess.run(
         [sys.executable, path],
         input=json.dumps(payload),
@@ -175,7 +179,13 @@ def test_w2b_beat_is_not_hostage_to_the_recall_kill_switch(which, ns):
         text=True,
         timeout=90,
         cwd=REPO,
-        env={**os.environ, "BIFROST_NAMESPACE": ns, "AKASHIC_AGENT_ID": AGENT, "AKASHIC_RECALL_AT_ACTION": "0"},
+        env={
+            **os.environ,
+            "BIFROST_NAMESPACE": ns,
+            "AKASHIC_AGENT_ID": AGENT,
+            "AKASHIC_RECALL_AT_ACTION": "0",
+            "AKASHIC_HOOK_DEDUP_DIR": tempfile.mkdtemp(prefix="hb-dedup-"),
+        },
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     assert (AGENT, SID8) in _beats(ns), (
@@ -201,7 +211,11 @@ def test_w4_never_invents_a_seat_when_identity_is_absent(which, ns):
         cwd=REPO,
         env={
             k: v
-            for k, v in {**os.environ, "BIFROST_NAMESPACE": ns}.items()
+            for k, v in {
+                **os.environ,
+                "BIFROST_NAMESPACE": ns,
+                "AKASHIC_HOOK_DEDUP_DIR": tempfile.mkdtemp(prefix="hb-dedup-"),
+            }.items()
             if k not in ("AKASHIC_AGENT_ID", "BIFROST_INCARNATION", "CLAUDE_CODE_SESSION_ID")
         },
     )

@@ -131,10 +131,37 @@ _REPO_MARKERS = ("agent_cli.py", "scripts/", "core/", "docs/", "tests/", "agent/
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 
+def _is_checkout(path: str) -> bool:
+    """An Aurora checkout (main tree or any worktree): the two markers the launcher also uses."""
+    return os.path.isfile(os.path.join(path, "agent_cli.py")) and os.path.isdir(os.path.join(path, "core"))
+
+
+def _inside_a_checkout(cwd: str) -> bool:
+    """True when `cwd` or any ancestor is a checkout, so repo-relative paths resolve there."""
+    p = os.path.abspath(cwd)
+    while True:
+        if _is_checkout(p):
+            return True
+        parent = os.path.dirname(p)
+        if parent == p:
+            return False
+        p = parent
+
+
+def _anchor_root() -> str:
+    """The checkout to tell the agent to cd into: the session's project when the harness names one,
+    else the checkout this hook lives in. Installed through the `aurora` launcher, the hook lives in
+    a release bundle (~/.aurora/versions/<v>), which is nobody's working directory."""
+    proj = (os.environ.get("CLAUDE_PROJECT_DIR") or "").strip()
+    if proj and _is_checkout(proj):
+        return proj
+    return _REPO_ROOT
+
+
 def _repo_cd() -> str:
     """How to spell `cd <repo>` in the harness shell: git-bash form for a Windows drive
     (E:\\AI-Setup -> /e/AI-Setup), the plain path everywhere else."""
-    fwd = _REPO_ROOT.replace("\\", "/").rstrip("/")
+    fwd = _anchor_root().replace("\\", "/").rstrip("/")
     if len(fwd) > 1 and fwd[1] == ":":
         return f"/{fwd[0].lower()}{fwd[2:]}"
     return fwd
@@ -142,7 +169,7 @@ def _repo_cd() -> str:
 
 def _repo_anchors() -> tuple:
     """Every spelling of the repo root a command may carry, lowercased for matching."""
-    fwd = _REPO_ROOT.replace("\\", "/").rstrip("/").lower()
+    fwd = _anchor_root().replace("\\", "/").rstrip("/").lower()
     return tuple({fwd, fwd.replace("/", "\\"), _repo_cd().lower()})
 
 
@@ -161,13 +188,15 @@ def _cwd_drift(data) -> str:
     here = cwd.replace("\\", "/").rstrip("/").lower()
     if here == root or here.startswith(root + "/"):
         return ""
+    if _inside_a_checkout(cwd):
+        return ""  # another checkout or worktree: its own paths resolve, nothing drifted
     low = cmd.lower()
     if any(a in low for a in _repo_anchors()):
         return ""
     if not any(m in cmd for m in _REPO_MARKERS):
         return ""
     return (
-        f"[cwd-guard] shell cwd is {cwd} -- NOT {_REPO_ROOT}. Repo-relative paths in this "
+        f"[cwd-guard] shell cwd is {cwd} -- NOT {_anchor_root()}. Repo-relative paths in this "
         "command will miss or FALSE-CLEAN (grep of absent dirs reports zero hits). "
         f"Anchor with `cd {_repo_cd()} && ...` -- the shell can reset its cwd when it rebuilds."
     )
