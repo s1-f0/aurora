@@ -758,6 +758,41 @@ def _vfx_presets_write(name, value):
         return {"ok": False, "error": str(exc)[:200]}
 
 
+AUTOLAUNCH_ENV = "AKASHIC_UI_AUTOLAUNCH"  # "0" / "false" / "no" / "off": a send never launches anything
+
+
+def _autolaunch_on() -> bool:
+    """The console's auto-launch-on-send switch. Default ON (unset), which Windows and every machine
+    without supervised services rely on; it beats AKASHIC_SUPERVISED_SEATS when both are set, since
+    it is the explicit kill switch."""
+    # The name is spelled out (not AUTOLAUNCH_ENV) so the physics-sheet scanner lists the flag.
+    return os.environ.get("AKASHIC_UI_AUTOLAUNCH", "").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _offline_target(to):
+    """Bring up an offline message target, or decline to, and say which happened.
+
+    Returns (launched, seat). `launched` is the old reply field, set only when the launcher SPAWNED
+    a child (the default mode, reply shape unchanged). `seat` is the new feedback for the other two
+    modes: {"seat": note, "started": [unit]} or {"seat": note, "queued_offline": [to]}. The message
+    is queued on the bus either way; the note says whether anything is coming to read it."""
+    if not _autolaunch_on():
+        return [], {"seat": f"queued; {to} offline", "queued_offline": [to]}
+    try:
+        r = get_launcher().launch(to)
+    except Exception:
+        return [], {}  # as before: a launcher crash never blocks the send
+    if not r.get("supervised"):
+        return ([to] if r.get("ok") else []), {}
+    unit = r.get("unit") or "its unit"
+    if r.get("ok") and r.get("action") == "started":
+        return [], {"seat": f"started {unit}", "started": [unit]}
+    if r.get("ok"):  # already_up: systemd is running it or bringing it back by itself
+        return [], {"seat": f"queued; {to} offline ({unit} {r.get('state_before')})", "queued_offline": [to]}
+    why = str(r.get("reason") or r.get("error") or "unknown")[:200]
+    return [], {"seat": f"queued; {to} offline (could not start {unit}: {why})", "queued_offline": [to]}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_a: object, **_k: object):
         pass  # quiet
@@ -1534,7 +1569,10 @@ class Handler(BaseHTTPRequestHandler):
         AUTO-LAUNCH (elegance): if the target agent is offline (not on the bus), the launcher
         auto-spawns it before delivering the message. The user never clicks 'Launch' — they just
         talk, and the system ensures the recipient exists. Steer messages also get a brief
-        ack echoed to the sender so the user KNOWS it was received, even though steer is silent."""
+        ack echoed to the sender so the user KNOWS it was received, even though steer is silent.
+        Where a service manager owns the seat (AKASHIC_SUPERVISED_SEATS) the launcher starts that
+        unit instead of spawning a duplicate; AKASHIC_UI_AUTOLAUNCH=0 turns auto-launch off and the
+        message just queues. The reply's `seat` field says which happened (_offline_target)."""
         text = (data.get("text") or "").strip()
         to = (data.get("to") or "all").strip().lower()  # default: reach every agent
         fidelity = (data.get("fidelity") or "chat").strip().lower()
@@ -1548,20 +1586,19 @@ class Handler(BaseHTTPRequestHandler):
         meta = {"hops": 0, "via": "console", "intent": fidelity}
         from core.comm import nudge
 
-        # Auto-launch: if target is a known agent and not online, spawn it now.
+        # Auto-launch: if target is a known agent and not online, bring it up now -- in one of three
+        # modes, each reported truthfully (see _offline_target): AKASHIC_UI_AUTOLAUNCH=0 launches
+        # nothing; a seat in AKASHIC_SUPERVISED_SEATS has its systemd unit started (the launcher
+        # does that); otherwise the launcher spawns a child, as it always has.
         launched = []
+        seat = {}  # supervised / queued feedback: {"seat": note, "started"|"queued_offline": [...]}
         if not broadcast and to != "user":
             try:
                 online_agents = [a.get("agent") for a in bus.presence()]
             except Exception:
                 online_agents = []
             if to not in online_agents:
-                try:
-                    lresult = get_launcher().launch(to)
-                    if lresult.get("ok"):
-                        launched.append(to)
-                except Exception:
-                    pass
+                launched, seat = _offline_target(to)
 
         if fidelity in ("interrupt", "steer") and not broadcast:
             if fidelity == "interrupt":
@@ -1574,6 +1611,9 @@ class Handler(BaseHTTPRequestHandler):
             if launched:
                 result["launched"] = launched
                 result["msg"] = f"auto-launched {to} — steer queued, it'll fold this in when it starts"
+            elif seat:
+                result.update(seat)
+                result["msg"] = f"{seat['seat']} — {to} folds the steer in when it starts"
             else:
                 result["msg"] = f"steered {to} — folded into its current task"
             return self._json(result)
@@ -1583,6 +1623,7 @@ class Handler(BaseHTTPRequestHandler):
         result = {"ok": bool(mid), "id": mid, "intent": fidelity, "to": to, "paused": False}
         if launched:
             result["launched"] = launched
+        result.update(seat)
         return self._json(result)
 
     def _negotiate(self, data):
@@ -4062,17 +4103,19 @@ async function send(){
   input.value=''; input.style.height='auto';
   var targets = isAll ? ['all'] : ids;
   try{
-    var ok=true, launched=[], msg='';
+    var ok=true, launched=[], msg='', seats=[];
     for(var i=0;i<targets.length;i++){
       var to=targets[i];
       var r = await fetch('/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text, to:to, fidelity:fidelity})});
       var j = await r.json();
       if(!(j&&j.ok)) ok=false;
       if(j.launched) launched=launched.concat(j.launched);
+      if(j.seat) seats.push(j.seat);  // "started aurora-heimdall" / "queued; deepseek offline"
       if(j.msg) msg=j.msg;  // server-side feedback (e.g. "auto-launched deepseek")
     }
     var label = FIDLABEL[fidelity]||'sent';
     if(launched.length) label += ' 🚀 auto-launched '+launched.join(', ');
+    if(seats.length && fidelity!=='steer') label += ' — '+seats.join('; ');  // steer's msg already says it
     if(msg && fidelity==='steer') label += ' — '+msg;
     toast((ok?label:'send failed — bus offline?')+' → '+(isAll?'all':ids.join(', ')));
   }catch(e){ toast('send failed — bus offline?'); }
@@ -4735,7 +4778,10 @@ async function launchAgent(tag){
     const r=await fetch('/launcher/launch',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({agent_id:tag})});
     const j=await r.json();
-    if(j&&j.ok) toast('✅ '+tag+' started (pid '+j.pid+')');
+    // a supervised seat (AKASHIC_SUPERVISED_SEATS) has no pid of ours: name the unit systemd runs
+    // the reply's note names what the unit did NOT apply (a variant tag's flags, a prompt): show it
+    if(j&&j.ok&&j.supervised) toast('✅ '+(j.action==='started' ? 'started '+j.unit : j.unit+' already '+j.state_before)+(j.note?' — '+j.note:''));
+    else if(j&&j.ok) toast('✅ '+tag+' started (pid '+j.pid+')');
     else toast('❌ '+(j?j.error:'failed to launch '+tag));
     refreshLauncher();
   }catch(e){ toast('launch failed — server offline?'); }
@@ -4780,7 +4826,8 @@ async function reviveAgent(tag){
     const r=await fetch('/launcher/revive',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({agent_id:tag})});
     const j=await r.json();
-    if(j&&j.ok) toast('✅ '+tag+' revived (pid '+j.pid+')');
+    if(j&&j.ok&&j.supervised) toast('✅ restarted '+j.unit+(j.note?' — '+j.note:''));
+    else if(j&&j.ok) toast('✅ '+tag+' revived (pid '+j.pid+')');
     else toast('❌ '+(j?j.error:'failed to revive '+tag));
     refreshLauncher();
   }catch(e){ toast('revive failed'); }
