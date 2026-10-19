@@ -221,7 +221,23 @@ def respawn_self(argv: list[str] | None = None) -> bool:
         return False
 
 
-def maybe_self_restart(agent: str, *, in_flight: bool = False) -> str | None:
+# EXTERNAL SUPERVISION (2026-10-19, systemd units on the Ubuntu host). A daemon running with
+# --external-supervisor (aurora-heimdall.service) already declines its OWN detached respawn; its
+# managed runner did not, so a stale runner forked a successor that belonged to nobody -- outside
+# the unit's cgroup supervision and outside the daemon's ManagedChild. The daemon now hands its
+# runner this variable, set to exactly "1", ONLY in that mode (bifrost_daemon.managed_runner_env).
+# A runner that sees it stands down with ManagedChild.HANDOVER_EXIT and launches nothing; its
+# supervisor respawns it on the new code. Explicit, never inferred from the process tree.
+EXTERNAL_SUPERVISOR_ENV = "AKASHIC_EXTERNAL_SUPERVISOR"
+
+
+def externally_supervised(environ=None) -> bool:
+    """True only when the supervising daemon set EXTERNAL_SUPERVISOR_ENV to exactly "1"."""
+    env = os.environ if environ is None else environ
+    return str(env.get(EXTERNAL_SUPERVISOR_ENV, "")) == "1"
+
+
+def maybe_self_restart(agent: str, *, in_flight: bool = False, respawn: bool = True) -> str | None:
     """The one-call integration point for runner turn boundaries. Returns the
     reason if a respawn was LAUNCHED (caller must then stand down cleanly),
     else None. Never raises.
@@ -230,7 +246,12 @@ def maybe_self_restart(agent: str, *, in_flight: bool = False) -> str | None:
     into the decision core so a busy repo that stales every organ at once
     spreads their rotations instead of stacking them (t376 reconciliation
     rule 2). The organ name is the agent id: distinct seats/organ-kinds get
-    distinct crc32-derived delays in [0,120)s."""
+    distinct crc32-derived delays in [0,120)s.
+
+    respawn=False is the externally supervised mode: the same decision, but NO
+    successor is launched. The reason is still returned, and the caller must then
+    exit with its supervisor's "respawn me now" code (ManagedChild.HANDOVER_EXIT),
+    never 0 -- the supervisor, not a detached fork, brings up the fresh code."""
     try:
         facts = gather(agent)
         reason = should_restart(
@@ -243,7 +264,7 @@ def maybe_self_restart(agent: str, *, in_flight: bool = False) -> str | None:
         )
         if not reason:
             return None
-        if not respawn_self():
+        if respawn and not respawn_self():
             return None  # spawn failed -> keep running, stay loud
         try:
             from core.comm import liveness
@@ -251,10 +272,17 @@ def maybe_self_restart(agent: str, *, in_flight: bool = False) -> str | None:
             liveness.worklive(agent).set("restarting", detail=reason[:100])
         except Exception:
             pass
-        print(
-            f"[self-restart] {agent}: {reason} -- fresh process launched; standing down via runner-lock takeover",
-            flush=True,
-        )
+        if respawn:
+            print(
+                f"[self-restart] {agent}: {reason} -- fresh process launched; standing down via runner-lock takeover",
+                flush=True,
+            )
+        else:
+            print(
+                f"[self-restart] {agent}: {reason} -- externally supervised: no successor launched; "
+                f"standing down for the supervisor to respawn",
+                flush=True,
+            )
         return reason
     except Exception:
         return None

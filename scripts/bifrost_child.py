@@ -287,6 +287,13 @@ class ManagedChild:
         self._handle_exit(code or 0)
         return code
 
+    # How long terminate() lets a SIGTERMed child clean up before SIGKILL. A runner's stop path
+    # (one-shot handler -> finally) runs retire_seat, which joins the heartbeat thread for up to
+    # its hb_join_s (6 s) BEFORE releasing the runner lock. The old 5 s SIGKILLed it inside that
+    # join and leaked the lock and the 'running' card -- the exact residue the handler removes.
+    # Windows is unaffected in practice: terminate() there is TerminateProcess, which is immediate.
+    TERMINATE_GRACE_S = 10.0
+
     def terminate(self) -> None:
         """Stop the child on daemon exit."""
         if self._proc is None:
@@ -294,7 +301,7 @@ class ManagedChild:
         try:
             self._proc.terminate()
             try:
-                self._proc.wait(timeout=5)
+                self._proc.wait(timeout=self.TERMINATE_GRACE_S)
             except subprocess.TimeoutExpired:
                 self._proc.kill()
                 self._proc.wait(timeout=3)

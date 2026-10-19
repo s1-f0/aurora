@@ -1368,9 +1368,30 @@ def main() -> int:
     args = ap.parse_args()
     # T160: wire records must name the seat that made the call. Imported at the call site so a
     # telemetry import can never keep a runner from starting.
-    from core.comm.runner_lib import retire_seat, seat_session_id, set_seat_agent
+    from core.comm.runner_lib import (
+        ignore_stop_signals,
+        install_stop_signals,
+        retire_seat,
+        seat_session_id,
+        set_seat_agent,
+        stop_exit_code,
+        stop_requested,
+    )
 
     set_seat_agent(args.agent)
+
+    # EXTERNAL SUPERVISION, read once and EXPLICITLY: a daemon run with --external-supervisor
+    # (systemd's aurora-heimdall.service) sets AKASHIC_EXTERNAL_SUPERVISOR=1 for this child and
+    # for no other (bifrost_daemon.managed_runner_env). Under it, stale code exits
+    # ManagedChild.HANDOVER_EXIT for the supervisor to respawn -- never a detached successor,
+    # which would escape both the unit's cgroup and the daemon's ManagedChild. Popped at once so
+    # nothing this runner launches (exec-tool shells, a hand-started runner) inherits a claim
+    # about a supervisor that is not theirs.
+    supervised = self_restart.externally_supervised()
+    os.environ.pop(self_restart.EXTERNAL_SUPERVISOR_ENV, None)
+    from scripts.bifrost_child import ManagedChild
+
+    handover_exit = ManagedChild.HANDOVER_EXIT
 
     if not load_key():
         print("bifrost_runner_deepseek: NO_KEY (set DEEPSEEK_API_KEY or .secrets/deepseek.key)")
@@ -1437,233 +1458,259 @@ def main() -> int:
                 f"Refusing to start -- one runner per agent avoids cursor races."
             )
         return 3
-    # 9e1bc7ce78: a BARE runner (no daemon over this seat) says so LOUDLY, once, at startup.
-    # It holds bifrost:runner:<agent> only -- the daemon's lock is a different key -- so there
-    # is nothing to refuse; the residue was that its absence read as normal (2026-08-26:
-    # Heimdall's Discord went silent, every liveness signal green). AFTER acquisition, because
-    # a refused runner is not standalone. Fail-open WITH a confession: a broken check must not
-    # keep a runner from starting, and a silent one re-creates the exact class this closes.
-    try:
-        _standalone = daemon_state.standalone_warning(args.agent, runner_script=os.path.basename(__file__))
-        if _standalone:
-            print(_standalone, file=sys.stderr, flush=True)
-    except Exception as e:  # noqa: BLE001  # fail-soft: logged, caller continues
-        print(
-            f"[deepseek-runner] standalone check skipped ({type(e).__name__}) -- cannot tell "
-            f"whether a daemon supervises '{args.agent}'",
-            file=sys.stderr,
-            flush=True,
-        )
-    # RB-27a: 'starting' phase spans onboarding/responder construction -- a boot-time
-    # wedge (hung onboarding subprocess, dead API) is distinguishable from a mid-run one.
-    PULSE_GEN[0] = runner_lock.generation_of(lock_token)
-    liveness.worklive(args.agent).set("starting", detail="onboarding")
-    liveness.pulse(args.agent, "starting", generation=PULSE_GEN[0])
-
-    # A fresh tenure NEVER honors a pre-tenure drain (live race 2026-07-21: a drain
-    # aimed at the PREVIOUS runner survived its death and would have killed this one
-    # at loop-top -- a drain request addresses a tenure, not an agent).
-    control.clear_drain(args.agent)
-
-    # S0 storm auto-clear: one detector per runner tenure (in-memory sliding window;
-    # a crash resets it, which is safe -- fresh runner, clean windows).
-    _storm = storm_detect.StormDetector()
-
-    # T078 W1: daily token journal (the meter -- every W2+ slice gets a before/after receipt)
-    # `global` is load-bearing: without it this bound a function-LOCAL and the module-level
-    # _token_journal stayed None for the whole process, so the hot-path guard
-    # `if _token_journal is not None and delta:` never fired once. The meter recorded ZERO
-    # turns from the day it shipped until 2026-07-25, while printing a reading every boot.
-    global _token_journal
-    try:
-        from scripts.runner_token_journal import TokenJournal
-
-        _token_journal = TokenJournal(args.agent)
-        print(
-            f"[deepseek-runner] token journal: {_token_journal.turns} turns, "
-            f"{_token_journal.prompt_tokens + _token_journal.completion_tokens} tokens today"
-        )
-    except Exception:
-        pass
-
-    if args.agentic:
-        import deepseek_chat as dc
-
-        if dc._enable_utf8_and_ansi():
-            dc.C.enable()
-        root = Path(args.root).resolve()
-        system = args.system
-        if system == DEFAULT_SYSTEM:  # give the tool-aware prompt unless overridden
-            system = dc.default_system(root) + (
-                " You are reached over a shared message bus; each "
-                "reply posts back to the sender, so make it self-contained."
-            )
-        # Onboarding-on-init: boot ONCE and fold the project briefing into the system prompt, so every
-        # reply is grounded in the contract + current focus + top lessons (not answering blind).
-        # T074 W14: the runner's own continuity header (DIRECTIVE + SIBLINGS + age-stamped
-        # private notes) injects BEFORE the project onboarding -- "what am I doing, who else
-        # is here, what did I remember" answered without reading 6000 chars of context first.
-        continuity = _runner_continuity_header(args.agent)
-        if continuity:
-            system = continuity + "\n\n" + system
-            print(f"[deepseek-runner] continuity header injected ({len(continuity)} chars)")
-        # T124: fold this seat's INTERIORITY.md into the boot — the standing section,
-        # "what it is like to be this seat", so feeling is heritable like fact
-        interiority = _interiority_sidecar(args.agent, str(args.root))
-        if interiority:
-            system = system + "\n" + interiority
-            print(f"[deepseek-runner] interiority sidecar injected ({_interiority_summary(interiority, args.agent)})")
-        # M1-delta: summary injection v1 -- fold prior run's outcome into this boot
-        if getattr(args, "inject_summary", None):
-            try:
-                with open(args.inject_summary, encoding="utf-8") as _sf:
-                    prior = json.loads(_sf.read().strip() or "{}") or {}
-                if prior:
-                    from scripts.bifrost_child import format_summary_for_prompt
-
-                    system = f"## YOUR LAST RUN (summary injection v1): {format_summary_for_prompt(prior)}\n\n" + system
-                    print(f"[deepseek-runner] prior summary injected: {format_summary_for_prompt(prior)}")
-            except Exception:
-                pass
-        # W6-P3: compose the door detail string for the boot transport line
-        n_tools = len(dc.TOOLS)
-        write_state = "on" if args.allow_write else "off"
-        exec_state = "on" if args.allow_exec else "off"
-        door_detail = f"{n_tools} tools, write={write_state}, exec={exec_state}"
-        onboard = onboarding_context(
-            root,
-            args.agent,
-            "Live Bifrost session: collaborating with Claude and the user on Akashic Aurora over the shared bus.",
-            door_detail=door_detail,
-        )
-        # W6-P2: read the structured boot sources from the sidecar (regex fallback still lives
-        # in ToolBox.__init__ for backward compat, but the sidecar is the primary source)
-        boot_sources = getattr(onboarding_context, "_last_sources", None)
-        if boot_sources:
-            print(f"[deepseek-runner] boot sources from sidecar: {len(boot_sources)} entries")
-        if onboard:
-            system += (
-                "\n\n=== PROJECT ONBOARDING (you are a booted Akashic Aurora citizen; honor the "
-                "AGENTS.md contract) ===\n" + onboard
-            )
-            print(f"[deepseek-runner] onboarded via boot ({len(onboard)} chars folded into system prompt)")
-        else:
-            print("[deepseek-runner] onboarding skipped (boot returned nothing; check agent_cli.py boot)")
-        # T067-1 Q1: his private notes ride the boot -- a colleague who remembers, not a
-        # consultant who must remember to ask (memory_recall stays the full-fidelity pull).
-        folded = fold_private_notes(system, args.agent)
-        if len(folded) > len(system):
-            print(f"[deepseek-runner] private notes folded into boot (+{len(folded) - len(system)} chars)")
-        system = folded
-        responder = make_agentic_replier(
-            args.model,
-            system,
-            args.think,
-            root,
-            args.agent,
-            allow_write=args.allow_write,
-            allow_exec=args.allow_exec,
-            boot_sources=boot_sources,
-        )
-        mode = f"agentic tools @ {root}{' +write' if args.allow_write else ''}{' +exec' if args.allow_exec else ''}"
-    else:
-        responder = make_replier(args.model, args.system, args.think, agent_id=args.agent)
-        mode = "one-shot bridge"
-
-    if os.environ.get("AKASHIC_DRILL_ECHO"):
-        # L1 kill-window drills: a deterministic offline responder -- the drill proves the
-        # CONSUME->COMMIT pipeline, not the model. Never set in production.
-        args.agentic = False
-
-        def _drill_echo(prompt):
-            return f"[drill-echo] {str(prompt)[:120]}"
-
-        responder = _drill_echo
-
-        mode = "drill-echo (offline)"
-
-    bus.register(card=CARD)
-    # RB-25 F2: a brand-NEW agent seeds its cursor at the live tail so it never acts on
-    # the stale broadcast backlog as if current (the newborn gauntlet drained months-old
-    # history and treated it as a directive). Virgin-guarded: an ESTABLISHED runner keeps
-    # draining its real backlog (mail queued while down -- the T014 discipline); only a
-    # never-read "0"/"0" cursor is fast-forwarded. No-op for deepseek et al.
-    # Same AKASHIC_DRILL_ECHO escape as F1: the kill-window drills PLANT direct mail then
-    # start the runner expecting it consumed -- seeding past the plant would eat exactly
-    # what the drill tests. The offline-drill signal is never set in production.
-    if not os.environ.get("AKASHIC_DRILL_ECHO") and bus.seed_cursor_at_tail():
-        print(
-            f"[deepseek-runner] {args.agent} is new -- cursor seeded at the live tail "
-            f"(stale broadcast backlog skipped; only new mail wakes it)"
-        )
-
-    # Initialize cognitive efficiency metrics for this agent
-    cog.init(args.agent)
-    if args.accept_hints:
-        print(f"[deepseek-runner] cognitive metrics enabled for {args.agent}")
-    # Daniil 2026-08-24: no turn caps on Heimdall -- the reply limiter is effectively off
-    # unless BIFROST_MAX_REPLIES_PER_MIN re-caps it (the auto-pause path stays wired for that case).
-    rate = control.RateLimiter(max_per_min=int(os.getenv("BIFROST_MAX_REPLIES_PER_MIN", "0")) or 10**9)
+    # ONE-SHOT STOP HANDLER, armed the moment the lock is ours. systemd (KillMode=control-group)
+    # and ManagedChild.terminate() stop this process with SIGTERM; with no handler it died on the
+    # spot and the `finally` below never ran -- every restart leaked a dead lock holder (the next
+    # daemon idled ~20 s on it) and a 'running' roster card (doctor: HARD WEDGE). Now the first
+    # SIGTERM/SIGINT raises KeyboardInterrupt into this try, and ignores both from then on so a
+    # second cannot cut the cleanup short. The try opens straight after, around onboarding too.
+    install_stop_signals()
     # Background heartbeat: refresh presence + the singleton lock every few seconds INDEPENDENT of the
     # work loop. Without this, a long reply (the loop is blocked inside responder()) would let presence
     # expire -- the agent vanishes from the roster though it's alive -- and even let the lock TTL lapse.
     stop_hb = threading.Event()
+    hb_thread: threading.Thread | None = None
     # 8c881ab628: the seat id is derived ONCE (core/comm/runner_lib.seat_session_id) and
     # shared by the beat below and the retraction in `finally` -- the card a clean exit
     # retracts must be the card it wrote.
     seat_sid = seat_session_id(args.agent, getattr(args, "session", None))
-
-    def _heartbeat():
-        while not stop_hb.wait(5):
-            try:
-                runner_lock.heartbeat(args.agent, lock_token)
-                bus.register(card=CARD)
-                liveness.worklive(args.agent).refresh()  # L1: keep worklive fresh (+ ageing) even mid-wedge
-                # T147: the roster reads a PER-INCARNATION key; the worklive refresh above writes the
-                # BARE one. Without this beat a live runner renders DEAD and reaper._provably_dead()
-                # agrees -- and roster.py:9 calls the roster "the reaper's only sensor".
-                roster.heartbeat(os.environ.get("BIFROST_NAMESPACE", "bifrost"), args.agent, seat_sid, phase="running")
-            except Exception:
-                pass
-
-    hb_thread = threading.Thread(target=_heartbeat, daemon=True)
-    hb_thread.start()
-    # T045 stage 2: the consume side rides the WORK LANE when flipped (per-process strangler
-    # env gate BIFROST_CONSUME_LANE=work; unset = legacy path byte-identical).
-    from core.comm.bifrost_api import BifrostAPI
-
-    # DRAIN THE LANE THE MAIL IS ON (see the kimi runner for the full receipt): with
-    # BIFROST_CONSUME_LANE unset a runner reads the LEGACY lane from a badly-lagged cursor while
-    # sends land on work, and simply looks idle. The library gate stays legacy-by-default for
-    # strangler discipline; a RUNNER defaults itself onto work because reaching mail is its job.
-    os.environ.setdefault("BIFROST_CONSUME_LANE", "work")
-    lane_mode = BifrostAPI.consume_lane_enabled()
-    if not lane_mode:
-        print(
-            f"[deepseek-runner] WARNING: consuming the LEGACY lane "
-            f"(BIFROST_CONSUME_LANE={os.environ.get('BIFROST_CONSUME_LANE')!r}). Mail sent to "
-            f"the work lane will NOT be reached. Unset it, or set it to 'work'."
-        )
-    lane_key = bus.lane_cursor_key() if lane_mode else None
-    api = BifrostAPI(args.agent) if lane_mode else None
-    if lane_mode:
-        if bus.lane_flip_if_migrating():
-            print(
-                "[deepseek-runner] lane flip: cursor seeded at lane tails (A4 ritual); "
-                "unconsumed legacy backlog rides the straggler net"
-            )
-        print("[deepseek-runner] CONSUME LANE: work (T045 stage 2 cutover live)")
-    print(
-        f"[deepseek-runner] {args.agent} online (model={args.model}, think={'on' if args.think else 'off'}, "
-        f"{mode}, max_hops={control.MAX_HOPS}). Waiting for messages... (Ctrl-C to stop)"
-    )
-    lock_gen = runner_lock.generation_of(lock_token)  # L1b: this tenure's fencing token
-    PULSE_GEN[0] = lock_gen  # RB-27a: the pulse carries it too
-    liveness.worklive(args.agent).set("idle")  # loop entered: startup survived
-    bus_guard = liveness.BusLossGuard(max_dead=10)  # RB-30 B2: no invisible bus-less spin
-    next_conductor_check = 0.0  # t384: conductor-absence notice cadence
+    handed_over = False  # stale code under an external supervisor: exit HANDOVER, launch nothing
     try:
+        # 9e1bc7ce78: a BARE runner (no daemon over this seat) says so LOUDLY, once, at startup.
+        # It holds bifrost:runner:<agent> only -- the daemon's lock is a different key -- so there
+        # is nothing to refuse; the residue was that its absence read as normal (2026-08-26:
+        # Heimdall's Discord went silent, every liveness signal green). AFTER acquisition, because
+        # a refused runner is not standalone. Fail-open WITH a confession: a broken check must not
+        # keep a runner from starting, and a silent one re-creates the exact class this closes.
+        try:
+            _standalone = daemon_state.standalone_warning(args.agent, runner_script=os.path.basename(__file__))
+            if _standalone:
+                print(_standalone, file=sys.stderr, flush=True)
+        except Exception as e:  # noqa: BLE001  # fail-soft: logged, caller continues
+            print(
+                f"[deepseek-runner] standalone check skipped ({type(e).__name__}) -- cannot tell "
+                f"whether a daemon supervises '{args.agent}'",
+                file=sys.stderr,
+                flush=True,
+            )
+        # RB-27a: 'starting' phase spans onboarding/responder construction -- a boot-time
+        # wedge (hung onboarding subprocess, dead API) is distinguishable from a mid-run one.
+        PULSE_GEN[0] = runner_lock.generation_of(lock_token)
+        liveness.worklive(args.agent).set("starting", detail="onboarding")
+        liveness.pulse(args.agent, "starting", generation=PULSE_GEN[0])
+
+        # A fresh tenure NEVER honors a pre-tenure drain (live race 2026-07-21: a drain
+        # aimed at the PREVIOUS runner survived its death and would have killed this one
+        # at loop-top -- a drain request addresses a tenure, not an agent).
+        control.clear_drain(args.agent)
+
+        # S0 storm auto-clear: one detector per runner tenure (in-memory sliding window;
+        # a crash resets it, which is safe -- fresh runner, clean windows).
+        _storm = storm_detect.StormDetector()
+
+        # T078 W1: daily token journal (the meter -- every W2+ slice gets a before/after receipt)
+        # `global` is load-bearing: without it this bound a function-LOCAL and the module-level
+        # _token_journal stayed None for the whole process, so the hot-path guard
+        # `if _token_journal is not None and delta:` never fired once. The meter recorded ZERO
+        # turns from the day it shipped until 2026-07-25, while printing a reading every boot.
+        global _token_journal
+        try:
+            from scripts.runner_token_journal import TokenJournal
+
+            _token_journal = TokenJournal(args.agent)
+            print(
+                f"[deepseek-runner] token journal: {_token_journal.turns} turns, "
+                f"{_token_journal.prompt_tokens + _token_journal.completion_tokens} tokens today"
+            )
+        except Exception:
+            pass
+
+        if args.agentic:
+            import deepseek_chat as dc
+
+            if dc._enable_utf8_and_ansi():
+                dc.C.enable()
+            root = Path(args.root).resolve()
+            system = args.system
+            if system == DEFAULT_SYSTEM:  # give the tool-aware prompt unless overridden
+                system = dc.default_system(root) + (
+                    " You are reached over a shared message bus; each "
+                    "reply posts back to the sender, so make it self-contained."
+                )
+            # Onboarding-on-init: boot ONCE and fold the project briefing into the system prompt, so every
+            # reply is grounded in the contract + current focus + top lessons (not answering blind).
+            # T074 W14: the runner's own continuity header (DIRECTIVE + SIBLINGS + age-stamped
+            # private notes) injects BEFORE the project onboarding -- "what am I doing, who else
+            # is here, what did I remember" answered without reading 6000 chars of context first.
+            continuity = _runner_continuity_header(args.agent)
+            if continuity:
+                system = continuity + "\n\n" + system
+                print(f"[deepseek-runner] continuity header injected ({len(continuity)} chars)")
+            # T124: fold this seat's INTERIORITY.md into the boot — the standing section,
+            # "what it is like to be this seat", so feeling is heritable like fact
+            interiority = _interiority_sidecar(args.agent, str(args.root))
+            if interiority:
+                system = system + "\n" + interiority
+                print(
+                    f"[deepseek-runner] interiority sidecar injected ({_interiority_summary(interiority, args.agent)})"
+                )
+            # M1-delta: summary injection v1 -- fold prior run's outcome into this boot
+            if getattr(args, "inject_summary", None):
+                try:
+                    with open(args.inject_summary, encoding="utf-8") as _sf:
+                        prior = json.loads(_sf.read().strip() or "{}") or {}
+                    if prior:
+                        from scripts.bifrost_child import format_summary_for_prompt
+
+                        system = (
+                            f"## YOUR LAST RUN (summary injection v1): {format_summary_for_prompt(prior)}\n\n" + system
+                        )
+                        print(f"[deepseek-runner] prior summary injected: {format_summary_for_prompt(prior)}")
+                except Exception:
+                    pass
+            # W6-P3: compose the door detail string for the boot transport line
+            n_tools = len(dc.TOOLS)
+            write_state = "on" if args.allow_write else "off"
+            exec_state = "on" if args.allow_exec else "off"
+            door_detail = f"{n_tools} tools, write={write_state}, exec={exec_state}"
+            onboard = onboarding_context(
+                root,
+                args.agent,
+                "Live Bifrost session: collaborating with Claude and the user on Akashic Aurora over the shared bus.",
+                door_detail=door_detail,
+            )
+            # W6-P2: read the structured boot sources from the sidecar (regex fallback still lives
+            # in ToolBox.__init__ for backward compat, but the sidecar is the primary source)
+            boot_sources = getattr(onboarding_context, "_last_sources", None)
+            if boot_sources:
+                print(f"[deepseek-runner] boot sources from sidecar: {len(boot_sources)} entries")
+            if onboard:
+                system += (
+                    "\n\n=== PROJECT ONBOARDING (you are a booted Akashic Aurora citizen; honor the "
+                    "AGENTS.md contract) ===\n" + onboard
+                )
+                print(f"[deepseek-runner] onboarded via boot ({len(onboard)} chars folded into system prompt)")
+            else:
+                print("[deepseek-runner] onboarding skipped (boot returned nothing; check agent_cli.py boot)")
+            # T067-1 Q1: his private notes ride the boot -- a colleague who remembers, not a
+            # consultant who must remember to ask (memory_recall stays the full-fidelity pull).
+            folded = fold_private_notes(system, args.agent)
+            if len(folded) > len(system):
+                print(f"[deepseek-runner] private notes folded into boot (+{len(folded) - len(system)} chars)")
+            system = folded
+            responder = make_agentic_replier(
+                args.model,
+                system,
+                args.think,
+                root,
+                args.agent,
+                allow_write=args.allow_write,
+                allow_exec=args.allow_exec,
+                boot_sources=boot_sources,
+            )
+            mode = f"agentic tools @ {root}{' +write' if args.allow_write else ''}{' +exec' if args.allow_exec else ''}"
+        else:
+            responder = make_replier(args.model, args.system, args.think, agent_id=args.agent)
+            mode = "one-shot bridge"
+
+        if os.environ.get("AKASHIC_DRILL_ECHO"):
+            # L1 kill-window drills: a deterministic offline responder -- the drill proves the
+            # CONSUME->COMMIT pipeline, not the model. Never set in production.
+            args.agentic = False
+
+            def _drill_echo(prompt):
+                return f"[drill-echo] {str(prompt)[:120]}"
+
+            responder = _drill_echo
+
+            mode = "drill-echo (offline)"
+
+        bus.register(card=CARD)
+        # RB-25 F2: a brand-NEW agent seeds its cursor at the live tail so it never acts on
+        # the stale broadcast backlog as if current (the newborn gauntlet drained months-old
+        # history and treated it as a directive). Virgin-guarded: an ESTABLISHED runner keeps
+        # draining its real backlog (mail queued while down -- the T014 discipline); only a
+        # never-read "0"/"0" cursor is fast-forwarded. No-op for deepseek et al.
+        # Same AKASHIC_DRILL_ECHO escape as F1: the kill-window drills PLANT direct mail then
+        # start the runner expecting it consumed -- seeding past the plant would eat exactly
+        # what the drill tests. The offline-drill signal is never set in production.
+        if not os.environ.get("AKASHIC_DRILL_ECHO") and bus.seed_cursor_at_tail():
+            print(
+                f"[deepseek-runner] {args.agent} is new -- cursor seeded at the live tail "
+                f"(stale broadcast backlog skipped; only new mail wakes it)"
+            )
+
+        # Initialize cognitive efficiency metrics for this agent
+        cog.init(args.agent)
+        if args.accept_hints:
+            print(f"[deepseek-runner] cognitive metrics enabled for {args.agent}")
+        # Daniil 2026-08-24: no turn caps on Heimdall -- the reply limiter is effectively off
+        # unless BIFROST_MAX_REPLIES_PER_MIN re-caps it (the auto-pause path stays wired for that case).
+        rate = control.RateLimiter(max_per_min=int(os.getenv("BIFROST_MAX_REPLIES_PER_MIN", "0")) or 10**9)
+
+        def _heartbeat():
+            while not stop_hb.wait(5):
+                try:
+                    runner_lock.heartbeat(args.agent, lock_token)
+                    bus.register(card=CARD)
+                    liveness.worklive(args.agent).refresh()  # L1: keep worklive fresh (+ ageing) even mid-wedge
+                    # T147: the roster reads a PER-INCARNATION key; the worklive refresh above writes the
+                    # BARE one. Without this beat a live runner renders DEAD and reaper._provably_dead()
+                    # agrees -- and roster.py:9 calls the roster "the reaper's only sensor".
+                    roster.heartbeat(
+                        os.environ.get("BIFROST_NAMESPACE", "bifrost"), args.agent, seat_sid, phase="running"
+                    )
+                except Exception:
+                    pass
+
+        hb_thread = threading.Thread(target=_heartbeat, daemon=True)
+        hb_thread.start()
+        # T045 stage 2: the consume side rides the WORK LANE when flipped (per-process strangler
+        # env gate BIFROST_CONSUME_LANE=work; unset = legacy path byte-identical).
+        from core.comm.bifrost_api import BifrostAPI
+
+        # DRAIN THE LANE THE MAIL IS ON (see the kimi runner for the full receipt): with
+        # BIFROST_CONSUME_LANE unset a runner reads the LEGACY lane from a badly-lagged cursor while
+        # sends land on work, and simply looks idle. The library gate stays legacy-by-default for
+        # strangler discipline; a RUNNER defaults itself onto work because reaching mail is its job.
+        os.environ.setdefault("BIFROST_CONSUME_LANE", "work")
+        lane_mode = BifrostAPI.consume_lane_enabled()
+        if not lane_mode:
+            print(
+                f"[deepseek-runner] WARNING: consuming the LEGACY lane "
+                f"(BIFROST_CONSUME_LANE={os.environ.get('BIFROST_CONSUME_LANE')!r}). Mail sent to "
+                f"the work lane will NOT be reached. Unset it, or set it to 'work'."
+            )
+        lane_key = bus.lane_cursor_key() if lane_mode else None
+        api = BifrostAPI(args.agent) if lane_mode else None
+        if lane_mode:
+            if bus.lane_flip_if_migrating():
+                print(
+                    "[deepseek-runner] lane flip: cursor seeded at lane tails (A4 ritual); "
+                    "unconsumed legacy backlog rides the straggler net"
+                )
+            print("[deepseek-runner] CONSUME LANE: work (T045 stage 2 cutover live)")
+        print(
+            f"[deepseek-runner] {args.agent} online (model={args.model}, think={'on' if args.think else 'off'}, "
+            f"{mode}, max_hops={control.MAX_HOPS}). Waiting for messages... (Ctrl-C to stop)"
+        )
+        if supervised:
+            print(
+                f"[deepseek-runner] externally supervised ({self_restart.EXTERNAL_SUPERVISOR_ENV}=1): "
+                f"stale code exits {handover_exit} for the supervisor to respawn; no detached successor."
+            )
+        lock_gen = runner_lock.generation_of(lock_token)  # L1b: this tenure's fencing token
+        PULSE_GEN[0] = lock_gen  # RB-27a: the pulse carries it too
+        liveness.worklive(args.agent).set("idle")  # loop entered: startup survived
+        bus_guard = liveness.BusLossGuard(max_dead=10)  # RB-30 B2: no invisible bus-less spin
+        next_conductor_check = 0.0  # t384: conductor-absence notice cadence
         while True:
+            # Backstop for the stop handler: if a broad `except BaseException` inside a turn swallowed
+            # the StopSignal, the handler has already set SIG_IGN -- leave at the next loop top
+            # rather than run on deaf to every later SIGTERM until a SIGKILL.
+            if stop_requested():
+                print("[deepseek-runner] stop signal received during a turn -- exiting through cleanup.")
+                break
             verdict = bus_guard.beat(bus.probe())  # probe(), NOT online -- online never flips mid-run
             if verdict == "stand_down":
                 print(
@@ -1707,6 +1754,10 @@ def main() -> int:
             # the fresh copy this launches takes the singleton lock at a higher
             # generation and this process stands down through the SAME takeover path
             # a crash would use. Fail direction is keep-running (proven staleness only).
+            # EXTERNALLY SUPERVISED (`supervised`, set by the daemon's --external-supervisor):
+            # the same decision launches NOTHING and exits handover_exit (7), so systemd's
+            # unit and the daemon's ManagedChild bring up the new code; a detached successor
+            # would run outside both.
             # TURN BOUNDARY (shift loop, step 2). ONE shared decision for every
             # runner -- never a local next_beat block; four call sites is already
             # past the rule of three. Never raises: idle is the fail-closed answer,
@@ -1718,9 +1769,16 @@ def main() -> int:
                     + (f" {_beat['task']}" if _beat.get("task") else "")
                     + f" -- {_beat.get('reason', '')}"
                 )
-            _sr = self_restart.maybe_self_restart(args.agent)
+            _sr = self_restart.maybe_self_restart(args.agent, respawn=not supervised)
             if _sr:
-                print(f"[deepseek-runner] {_sr} -- exiting clean; the successor takes the lock.")
+                if supervised:
+                    print(
+                        f"[deepseek-runner] {_sr} -- externally supervised: NO successor launched; "
+                        f"exiting {handover_exit} so the supervisor respawns this seat on the new code."
+                    )
+                    handed_over = True
+                else:
+                    print(f"[deepseek-runner] {_sr} -- exiting clean; the successor takes the lock.")
                 break
             # t384 conductor-absence notice: a MACHINE (this successor runner) evaluates
             # succession on a slow cadence, so conductor absence is noticed at the loop
@@ -1906,6 +1964,7 @@ def main() -> int:
     except (KeyboardInterrupt, EOFError):
         pass
     finally:
+        ignore_stop_signals()  # a stop signal landing DURING the cleanup must not raise into it
         # 8c881ab628: a CLEAN exit retracts its own phase card. Stops the heartbeat thread
         # and JOINS it first (an in-flight beat after the delete would resurrect the card),
         # then roster.go_offline deletes {ns}:worklive:{agent}#{sid8} and stamps the
@@ -1913,10 +1972,17 @@ def main() -> int:
         # has no 'running' card left to page HARD WEDGE on for the next 180s.
         retire_seat(args.agent, seat_sid, stop_hb=stop_hb, hb_thread=hb_thread)
         runner_lock.release(args.agent, lock_token)  # free the singleton lock for a clean successor
+    if handed_over:
+        exit_code, verdict = handover_exit, "handover"
+    else:
+        # SIGINT keeps the old clean 0; a SIGTERM stop reads 128+15, as a SIGTERM death did
+        # (ManagedChild respawns it), instead of masquerading as a deliberate exit 0.
+        exit_code = stop_exit_code(0)
+        verdict = "ok" if exit_code == 0 else "terminated"
     # M1-delta: write exit summary for the daemon's summary-injection path
-    _write_exit_summary(getattr(args, "summary_file", None), exit_code=0, verdict="ok")
+    _write_exit_summary(getattr(args, "summary_file", None), exit_code=exit_code, verdict=verdict)
     print("[deepseek-runner] stopped.")
-    return 0
+    return exit_code
 
 
 def _write_exit_summary(path: str | None, exit_code: int = 0, verdict: str = "ok", last_error: str = "") -> None:
