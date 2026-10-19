@@ -287,10 +287,14 @@ def resolve(query: str, corpus: Path | None = None) -> str:
 
 
 def ledger_path(sid: str, ledger_dir: Path | None = None, state_root: Path | None = None) -> Path:
-    """Where a ledger goes; refused (ValueError) outside state/, before any work is done."""
+    """Where a ledger goes; refused (ValueError) outside state/ (render.py under_state: state_root while git ignores the
+    ledger's own file there, or the world's state/ that state/arsenal/shaders may link into, never a tracked tree),
+    before any work is done."""
+    from . import render as R
+
     out = (Path(ledger_dir) if ledger_dir is not None else LEDGER) / f"{sid}.json"
     root = Path(state_root) if state_root is not None else STATE_ROOT
-    if not out.resolve().is_relative_to(root.resolve()):
+    if not R.under_state(out, primary=root, file=True):
         raise ValueError(f"refused: {out} is outside {root}; a ledger names other people's work and stays under state/")
     return out
 

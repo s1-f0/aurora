@@ -34,9 +34,11 @@
 // takes Page.captureScreenshot. Everything that keeps the machine safe is REUSED from headless.mjs, not re-derived: the
 // Chrome flags (headless, ANGLE on SwiftShader, Direct3D 11 off, GPU compositing off), the renderer judgement (a WebGL2
 // renderer string must name SwiftShader and no hardware, checked before the lab page loads), the state/-only rule for
-// output, the burst budget, and the order on the way out (our Chrome dies first, the lock is released second). The
-// lock is the house lock (arsenal/lanes/gpu_lock.mjs, arsenal/GPU-LOCK.md). Never port 8793; never the Claude app's
-// browser pane; never `chrome --version`.
+// output (where git ignores it, with the roots render.py's licence line accepts beside state/, stateRoots; judged at
+// the start and again at every screenshot, outRefusal), the burst budget, and the order on the way out (our Chrome
+// dies first, the lock is released second). The lock is the house lock
+// (arsenal/lanes/gpu_lock.mjs, arsenal/GPU-LOCK.md). Never port 8793; never the Claude app's browser pane; never
+// `chrome --version`.
 //
 // WHAT IT PROVES BESIDES THE PICTURE. Before any page script runs, the driver wraps HTMLCanvasElement.getContext so the
 // page's WebGL requests are counted; the receipt records that count and the number of <canvas> elements after load.
@@ -49,15 +51,15 @@
 // otherwise a private one is started on an ephemeral loopback port for the life of this process.
 //
 // Apache-2.0, written for the house (Vandor, 2026-10-13).
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   BURST_MS, CHROME_ENV, DEVTOOLS_WAIT_MS, FORBIDDEN_PORTS, PROFILE_ROOT, chromeFlags, guardHolder, judgeRenderer, killTree,
-  resolveChrome, underState,
+  resolveChrome, underState, writePicture,
 } from "./headless.mjs";
 import { LIVE_OFF_WORDS, LIVE_SWITCH } from "../web/lib/workbench/stage.js";
 
@@ -117,6 +119,28 @@ export function pythonCommand({ env = process.env, platform = process.platform }
   if (platform === "win32") return ["py"];
   const uv = String(env.PATH || "").split(delimiter).filter(Boolean).some((dir) => existsSync(join(dir, "uv")));
   return uv && existsSync(join(REPO, "pyproject.toml")) ? ["uv", "run", "python"] : ["python3"];
+}
+
+// The roots beside <repo>/state/ that --out may name, asked of render.py (extra_state_roots: the world's gitignored
+// state/, ~/.aurora/<world>/state, which state/arsenal/shaders links into), since this driver cannot import core.paths.
+// Only absolute paths are kept; [] when Python cannot say, which leaves <repo>/state/ the only root.
+export function stateRoots() {
+  const code = "import json\nfrom arsenal.shaders import render as R\n"
+    + "print(json.dumps([str(p) for p in R.extra_state_roots()]))\n";
+  const [python, ...pre] = pythonCommand();
+  const run = spawnSync(python, [...pre, "-c", code], { cwd: REPO, encoding: "utf8", timeout: 60_000, windowsHide: true });
+  try {
+    const roots = JSON.parse(String(run.stdout || "").trim().split(/\r?\n/).pop());
+    return Array.isArray(roots) ? roots.filter((r) => typeof r === "string" && isAbsolute(r)) : [];
+  } catch { return []; }
+}
+
+// Why outDir may not hold a screenshot now, or null: headless.mjs underState over <repo>/state/ (where git ignores it)
+// and outRoots (stateRoots, each held to stateRootRefusal there). Asked at the start and again at every write, since the
+// GPU lock wait (up to ten minutes) is long enough to swap the directory for a link into a tracked tree.
+export function outRefusal(outDir, outRoots = []) {
+  if (underState(outDir, outRoots)) return null;
+  return `--out must be under ${[join(REPO, "state"), ...outRoots].join(" or ")} where git ignores it: ${outDir}`;
 }
 
 async function probe(port) {
@@ -237,7 +261,8 @@ const VIEW_ACTIONS = {
     b.click(); b.scrollIntoView({ block: 'center' }); return true; })()`,
 };
 
-async function shoot(browser, base, view, w, h, outDir) {
+// `outRoots` are main's: every screenshot judges outDir again (outRefusal) before it is written.
+export async function shoot(browser, base, view, w, h, outDir, outRoots = []) {
   const { page, evaluate } = browser;
   await page.send("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile: false });
   await page.send("Page.navigate", { url: `${base}/lab/` });
@@ -270,7 +295,7 @@ async function shoot(browser, base, view, w, h, outDir) {
     stage: window.__wb ? window.__wb.stage.state() : null }))()`);
   const shot = await withTimeout(page.send("Page.captureScreenshot", { format: "png" }), 30_000, "screenshot");
   const file = join(outDir, `${view}-${w}x${h}.png`);
-  writeFileSync(file, Buffer.from(shot.data, "base64"));
+  writePicture(file, Buffer.from(shot.data, "base64"), () => outRefusal(outDir, outRoots));  // nor a link at its name
   return { view, w, h, file, state, acted, ...facts, wall_ms: Date.now() - t0 };
 }
 
@@ -282,7 +307,8 @@ const RECEIPT_TEXT = "(() => { const r = document.querySelector('.wb-receipt-she
 // pre-flight's verdict, the Shelf tab stopping the loop, no restart without a click, and (with raiseTo) the watchdog
 // holding the last frame once a larger scale makes frames struggle. Every page call has a deadline; the longest any
 // call waited is recorded (maxEvalMs), so a page that hung would show as a number here rather than as a hung driver.
-async function shootRun(browser, base, subject, raiseTo, w, h, outDir, budgetLeft, dpr = 1, grow = null) {
+// `outRoots` as in shoot: every snap judges outDir again before it writes.
+export async function shootRun(browser, base, subject, raiseTo, w, h, outDir, budgetLeft, dpr = 1, grow = null, outRoots = []) {
   const { page, evaluate } = browser;
   const t0 = Date.now();
   const log = [], files = [];
@@ -298,7 +324,7 @@ async function shootRun(browser, base, subject, raiseTo, w, h, outDir, budgetLef
     const clip = view.dpr > 1 ? { clip: { x: 0, y: 0, width: view.w, height: view.h, scale: 1 / view.dpr } } : {};
     const shot = await withTimeout(page.send("Page.captureScreenshot", { format: "png", ...clip }), 30_000, "screenshot");
     const file = join(outDir, `run-${subject}${dpr > 1 ? `-dpr${dpr}` : ""}-${phase}-${view.w}x${view.h}.png`);
-    writeFileSync(file, Buffer.from(shot.data, "base64"));
+    writePicture(file, Buffer.from(shot.data, "base64"), () => outRefusal(outDir, outRoots));
     files.push(file);
   };
   // What the size checks read from the Stage's state.
@@ -437,15 +463,24 @@ async function withLiveSwitch(browser, fn) {
   }
 }
 
-async function main(opt, exe) {
+async function main(opt, exe, outRoots = []) {
   const outDir = resolve(REPO, opt.out);
-  if (!underState(outDir)) throw new Error(`--out must be under ${join(REPO, "state")} (gitignored): ${outDir}`);
+  const refused = outRefusal(outDir, outRoots);
+  if (refused) throw new Error(refused);
   mkdirSync(outDir, { recursive: true });
   const sizes = String(opt.sizes).split(",").map((s) => s.trim().split("x").map(Number)).filter(([a, b]) => a > 0 && b > 0);
   const views = String(opt.views).split(",").map((s) => s.trim()).filter((v) => VIEWS.includes(v));
   const receipt = { api: SHOT_API, started_at: new Date().toISOString(), sizes, views, shots: [], renderer: null,
     chrome: null, server: null, lock: null, error: null, rule5: null };
-  const save = () => writeFileSync(join(outDir, "receipt.json"), JSON.stringify(receipt, null, 1));
+  // The receipt names what was shot (a Stage's receipt text names the shader and its author): judged as a picture is.
+  const save = () => {
+    try {
+      writePicture(join(outDir, "receipt.json"), JSON.stringify(receipt, null, 1), () => outRefusal(outDir, outRoots));
+    } catch (e) {
+      receipt.error ??= String(e && e.message || e);
+      say("receipt not written:", String(e && e.message || e));
+    }
+  };
   const roots = {};
   if (opt.lib) roots.lib = resolve(REPO, opt.lib);
   if (opt.cards) roots.cards = resolve(REPO, opt.cards);
@@ -486,14 +521,14 @@ async function main(opt, exe) {
             const budgetLeft = BURST_MS - 20_000 - (Date.now() - heldFrom);
             if (budgetLeft < 40_000) { say(`burst budget reached; run ${subject} is skipped`); receipt.skipped = true; break; }
             browser.events.length = 0;
-            const row = await withLiveSwitch(browser, () => shootRun(browser, server.base, subject, raiseTo, w, h, outDir, budgetLeft, dpr, grow));
+            const row = await withLiveSwitch(browser, () => shootRun(browser, server.base, subject, raiseTo, w, h, outDir, budgetLeft, dpr, grow, outRoots));
             row.console = browser.events.slice(0, 20);
             receipt.runs.push(row);
             save();
           }
           continue;
         }
-        const row = await shoot(browser, server.base, view, w, h, outDir);
+        const row = await shoot(browser, server.base, view, w, h, outDir, outRoots);
         row.console = browser.events.slice(0, 20);
         receipt.shots.push(row);
         say(`${view} ${w}x${h}: ${row.file} (canvases ${row.canvases}, contexts ${row.contexts.length}, images ${row.images}, broken ${row.broken.length})`);
@@ -525,12 +560,14 @@ if (process.argv[1] && resolve(process.argv[1]).toLowerCase() === fileURLToPath(
     views: { type: "string", default: "bench,shelf,stage,study" }, port: { type: "string", default: "8797" },
     lib: { type: "string" }, cards: { type: "string" }, subjects: { type: "string", default: "" },
     raise: { type: "string", default: "" }, dpr: { type: "string", default: "1" }, grow: { type: "string", default: "" } } });
-  if (!opt.out || isAbsolute(opt.out) && !underState(opt.out)) {
+  // Python is asked for the world's root only when <repo>/state/ alone does not hold --out.
+  const outRoots = opt.out && !underState(resolve(REPO, opt.out)) ? stateRoots() : [];
+  if (!opt.out || isAbsolute(opt.out) && !underState(opt.out, outRoots)) {
     console.log("usage: node arsenal/shaders/lab_shot.mjs --out state/arsenal/shaders/labshots/<run> [--sizes WxH,...] [--views " + VIEWS.join(",") + "] [--lib DIR --cards DIR] [--subjects ID,... --raise SCALE --dpr N --grow WxH@N]");
     process.exit(2);
   }
   const exe = resolveChrome();
   if (!exe) { console.log(`no Chrome found: set ${CHROME_ENV}, or install Playwright's Chromium`); process.exit(1); }
   if (!existsSync(exe)) { console.log(`no Chrome at ${exe}`); process.exit(1); }
-  process.exit(await main(opt, exe));
+  process.exit(await main(opt, exe, outRoots));
 }

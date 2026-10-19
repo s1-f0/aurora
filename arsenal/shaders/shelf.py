@@ -579,10 +579,14 @@ def build(
 
 
 def write(index: dict, out: Path | None = None, state_root: Path | None = None) -> Path:
-    """Write the index (atomically). Refused outside state/: it names other people's work."""
+    """Write the index (atomically). Refused outside state/ (render.py under_state: state_root while git ignores the
+    index's own file there, or the world's state/ that state/arsenal/shaders may link into, never a tracked tree): it
+    names other people's work."""
+    from . import render as R
+
     out = Path(out) if out is not None else OUT
     root = Path(state_root) if state_root is not None else STATE_ROOT
-    if not out.resolve().is_relative_to(root.resolve()):
+    if not R.under_state(out, primary=root, file=True):
         raise ValueError(
             f"refused: {out} is outside {root}; the Shelf names other people's work and stays under state/"
         )

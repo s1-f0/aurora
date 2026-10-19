@@ -27,9 +27,14 @@
 //
 // WHAT A PLAN MAY ASK. Before the lock is taken or Chrome launched, every job is checked (jobRefusal): it loads a lab
 // page of the shader server on http://127.0.0.1:<port> (never port 8793, Daniel's server), its shader and media come
-// from that same server, its frame prefix is a plain name, and it writes under <repo>/state/ (gitignored). Only a job
-// that render.py marks allow_tracked, for a shader that is not from the corpus, may write elsewhere: pictures of other
-// people's work never leave state/. One bad job refuses the whole plan (exit 3).
+// from that same server, its frame prefix is a plain name, and it writes under <repo>/state/ where git ignores it (git
+// check-ignore says so: .gitignore re-includes state/coord/**, state/drills/** and state/rewrites/, and no git refuses),
+// or under a root the plan's state_roots name (render.py extra_state_roots: the world's gitignored state/,
+// ~/.aurora/<world>/state, which state/arsenal/shaders links into when every checkout shares one corpus), absolute,
+// named state, not '/', a drive or the user's home, with no .git at or above the out_dir (stateRootRefusal). The driver
+// derives no root of its own. Only a job that render.py marks allow_tracked, for a shader that is not from the corpus,
+// may write elsewhere: pictures of other people's work never leave state/. One bad job refuses the whole plan (exit 3),
+// and every picture write judges its job again (writePicture).
 //
 // KILLING ONLY OUR CHROME. Browser.close first; if the process is still alive, `taskkill /T /F` on the pid this script
 // spawned, which ends that browser and its own children and nothing else (never Daniel's browser, never another lane's).
@@ -50,7 +55,8 @@
 // and Chrome then aborts at start ("No usable sandbox!"). $AKASHIC_CHROME_NO_SANDBOX=1 or 0 overrides that judgement.
 import { spawn, spawnSync } from "node:child_process";
 import {
-  accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync,
+  accessSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -67,6 +73,8 @@ export const CHROME_ENV = "AKASHIC_CHROME";                 // a Chrome to use i
 export const SANDBOX_ENV = "AKASHIC_CHROME_NO_SANDBOX";     // Linux: "1" adds --no-sandbox, "0" never does
 export const PATH_CHROMES = ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable"];
 export const STATE_ROOT = join(REPO, "state");   // gitignored: where every job writes (see WHAT A PLAN MAY ASK)
+export const GIT_PROBE = "licence-line-probe.png";  // render.py GIT_PROBE: the file git is asked about in an out_dir
+const GIT_TIMEOUT_MS = 30_000;  // render.py GIT_TIMEOUT_S
 export const PROFILE_ROOT = join(STATE_ROOT, "arsenal", "shaders", "chrome-profile");
 export const BURST_MS = 170_000;           // GPU-LOCK.md: under 3 minutes, launch and shutdown included
 export const LOCK_HOLD_MS = 4 * 60_000;    // the cap declared in owner.json: the burst plus shutdown, with margin
@@ -237,11 +245,118 @@ function realish(p) {
   return join(head, ...rest);
 }
 
-// True for an absolute path at or under <repo>/state/ (case-insensitive on Windows, as path.relative is there).
-export function underState(dir) {
-  if (typeof dir !== "string" || !isAbsolute(dir)) return false;
-  const rel = relative(realish(resolve(STATE_ROOT)), realish(resolve(dir)));
+// True when target (a realish path) is root or lies under it (case-insensitive on Windows, as path.relative is there).
+function within(root, target) {
+  const rel = relative(root, target);
   return rel === "" || (!isAbsolute(rel) && rel.split(sep)[0] !== "..");
+}
+
+// True when p, as given, cannot be judged by its real path: a '..' in it (the OS climbs a link's target, path.resolve the
+// link's name), a dangling link on it (realish keeps one as a plain name, Python's resolve follows it to its target, so
+// the twins would judge different directories), or a part that cannot be read. Both twins then give the stricter
+// answer. render.py links_unsure is the twin.
+export function linksUnsure(p) {
+  if (typeof p !== "string") return true;
+  if (p.split(/[\\/]/).includes("..")) return true;
+  const parts = [];
+  for (let d = resolve(p); ; d = dirname(d)) {
+    parts.unshift(d);
+    if (dirname(d) === d) break;
+  }
+  for (const d of parts) {  // the root first
+    let st;
+    try { st = lstatSync(d); } catch (e) {
+      if (e.code === "ENOENT" || e.code === "ENOTDIR") return false;  // nothing below a missing directory exists
+      return true;
+    }
+    if (st.isSymbolicLink() && !existsSync(d)) return true;  // dangling, or a loop
+  }
+  return false;
+}
+
+// The nearest directory at or above p that holds a .git (a directory, a file, or a link, even a broken one), or null.
+// Throws when a .git cannot be looked for.
+function gitTop(p) {
+  for (let d = p; ; d = dirname(d)) {
+    try {
+      lstatSync(join(d, ".git"));
+      return d;
+    } catch (e) {
+      if (e.code !== "ENOENT" && e.code !== "ENOTDIR") throw e;
+    }
+    if (dirname(d) === d) return null;
+  }
+}
+
+// True when dir, or a directory above it, holds a .git (a repository's directory, or the file a worktree or a submodule
+// has; a link named .git counts, even a broken one): git could commit what lands there. linksUnsure paths (a dangling
+// link, a '..') and paths that cannot be read count as inside. render.py in_git_tree is the twin, and its docstring
+// names the known limit (a work tree with no .git above it, as a bare dotfiles repository with core.worktree=$HOME
+// has); tests/test_shader_harness.py runs both over the same paths.
+export function inGitTree(dir) {
+  if (linksUnsure(dir)) return true;
+  try { return gitTop(realish(resolve(dir))) !== null; } catch { return true; }  // cannot tell: the stricter answer
+}
+
+// True only when git itself says the file `file` is ignored by the work tree that holds it: `git check-ignore -q
+// --no-index` at that tree's root (the nearest .git above), with the caller's GIT_* environment and its global excludes
+// file (core.excludesFile) left out, since they belong to one user, not to the repository a commit is made from. The
+// directory is resolved and the name kept, so a link at the probe's own name cannot answer for another place. False when
+// there is no such tree, or git is missing, errors or times out: the caller refuses (fail closed). render.py git_ignores
+// is the twin.
+export function gitIgnores(file) {
+  if (typeof file !== "string" || !isAbsolute(file) || linksUnsure(file)) return false;
+  const p = join(realish(resolve(dirname(file))), basename(file));
+  let top;
+  try { top = gitTop(dirname(p)); } catch { return false; }
+  if (top === null) return false;
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.toUpperCase().startsWith("GIT_")));
+  const rel = relative(top, p).split(sep).join("/");
+  const run = spawnSync("git", ["-c", "core.excludesFile=", "check-ignore", "-q", "--no-index", "--", `./${rel}`],
+                        { cwd: top, env, stdio: "ignore", timeout: GIT_TIMEOUT_MS, windowsHide: true });  // ./: no :(magic)
+  return !run.error && run.status === 0;
+}
+
+// Why r may not stand beside <repo>/state/ as a root pictures may land under, or null. The driver cannot compute the
+// world's root render.py gives (core.paths), so it holds a plan's state_roots to this: absolute, named state (as given
+// and once resolved), not a filesystem or drive root, not the user's home nor a directory above it, and not inside a
+// git tree. render.py state_root_refusal is the twin, and render.py names only roots that pass it.
+export function stateRootRefusal(r) {
+  if (typeof r !== "string" || !isAbsolute(r)) return `a state root is an absolute path, not ${JSON.stringify(r)}`;
+  if (linksUnsure(r)) return `a state root is a real directory (no '..', no dangling link): ${r}`;
+  const given = resolve(r), real = realish(given), home = realish(resolve(homedir()));
+  const named = (p) => (process.platform === "win32" ? basename(p).toLowerCase() : basename(p)) === "state";
+  if (dirname(real) === real || dirname(given) === given) return `a state root is never a filesystem root: ${r}`;
+  if (!named(given) || !named(real)) return `a state root is a directory named state: ${r}`;
+  if (within(real, home)) return `a state root is never the user's home nor a directory above it: ${r}`;
+  if (inGitTree(real)) return `a state root lies inside no git tree: ${r}`;
+  return null;
+}
+
+// True for an absolute path that may hold pictures (real paths on both sides, so a link cannot lead out of a root):
+//   * at or under <repo>/state/, while git ignores a file there (gitIgnores, asked of GIT_PROBE in it): .gitignore
+//     re-includes parts of state/ (state/coord/**, state/drills/**, state/rewrites/), which git would commit;
+//   * or under one of `roots` (the plan's state_roots: render.py extra_state_roots, the world's gitignored state/) that
+//     passes stateRootRefusal, with no .git at or above it.
+// A linksUnsure path (a '..', a dangling link) is refused. The driver accepts no root it was not given.
+export function underState(dir, roots = []) {
+  if (typeof dir !== "string" || !isAbsolute(dir) || linksUnsure(dir)) return false;
+  const target = realish(resolve(dir));
+  if (within(realish(resolve(STATE_ROOT)), target)) return !inGitTree(target) || gitIgnores(join(target, GIT_PROBE));
+  return Array.isArray(roots) && roots.some((r) => stateRootRefusal(r) === null && within(realish(resolve(r)), target))
+    && !inGitTree(target);
+}
+
+// The plan's state_roots (absolute paths render.py wrote), or why the list is not one. Absent means none. Each root is
+// held to stateRootRefusal: a hand-edited plan cannot name '/', a home, or a directory not named state.
+export function planStateRoots(plan) {
+  const roots = plan?.state_roots ?? [];
+  if (!Array.isArray(roots)) return { roots: [], why: "a plan's state_roots are a list of absolute paths" };
+  for (const r of roots) {
+    const why = stateRootRefusal(r);
+    if (why) return { roots: [], why: `a plan's state_roots: ${why}` };
+  }
+  return { roots, why: null };
 }
 
 // The lab server's origin a job URL names, or a reason it names none we load: http, 127.0.0.1 spelled exactly, an
@@ -259,7 +374,8 @@ function labOrigin(url) {
 
 // Why the driver will not run this job, or null. render.py writes every plan, so a refusal here means a plan that was
 // hand-edited or written by something else: the driver answers it before the lock is taken or Chrome launched.
-export function jobRefusal(job) {
+// `roots` are the plan's state_roots (planStateRoots): an out_dir under one of them counts as under state/.
+export function jobRefusal(job, roots = []) {
   if (!job || typeof job !== "object") return "a job is an object";
   const { u, why } = labOrigin(job.url);
   if (why) return why;
@@ -270,23 +386,39 @@ export function jobRefusal(job) {
     let target;
     try { target = new URL(value, u); } catch { return `${name} is not a URL: ${value}`; }
     if (target.origin !== u.origin) return `${name} must come from the lab server (${u.origin}), not ${target.origin}`;
-    if (name === "src" && target.pathname.startsWith("/corpus/")) corpus = true;
+    // serve.py unquotes a path before it routes it, so /corpus%2F<id>/... or /%63orpus/... is the corpus too
+    let path;
+    try { path = decodeURIComponent(target.pathname); } catch { return `${name} is not a path the lab server reads: ${value}`; }
+    if (name === "src" && path.startsWith("/corpus/")) corpus = true;
   }
   if (!PREFIX.test(String(job.prefix ?? ""))) return `a frame prefix is a plain name, not ${JSON.stringify(job.prefix)}`;
-  if (underState(job.out_dir)) return null;
+  if (underState(job.out_dir, roots)) return null;
   if (typeof job.out_dir !== "string" || !isAbsolute(job.out_dir)) return `out_dir must be an absolute path: ${job.out_dir}`;
+  const where = [STATE_ROOT, ...roots].join(" or ");
   if (corpus) {
-    return `out_dir ${job.out_dir} is outside ${STATE_ROOT}: pictures of a corpus shader (someone else's work) stay under `
+    return `out_dir ${job.out_dir} is outside ${where}: pictures of a corpus shader (someone else's work) stay under `
       + "state/, which git ignores, whatever the plan says";
   }
   if (job.allow_tracked === true) return null;  // render.py --allow-tracked, for a shader of our own
-  return `out_dir ${job.out_dir} is outside ${STATE_ROOT} (render.py's --allow-tracked lets a non-corpus shader out)`;
+  return `out_dir ${job.out_dir} is outside ${where} (render.py's --allow-tracked lets a non-corpus shader out)`;
+}
+
+// Write one picture, judged again at the moment of writing: `refusal` reruns the job's check (jobRefusal), so an out_dir
+// swapped for a link while the driver waited for the lock or rendered is refused here, not only at plan time. A link at
+// the file's own name is removed, never followed, and "wx" refuses one that reappears before the open.
+export function writePicture(file, bytes, refusal = () => null) {
+  const why = refusal();
+  if (why) throw new Error(`refused at write time: ${why}`);
+  rmSync(file, { force: true });
+  writeFileSync(file, bytes, { flag: "wx" });
 }
 
 export function planRefusal(plan) {
   if (!plan || !Array.isArray(plan.jobs)) return "a plan's jobs are a list";
+  const { roots, why: badRoots } = planStateRoots(plan);
+  if (badRoots) return badRoots;
   for (const job of plan.jobs) {
-    const why = jobRefusal(job);
+    const why = jobRefusal(job, roots);
     if (why) return `job ${job?.key ?? "?"}: ${why}`;
   }
   return null;
@@ -504,7 +636,8 @@ function sweepProfiles() {
 // ---------------------------------------------------------------------------------------------------------- jobs
 const tName = (t) => `t${Number(t).toFixed(2)}`;
 
-async function runJob(browser, job, deadlineAt) {
+// `roots` are the plan's state_roots: every picture write judges job.out_dir against them again (writePicture).
+export async function runJob(browser, job, deadlineAt, roots = []) {
   const t0 = Date.now();
   const nonce = `${process.pid}-${t0}-${Math.random().toString(36).slice(2, 8)}`;
   const url = `${job.url}${job.url.includes("?") ? "&" : "?"}job=${nonce}`;
@@ -544,6 +677,9 @@ async function runJob(browser, job, deadlineAt) {
       row.error = `frames discarded: ${judged.reason}`;
       return row;
     }
+    const again = () => jobRefusal(job, roots);  // the plan's check, rerun now that the lock wait and the render are over
+    const moved = again();
+    if (moved) throw new Error(`refused at write time: ${moved}`);
     mkdirSync(job.out_dir, { recursive: true });
     const used = new Set();  // two times that round to one name (t=1 and t=1.001) must not overwrite each other
     for (let i = 0; i < (row.render?.frames || []).length; i++) {
@@ -560,13 +696,13 @@ async function runJob(browser, job, deadlineAt) {
       if (used.has(stem)) stem = `${stem}_${i}`;
       used.add(stem);
       const file = join(job.out_dir, `${stem}.png`);
-      writeFileSync(file, bytes);
+      writePicture(file, bytes, again);
       row.frames.push({ ...f, file, bytes: bytes.length });
     }
     if (job.screenshot) {
       const shot = await withTimeout(browser.page.send("Page.captureScreenshot", { format: "png" }), 30_000, "screenshot");
       row.screenshot = join(job.out_dir, `${job.prefix || ""}screenshot.png`);
-      writeFileSync(row.screenshot, Buffer.from(shot.data, "base64"));
+      writePicture(row.screenshot, Buffer.from(shot.data, "base64"), again);
     }
     row.status = "done";
     return row;
@@ -591,6 +727,7 @@ async function burst(plan, resultPath, exe) {
   const save = () => { mkdirSync(dirname(resultPath), { recursive: true }); writeFileSync(resultPath, JSON.stringify(result, null, 1)); };
   const burstMs = Math.min(Number(plan.burst_ms) || BURST_MS, BURST_MS);
   const jobs = plan.jobs || [];
+  const { roots } = planStateRoots(plan);  // planRefusal has passed them
 
   const { acquireGpuLock } = await import("../lanes/gpu_lock.mjs");
   let gpu;
@@ -653,7 +790,7 @@ async function burst(plan, resultPath, exe) {
         if (!w.start) { defer("burst budget reached (after a relaunch)"); break; }
       }
       const row = await runJob(browser, { ...job, url: clipBudget(job.url, w.deadlineMs), timeout_ms: w.deadlineMs },
-                               Date.now() + w.deadlineMs);
+                               Date.now() + w.deadlineMs, roots);
       result.jobs.push(row);
       say(`${row.key}: ${row.status} in ${row.wall_ms} ms` + (row.error ? ` (${row.error.slice(0, 160)})` : ""));
       if (row.status === "timeout" || /socket closed/.test(row.error || "")) {
@@ -702,13 +839,14 @@ if (process.argv[1] && resolve(process.argv[1]).toLowerCase() === fileURLToPath(
   if (refusal) {  // before the lock and before Chrome: nothing of this plan runs
     say("REFUSED:", refusal);
     const jobs = Array.isArray(plan.jobs) ? plan.jobs : [];
+    const { roots, why: badRoots } = planStateRoots(plan);
     mkdirSync(dirname(opt.result), { recursive: true });
     writeFileSync(opt.result, JSON.stringify({
       api: RESULT_API, plan_label: plan.label ?? null, started_at: new Date().toISOString(),
       finished_at: new Date().toISOString(), chrome: { exe: resolveChrome(plan), version: null, flags: null, launches: [], closes: [] },
       software: null, refused: refusal, lock: null, timings: {}, error: null,
       jobs: jobs.map((j) => ({ key: j?.key ?? null, url: j?.url ?? null, status: "refused",
-                              error: jobRefusal(j) || "another job in this plan was refused" })),
+                              error: jobRefusal(j, roots) || badRoots || "another job in this plan was refused" })),
     }, null, 1));
     process.exit(EXIT.refused);
   }

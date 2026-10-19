@@ -32,6 +32,15 @@ THE LICENCE LINE. Renders of corpus shaders are pictures of other people's work.
 and every receipt and contact sheet names the shader, its author and its licence. --out is refused outside <repo>/state/
 for a corpus subject whatever else is given (an id, a file under the corpus, or a shader JSON with a Shadertoy id), and
 for any other subject unless --allow-tracked says so; the driver checks every job's out_dir again (headless.mjs).
+Paths are compared resolved, so a link under state/ cannot lead out of it. Under state/ is not the same as ignored:
+.gitignore re-includes parts of it (state/coord/**, state/drills/**, state/rewrites/), so a directory there counts only
+while git itself says a file in it is ignored (under_state, git_ignores), and no git, or a git that cannot answer,
+refuses. One root stands beside it: the world's gitignored state/ (core.paths.state_root() / "state",
+~/.aurora/<world>/state), which state/arsenal/shaders links into when every checkout of the world shares one corpus. It
+counts only while it is named state, is not the user's home nor above it, and no .git lies at or above it (nor above the
+out_dir), so a picture still lands only where git cannot commit it; the plan names it to the driver (state_roots), which
+holds a root to the same rule (state_root_refusal, stateRootRefusal). A '..' or a dangling link in a path is refused
+outright, by both twins alike. The known limit is in in_git_tree's docstring: a work tree with no .git above it.
 """
 
 from __future__ import annotations
@@ -323,22 +332,182 @@ class OutDirRefused(ValueError):
     """An output directory a picture may not go to (see THE LICENCE LINE)."""
 
 
-def out_dir_refusal(out: Path, source: Source, allow_tracked: bool = False) -> str | None:
-    """None when `out` may hold this source's pictures, else why not. Anything at or under <repo>/state/ is fine.
-    Elsewhere: never for a corpus subject (other people's work), and for our own shader only with --allow-tracked.
-    STATE_ROOT is read at call time, so a test can stand a temp state/ in for the real one."""
+def world_state_root() -> Path | None:
+    """The world's gitignored state/: core.paths.state_root() / "state" (~/.aurora/<world>/state when the world has a
+    home; a bare AI_SETUP's state/, as in a test), resolved. None when core.paths cannot say. Read per call."""
+    try:
+        from core import paths
+
+        return (Path(paths.state_root()) / "state").resolve()
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return None
+
+
+GIT_PROBE = "licence-line-probe.png"  # headless.mjs GIT_PROBE: the file git is asked about inside an out_dir
+GIT_TIMEOUT_S = 30
+
+
+def links_unsure(path: Path) -> bool:
+    """True when `path`, as given, cannot be judged by its real path: a '..' in it (the OS climbs a link's target,
+    Node's path.resolve the link's name), a dangling link on it (Python's resolve follows one to its target, Node's
+    realish keeps it as a plain name, so the twins would judge different directories), or a part that cannot be read.
+    Both twins then give the stricter answer. headless.mjs linksUnsure is the twin."""
+    p = Path(path)
+    if ".." in p.parts:
+        return True
+    p = p.absolute()
+    for d in (*reversed(p.parents), p):  # the root first
+        try:
+            if d.is_symlink() or getattr(d, "is_junction", lambda: False)():  # a Windows junction is a link too
+                if not d.exists():  # dangling, or a loop
+                    return True
+            elif not d.exists():
+                return False  # nothing below a missing directory exists, so no link either
+        except OSError:
+            return True
+    return False
+
+
+def _git_top(path: Path) -> Path | None:
+    """The nearest directory at or above `path` that holds a .git (a directory, a file, or a link, even a broken one),
+    or None. Raises OSError when a .git cannot be looked for."""
+    for d in (path, *path.parents):
+        g = d / ".git"
+        if g.is_symlink() or g.exists():
+            return d
+    return None
+
+
+def in_git_tree(path: Path) -> bool:
+    """True when `path` or any directory above it holds a .git (a repository's directory, or the file a worktree or a
+    submodule has; a link named .git counts, even a broken one): git could commit what lands there. The path is
+    resolved first, so the walk climbs the real directories, not the links. When that cannot be read, or the path is
+    links_unsure (a dangling link, a '..'), True. headless.mjs inGitTree is the twin; tests/test_shader_harness.py runs
+    both over the same paths.
+
+    KNOWN LIMIT: a work tree with no .git at or above it is not seen, e.g. a bare dotfiles repository whose
+    core.worktree is $HOME (its .git lives elsewhere and names the work tree from there). Such a tree reads as
+    untracked here, and a root inside it is accepted; nothing in a directory says it belongs to one."""
+    if links_unsure(path):
+        return True
+    try:
+        return _git_top(Path(path).resolve()) is not None
+    except (OSError, RuntimeError):  # a link loop, or a .git that cannot be looked for: the stricter answer
+        return True
+
+
+def git_ignores(path: Path) -> bool:
+    """True only when git itself says the file `path` is ignored by the work tree that holds it: `git check-ignore -q
+    --no-index`, run at that tree's root (the nearest .git above), with the caller's GIT_* environment and its global
+    excludes file (core.excludesFile, ~/.config/git/ignore) left out, since they belong to one user, not to the
+    repository a commit is made from. The directory is resolved and the name kept, so a link at the probe's own name
+    cannot answer for another place. False when there is no such tree, when git is missing, errors or times out:
+    the caller refuses then (fail closed). headless.mjs gitIgnores is the twin."""
+    if links_unsure(path):
+        return False
+    try:
+        p = Path(path).parent.resolve() / Path(path).name
+        top = _git_top(p.parent)
+        if top is None:
+            return False
+        rel = p.relative_to(top).as_posix()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+    cmd = ["git", "-c", "core.excludesFile=", "check-ignore", "-q", "--no-index", "--", f"./{rel}"]  # ./: no :(magic)
+    try:
+        run = subprocess.run(
+            cmd,
+            cwd=top,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=GIT_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return run.returncode == 0
+
+
+def state_root_refusal(root: Path) -> str | None:
+    """Why `root` may not stand beside <repo>/state/ as a root pictures may land under, or None. It must be absolute,
+    named state (as given and once resolved), not a filesystem or drive root, not the user's home nor a directory
+    above it, and not inside a git tree (in_git_tree). headless.mjs stateRootRefusal is the twin: the driver, which
+    cannot compute the world's root, accepts a plan's state_roots by this rule, so render.py names only roots that
+    pass it."""
+    given = Path(root)
+    if not given.is_absolute():
+        return f"a state root is an absolute path, not {root}"
+    if links_unsure(given):
+        return f"a state root is a real directory (no '..', no dangling link): {root}"
+    try:
+        real = given.resolve()
+        home = Path.home().resolve()
+    except (OSError, RuntimeError):
+        return f"a state root that cannot be resolved: {root}"
+    same = (lambda a, b: a.lower() == b.lower()) if os.name == "nt" else (lambda a, b: a == b)
+    if real.parent == real or given.parent == given:
+        return f"a state root is never a filesystem root: {root}"
+    if not (same(given.name, "state") and same(real.name, "state")):
+        return f"a state root is a directory named state: {root}"
+    if real == home or home.is_relative_to(real):
+        return f"a state root is never the user's home nor a directory above it: {root}"
+    if in_git_tree(real):
+        return f"a state root lies inside no git tree: {root}"
+    return None
+
+
+def extra_state_roots(primary: Path | None = None) -> list[Path]:
+    """The roots beside <repo>/state/ (or `primary`) where pictures may land: the world's state/ (world_state_root),
+    when it is another directory and passes state_root_refusal (named state, no .git at or above it, not the user's
+    home nor above it), so an AI_SETUP or AURORA_HOME that points into a repository or at a home does not widen the
+    licence line. [] otherwise. The plan hands these to the driver (state_roots), which judges them by the same rule."""
+    world = world_state_root()
+    if world is None or world == Path(primary if primary is not None else STATE_ROOT).resolve():
+        return []
+    if state_root_refusal(world) is not None:
+        return []
+    return [world]
+
+
+def under_state(out: Path, primary: Path | None = None, *, file: bool = False) -> bool:
+    """True when `out` (a directory, or with file=True a file), resolved so a link cannot lead out, may hold pictures:
+      * at or under <repo>/state/ (or `primary`), while git ignores a file there (git_ignores, asked of GIT_PROBE in
+        the directory, or of the file itself): .gitignore re-includes parts of state/ (state/coord/**, state/drills/**,
+        state/rewrites/), which git would commit. A primary root in no git tree at all needs no answer from git;
+      * or under an extra_state_roots() root with no .git at or above it (a repository cloned in the world's state/ is
+        tracked).
+    A path that is links_unsure (a '..', a dangling link) is refused, as the driver refuses it."""
+    if links_unsure(out):
+        return False
     target = Path(out).resolve()
-    root = Path(STATE_ROOT).resolve()
-    if target.is_relative_to(root):
+    if target.is_relative_to(Path(primary if primary is not None else STATE_ROOT).resolve()):
+        return not in_git_tree(target) or git_ignores(target if file else target / GIT_PROBE)
+    return any(target.is_relative_to(r) for r in extra_state_roots(primary)) and not in_git_tree(target)
+
+
+def _roots_text() -> str:
+    return " or ".join(str(r) for r in [Path(STATE_ROOT).resolve(), *extra_state_roots()])
+
+
+def out_dir_refusal(out: Path, source: Source, allow_tracked: bool = False) -> str | None:
+    """None when `out` may hold this source's pictures, else why not. Anything under_state is fine: <repo>/state/, or
+    the world's state/ that state/arsenal/shaders may link into. Elsewhere: never for a corpus subject (other people's
+    work), and for our own shader only with --allow-tracked. STATE_ROOT is read at call time, so a test can stand a
+    temp state/ in for the real one."""
+    target = Path(out).resolve()
+    if under_state(target):
         return None
     if source.corpus_subject:
         return (
-            f"refused: {target} is outside {root}. Pictures of a corpus shader ({source.key}, someone else's work) "
-            "stay under state/, which git ignores; --allow-tracked does not apply to them"
+            f"refused: {target} is outside {_roots_text()}. Pictures of a corpus shader ({source.key}, someone else's "
+            "work) stay under state/, which git ignores; --allow-tracked does not apply to them"
         )
     if not allow_tracked:
         return (
-            f"refused: {target} is outside {root}; pass --allow-tracked to write pictures of your own shader "
+            f"refused: {target} is outside {_roots_text()}; pass --allow-tracked to write pictures of your own shader "
             "there (never a corpus shader's)"
         )
     return None
@@ -354,8 +523,9 @@ def out_dir_for(ns, source: Source, default: Path) -> Path:
 
 
 def leaves_state(out: Path) -> bool:
-    """True when a checked out_dir lies outside state/: the driver is told so (allow_tracked), and checks it again."""
-    return not Path(out).resolve().is_relative_to(Path(STATE_ROOT).resolve())
+    """True when a checked out_dir lies outside state/ (under_state): the driver is told so (allow_tracked), and checks
+    it again."""
+    return not under_state(out)
 
 
 def page_url(
@@ -411,7 +581,15 @@ class Job:
 
 
 def build_plan(label: str, jobs: Sequence[Job], lock_wait_ms: int) -> dict:
-    return {"api": PLAN_API, "label": label, "lock_wait_ms": int(lock_wait_ms), "jobs": [j.plan_row() for j in jobs]}
+    """The driver's plan. state_roots: the roots beside <repo>/state/ it may accept an out_dir under (absolute; it
+    derives none of its own, and checks every job against them again)."""
+    return {
+        "api": PLAN_API,
+        "label": label,
+        "lock_wait_ms": int(lock_wait_ms),
+        "state_roots": [str(r) for r in extra_state_roots()],
+        "jobs": [j.plan_row() for j in jobs],
+    }
 
 
 def _group_alive(pgid: int) -> bool:
@@ -1045,7 +1223,9 @@ def contact_sheet(
         draw.rectangle([x, y + h - (box[3] - box[1]) - 8, x + (box[2] - box[0]) + 8, y + h], fill=(0, 0, 0))
         draw.text((x + 4, y + h - (box[3] - box[1]) - 6), label, fill=(230, 230, 230), font=font)
     out.parent.mkdir(parents=True, exist_ok=True)
-    sheet.save(out)
+    out.unlink(missing_ok=True)  # a link at the sheet's own name is removed, never followed (THE LICENCE LINE)
+    with open(out, "xb") as fh:  # exclusive: refuses one that reappears before the open
+        sheet.save(fh, format="PNG")
     return out
 
 
