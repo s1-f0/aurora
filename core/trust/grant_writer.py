@@ -21,9 +21,10 @@ exactly how codex_root's grant was made, because until now there was no other wa
 THE HIGHEST-SEVERITY PROPERTY HERE IS NOT PERMISSIONS, IT IS AVAILABILITY. registry.py falls
 back to BOOTSTRAP_ROLES when the ACL cannot be READ. So a torn write does not fail closed: it
 silently replaces the fleet's considered authority with a hardcoded floor. Every write is
-therefore validated in memory, written to a temp file in the same directory, and swapped with
-os.replace -- and the original is restored if anything raises. "Corrupt the file" must never be
-an available primitive, for an attacker OR for a full disk.
+therefore validated in memory, written to a temp file beside the real file (a symlinked
+security/acl.json is followed, never replaced), and swapped with os.replace -- and the
+original is restored if anything raises. "Corrupt the file" must never be an available
+primitive, for an attacker OR for a full disk.
 """
 
 from __future__ import annotations
@@ -63,19 +64,24 @@ def _write_doc(doc: dict) -> None:
     The validation is deliberately a full re-parse of the SERIALISED bytes rather than a check of
     the in-memory dict: the thing the fleet will read is the bytes, and a dict that serialises to
     something unparseable is exactly the failure this guards.
+
+    The swap targets the REAL file, never a symlink to it. A checkout's security/acl.json may be
+    a link to the one instance ACL that every checkout and service reads; os.replace onto the
+    link path would replace the LINK with a regular file, so the grant would land in this
+    checkout alone and silently fork the ACL from all the others.
     """
-    path = registry.acl_path()
+    path = os.path.realpath(registry.acl_path())
     payload = json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
     json.loads(payload)  # parse what we are about to write, not what we meant
 
-    d = os.path.dirname(str(path)) or "."
+    d = os.path.dirname(path) or "."  # beside the REAL file: the swap stays a same-directory rename
     fd, tmp = tempfile.mkstemp(dir=d, prefix=".acl-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(payload)
             f.flush()
             os.fsync(f.fileno())  # the swap is only atomic if the bytes are durable
-        os.replace(tmp, str(path))
+        os.replace(tmp, path)
     except Exception:
         with contextlib.suppress(OSError):
             os.unlink(tmp)  # a failed write leaves NOTHING behind, not even litter
