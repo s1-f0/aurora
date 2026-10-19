@@ -585,7 +585,9 @@ def warm_cache(learning_store: Any | None = None) -> int:
             from core.learning.learning_store import get_learning_store
 
             learning_store = get_learning_store()
-        items = _with_usefulness(_project_items(learning_store.load_all_learnings_from_store()))
+        # The SAME composition _cached_items() rebuilds with -- one cache, one shape. Without the
+        # mined triggers, every session's first TTL window matched on prose alone.
+        items = _with_usefulness(_with_mined_triggers(_project_items(learning_store.load_all_learnings_from_store())))
         os.makedirs(_CACHE_DIR, exist_ok=True)
         with open(_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(items, f)
@@ -1531,6 +1533,23 @@ def build_learn_nudge(target: str, credited: int, sources, agent_id: str | None 
     return "\n".join(lines)
 
 
+def _path_words(path: str) -> str:
+    """The part of a path that describes the FILE. An absolute path inside a checkout (main tree or
+    worktree: agent_cli.py beside core/) is cut to its repo-relative form; outside any checkout only
+    the parent folder and the name remain. Everything else is machine layout -- on a checkout at
+    /mnt/lnx-storage/projects/akashic-labs/aurora it was 'storage projects akashic labs aurora claude
+    worktrees', which matched verb help and lesson prose on every edit (measured 2026-10-19)."""
+    p = path.replace("\\", "/")
+    if not os.path.isabs(path) and not (len(p) > 1 and p[1] == ":"):
+        return p
+    parts = [s for s in p.split("/") if s]
+    for i in range(len(parts) - 1, 0, -1):
+        base = "/" + "/".join(parts[:i]) if p.startswith("/") else "/".join(parts[:i])
+        if os.path.isfile(os.path.join(base, "agent_cli.py")) and os.path.isdir(os.path.join(base, "core")):
+            return "/".join(parts[i:])
+    return "/".join(parts[-2:])
+
+
 def _query_from(path: str | None, command: str | None, subject: str | None = None, gesture: str | None = None) -> str:
     """Build a keyword query from a path (dir/stem tokens), a command, and/or a composition
     GESTURE and SUBJECT. Keeps tokens len>3 (the Ranker's keyword_relevance ignores shorter ones)
@@ -1544,7 +1563,7 @@ def _query_from(path: str | None, command: str | None, subject: str | None = Non
     """
     parts: list[str] = []
     if path:
-        parts += _TOKEN_RE.findall(path.replace("\\", "/"))
+        parts += _TOKEN_RE.findall(_path_words(path))
     if command:
         parts += _TOKEN_RE.findall(command)[:16]
     # The gesture leads: it names what is ABOUT to happen, which is what the lesson must match. The
