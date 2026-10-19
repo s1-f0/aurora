@@ -164,64 +164,67 @@ EXCEPTIONS = {
     "written deliberately BEFORE the gate that consumes them -- its own docstring says so, "
     "because a rule stated by pointing at the census sample would be a fit rather than a "
     "principle. UNWIRE-WHEN: the silence gate lands and imports them. Owner: recall-heuristics.",
+    # core/oneworld/{journal,floor,surface}.py: entries REMOVED 2026-10-19 in the e-drive
+    # reconciliation merge, by their own stated condition. surface.py's entry read "UNWIRE-WHEN:
+    # Heimdall's /api/world endpoint in bifrost_ui.py calls agents_view", and it does:
+    # scripts/bifrost_ui.py imports core.oneworld.surface (agents_view, floor_view), surface
+    # imports floor, floor imports journal. All three became REACHABLE while still excepted,
+    # which drops them into the gap between the module gate and the function gate that
+    # tests/test_t159_oracle_field_of_view.py K14 forbids -- the same stale-amnesty hole as
+    # precision_audit below. mode.py and projection.py are still unreached and stay, now DATED
+    # (they were added after the GRANDFATHERED_UNDATED freeze, so the ratchet requires it).
+    "core/oneworld/projection.py": {
+        "reason": "built-ahead (W0.1, one-world UI core; spec atom d622ac): the "
+        "projection reader -- a pure fold of the journal into a derived surface state, one journal "
+        "-> N projections. 6 pins green in tests/test_oneworld_projection.py, incl. the drift test "
+        "(a redelivered fact counts once). Reachable only from its pins today; production surfaces "
+        "fold it. UNWIRE-WHEN: the serve.py surface or a world CLI verb projects through it. "
+        "Owner: claude / one-world UI (H9).",
+        "expires": "2026-12-08",
+    },
+    "core/oneworld/mode.py": {
+        "reason": "built-ahead (W2, one-world UI core; spec atom d622ac section 3): the "
+        "mode primitive -- a surface's typed declaration of regions/verbosity/reach(+confessed), "
+        "with verdict_guard enforcing 'declare your boundary before you judge the whole'. 8 pins "
+        "green in tests/test_oneworld_mode.py. The specific modes each surface declares arrive WITH "
+        "that surface; this is the shape + validation. UNWIRE-WHEN: the serve.py surface (or any "
+        "surface) builds a mode and renders through it. Owner: claude / one-world UI (H9).",
+        "expires": "2026-12-08",
+    },
     "core/recall/shadow_shelf.py": {
         "reason": "KEEP built-ahead, intentionally offline (T370 Slice 0; RED gate f9d77b69): "
         "the isolated observation/judgment substrate has 37 preregistered pins but the pilot "
         "explicitly forbids a production caller, live hook, resident watcher, model call, or "
         "canonical writer until replay, resource, kill/restart, and independent-review gates "
         "clear. Wiring it merely to satisfy this checker would violate the safety boundary. "
+        "RENEWED 2026-10-01 by claude (the 09-30 expiry blocked every commit in the tree; "
+        "T370 still untouched in the ledger, the module still has no production caller, the "
+        "safety boundary stands). "
         "UNWIRE-WHEN: the separately reviewed T370 live adapter asks the real detector seam and "
         "hands terminal slots to this module; remove this entry then, or delete the module if "
         "the pilot is rejected. Owner: Sunshine; independent reconciler: Vandor.",
-        "expires": "2026-09-30",
+        "expires": "2026-11-30",
     },
-    "core/recall/precision_audit.py": "built-ahead (52db9b5): the retrieval-accuracy instrument "
-    "kimi named as the hole every 2026-07-27 architecture position argued around without a "
-    "single accuracy number. Exercised by 3 test files, no production caller yet. "
-    "UNWIRE-WHEN: a door or scheduled audit invokes it -- an instrument nobody runs measures "
-    "nothing. Owner: recall lane.",
-    # T386 screenspace observe organ (2026-09-23, kimi + Heimdall): the five modules of the
-    # OBSERVE half only -- capture (pixel substrate), engine (digest facade), foreground
-    # (WinEventHook source, §1.1), shadow (L0 pulse, F2-open), canary (§1 amended-ruling
-    # positive UIA read). Built-ahead per §6 step 2: the
-    # act/input/watch/locate verbs are §6 step 3+, deliberately NOT in this package, and the
-    # whole door is gated on step 0 -- the Sunshine --allow-write/--allow-gui unlock -- so there
-    # is NO production caller yet. Not dead code (the substrate mss/uiautomation is OPTIONAL and
-    # fail-soft per the package docstring). UNWIRE-WHEN: the observe door's production facade
-    # (the CLI/MCP verb that calls engine.peek/delta/refs/read_text) lands behind the unlock;
-    # delete these five entries then. DATED (not grandfathered) because they are NEW debt, per
-    # the ratchet this file's own test enforces. Owner: kimi/Heimdall (T386, design
-    # docs/library/design/20260902_screenspace-organ-design_528df4.md). Pay down by wiring, not
-    # by renewing the date.
-    "core/screenspace/capture.py": {
-        "reason": "built-ahead: T386 observe pixel substrate (mss one-shot -> ScreenFrame), "
-        "fail-soft on headless hosts. UNWIRE-WHEN the observe door's production facade lands "
-        "behind the Sunshine --allow-gui unlock. Owner: kimi/Heimdall.",
-        "expires": "2026-10-15",
-    },
-    "core/screenspace/engine.py": {
-        "reason": "built-ahead: T386 observe digest facade (peek/delta/refs/read_text), the "
-        "verbs the observe door will call. UNWIRE-WHEN that door lands. Owner: kimi/Heimdall.",
-        "expires": "2026-10-15",
-    },
-    "core/screenspace/foreground.py": {
-        "reason": "built-ahead: T386 §1.1 WinEventHook foreground source (ForegroundTracker). "
-        "UNWIRE-WHEN the observe door lands. Owner: kimi/Heimdall.",
-        "expires": "2026-10-15",
-    },
-    "core/screenspace/shadow.py": {
-        "reason": "built-ahead: T386 L0 pulse model, F2-open v1-by-construction (cache-first "
-        "pulse reads the WinEventHook tracker; no per-call poll). UNWIRE-WHEN the observe "
-        "door lands. Owner: kimi/Heimdall.",
-        "expires": "2026-10-15",
-    },
-    "core/screenspace/canary.py": {
-        "reason": "built-ahead: T386 §1 amended-ruling POSITIVE CANARY READ (uia_available / "
-        "CanaryState — actually reads the foreground window rather than inferring context). "
-        "Imported only by the other excepted screenspace modules, so it is unwired while the "
-        "door is gated on step 0. UNWIRE-WHEN the observe door lands. Owner: kimi/Heimdall.",
-        "expires": "2026-10-15",
-    },
+    # core/recall/precision_audit.py: entry REMOVED 2026-10-06. Its own stated condition was
+    # met -- "UNWIRE-WHEN: a door or scheduled audit invokes it" -- and `py agent_cli.py
+    # recall-audit pack|score` now does. Leaving the entry in place was not harmless: an
+    # EXCEPTIONS member is excluded from the FUNCTION gate, and once the module became reachable
+    # the MODULE gate stopped naming it too, so it fell into the gap between the two surfaces and
+    # tripped test_t159_oracle_field_of_view K10/K14 -- the very blind spot those pins exist to
+    # forbid. A stale amnesty is a hole, not a leftover.
+    # T386 screenspace organ: ALL FIVE observe-half entries REMOVED 2026-10-06, by their own
+    # stated condition -- "UNWIRE-WHEN: the observe door's production facade ... lands behind the
+    # unlock; delete these five entries then." It landed: `py agent_cli.py screen
+    # status|locate|prompt` -> cmd_screen -> core/screenspace/{act,combo}.py, which import
+    # canary, capture, engine, foreground and shadow. The organ now has a production door and the
+    # gate moved into the code where it belongs: every acting verb is checked per call against
+    # Cap.SCREEN_* in core/trust/capabilities.py, which sit in NO role template, so even the
+    # super_admin claude seat holds none of them until Daniel grants them time-boxed. That is a
+    # stronger guard than absence from an import graph, and unlike absence it is testable
+    # (tests/test_the_actuator_refuses_before_it_acts.py).
+    #
+    # Paid down by WIRING, as the entry demanded, and not by renewing the date -- which is why
+    # the entries are deleted here rather than extended.
     # unwired diagnostic -- kept, not on a runtime path (name-collision cleanup pending)
     "core/state/session_recovery.py": "unwired but KEPT (P2 2026-07-07): session-HISTORY recovery from "
     "local files, distinct from session_checkpoint's crash-resume. Class-name collision RESOLVED "
@@ -249,7 +252,9 @@ EXCEPTIONS = {
 # tombstoned above) and the frozen count follows the set DOWN. Left at 20 it would have handed
 # the next author two undated slots -- amnesty re-opened by the act of draining the backlog.
 # tests/test_wiring_exceptions_expire.py pins the equality, so the number can only track the set.
-GRANDFATHERED_UNDATED = 18
+# 2026-10-19: 18 -> 17. core/recall/precision_audit.py (undated) was retired on the E: line on
+# 2026-10-06 when `recall-audit` gave it a door; the frozen count follows the set down.
+GRANDFATHERED_UNDATED = 17
 
 
 def exception_reason(entry):

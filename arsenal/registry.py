@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import MODULE_PROTOCOL
+from . import GLSL_MODULE_API, MODULE_PROTOCOL
 from .mediatypes import MEMORY_DOMAINS, PORT_TYPES
 
 if TYPE_CHECKING:
@@ -54,6 +54,13 @@ def validate_manifest(m: dict, source: str = "manifest") -> list[str]:
             and rng[0] < rng[1]
         ):
             problems.append(f"{source}: param {param.get('name')!r} needs range [lo, hi] with lo < hi")
+    shader = m.get("shader")
+    if shader is not None:
+        # a GLSL module (arsenal/shaders/modules.py): the same registry, one optional block
+        if not isinstance(shader, dict) or shader.get("api") != GLSL_MODULE_API:
+            problems.append(f"{source}: shader block must carry api {GLSL_MODULE_API!r}")
+        elif not isinstance(shader.get("provides"), list):
+            problems.append(f"{source}: shader block needs a provides list (the functions the module defines)")
     return problems
 
 

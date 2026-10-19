@@ -83,6 +83,13 @@ Swapping a backend changes nothing above. Also here: `redis_connection.py` (fail
 - **`core/signals/`** — the older domain layer: `AgentSignalLedger` (the canonical signal firehose)
   + `SignalEmitter` (agents announce work). Its reactive coordinator was retired 2026-07-07 —
   reaction/coordination now lives in Bifrost (bus + promoter + handoff).
+- **`core/provenance/`** — the gap *underneath* the records above: `delta.py` reconciles what the
+  planes believe happened against what the disk shows. It is the `--disk` plane of the T052 delta
+  door, never a second one — it reports only what git/ledger/notes/promoted structurally cannot
+  see (uncommitted work, anything outside the repo, and per-file attribution, since every seat
+  commits under one git author). Classifies every change `repo` / `private` / **`volatile`**, and
+  volatile is the only losable class so it renders first. Metadata only, never file contents: it
+  is pointed at a directory holding tax returns and identity documents.
 
 ## Bifrost — the agent nervous system (`core/comm/`)
 How live agents talk, are steered, and are kept alive.
@@ -224,6 +231,12 @@ The project's self-writing story: **Atlas → Track → Chapter → Beat**. `sch
   corpus, replay, grade, review, loop, memreplay, precompile, modes and compress verbs: a task corpus
   mined from our own history, isolated replays of a candidate harness, graders and verdicts, a human
   review queue, and the budgeted proposer loop; `cli.py` dispatches every verb).
+- **One-world UI core (`core/oneworld/`)** — the spine the unified UI renders through: one authored
+  world-state journal (`journal.py`, append-only at `state/oneworld/world.jsonl`, replayed into
+  rebuildable projections — authored vs derived, a surface is a projection and never a store), with
+  the mode schema, the floor, and the bounds-legend arriving as later slices. Named `oneworld`, not
+  `world`, so it cannot shadow the load-bearing `core/world.py` (prod/sandbox environment
+  resolution). Spec: `docs/library/design/20261008_one-world-ui-core-reconciled-spec_d622ac.md` (H9).
 - **Season / game mechanics** — `core/season/` (`scoring.py` = Season 1 round scoring as a PURE
   function over a policy dict, so the rules are executable data rather than a markdown table and a
   rule change is a config diff). Deliberately imports nothing from `core/trust/`: *score is

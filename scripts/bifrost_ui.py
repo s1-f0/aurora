@@ -37,6 +37,25 @@ from core.trust import registry
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 
+# One-world surface adapter (spec atom d622ac, Vandor's half -- core/oneworld/surface.py). Imported
+# eagerly but called only from the /api/world route: it is a pure function of the live roster, so
+# its module load costs nothing and fails nothing until the route runs. Heimdall owns the wire; the
+# adapter owns the "what to show" and the honesty contract (ok=false is "cannot see", never empty).
+try:
+    from core.oneworld.surface import agents_view as _oneworld_agents_view
+except Exception:  # noqa: BLE001 -- the route reports unavailable, the console must never fail to boot
+    _oneworld_agents_view = None
+
+# Floor adapter (spec d622ac W3/W4, Vandor's half -- core/oneworld/floor.py + surface.floor_view).
+# Same import discipline as the world surface: eager load, lazy call, fail-soft to None so a
+# missing floor_view never takes the console down. The route reports blind; it never invents a
+# floor. floor_view() evaluates at most once per 60s and journals only state CHANGES, so the route
+# must forward its cached result verbatim and NEVER call floor.evaluate() directly.
+try:
+    from core.oneworld.surface import floor_view as _oneworld_floor_view
+except Exception:  # noqa: BLE001 -- the route reports unavailable, the console must never fail to boot
+    _oneworld_floor_view = None
+
 DROPBOX = os.path.join(REPO, "dropbox")
 BUS = Bus("user")  # the console posts to the bus as 'user'; also registers 'user' presence
 _BUS_CACHE = {}  # per-ns Bus("user", namespace=ns) constructed lazily; never per-request
@@ -773,6 +792,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(self._vitals())
         if path == "/api/now":  # TRUTH/NOISE tier: one call to rule all cards
             return self._json(self._api_now())
+        if path == "/api/world":  # one-world surface (spec d622ac / core.oneworld)
+            return self._world()
+        if path == "/api/floor":  # the floor (spec d622ac W3/W4): loud absence, beside #worldline
+            return self._floor()
         if path == "/api/channels":  # side-channel visibility (Daniil's standing ask)
             return self._json(self._api_channels())
         # FLEET LINKS (RFC #70): the model lives in core/link/panel.py; this is paint over a dict.
@@ -995,6 +1018,11 @@ class Handler(BaseHTTPRequestHandler):
                         "team": r.get("team"),
                         "number": r.get("number"),
                         "state": r.get("state"),
+                        # T088(UI) 2026-10-13: the alias history -- the append-only `formerly:`
+                        # projection, so the console can show "who were they" AND "who are they".
+                        # Derived, never curated (residents.get() projects it from the log). An
+                        # empty list renders absent, not blank -- most residents have one name.
+                        "formerly": list(r.get("formerly") or []),
                         # the schema line as the boot block renders it, so one spelling
                         # travels, e.g. "Anthropic | Amber | Blue | 1 - Vandor"
                         "schema": f"{r.get('vendor')} | {r.get('family')} | "
@@ -1162,6 +1190,70 @@ class Handler(BaseHTTPRequestHandler):
             }
         except Exception:
             return {}
+
+    def _world(self):
+        """GET /api/world -- the one-world surface (spec d622ac). Polled; the browser diffs.
+
+        The adapter (core/oneworld/surface.py, Vandor's half) owns "what to show" and the honesty
+        contract; THIS half owns only the wire. The split of labour is the spec's replay-don't-diff
+        made literal: the PROJECTION (server) always replays the full current truth -- it is a pure
+        function of the live roster and holds nothing between calls, so it cannot serve a diff
+        from a past instant (there is no past state to diff against, and faking one would reintroduce
+        exactly the drift this spine exists to kill). The SURFACE (browser) diffs for display only,
+        patching rows that changed against the last view it rendered. Redelivery needs no de-dup
+        here -- the journal's content-hash idempotency collapses it one layer down, and as_of is a
+        stamp, not a cursor: a repeated view is harmless to re-render. The adapter output is honest
+        (ok=false = "cannot see who is online", never "nobody"), and we forward it verbatim.
+        """
+        if _oneworld_agents_view is None:
+            # The adapter failed to import (a missing/renamed function). Report it as the SAME
+            # "cannot see" fact the adapter itself would report -- blind, never empty. Never 500
+            # the console over a surface whose only job is to look.
+            return self._json(
+                {
+                    "ok": False,
+                    "as_of": None,
+                    "agents": [],
+                    "bounds": "roster unavailable (surface adapter not importable): cannot say who is online",
+                }
+            )
+        return self._json(_oneworld_agents_view())
+
+    def _floor(self):
+        """GET /api/floor -- the floor (spec d622ac W3/W4), mounted beside #worldline.
+
+        Returns `core.oneworld.surface.floor_view()` VERBATIM. The honesty and the legend both live
+        in the adapter's hands, not this wire's: the contract is
+
+            {"ok": bool, "as_of": iso, "evaluated_at": iso, "age_s": float, "mode": str|None,
+             "entries": [{"key", "state", "status", "detail"}],   # status: fired|clear|unavailable|off
+             "legend": "<engine-written found-vs-taken line>", "legend_sha256": "<hex>"}
+
+        Two rules the wire must NOT break (it forwards, so it cannot break them, but they are why
+        the handler is this thin):
+          * NEVER call floor.evaluate() here. floor_view() evaluates at most once per 60s and
+            journals only state CHANGES -- a 5s poll that evaluated directly would journal every
+            would-fire and fill the world journal with repeats.
+          * The legend is RENDERED BY textContent ONLY, from `.legend`, on the client. No string
+            composition around it, no "all clear" of the surface's own -- W4 (Navi): the surface
+            must not adjudicate its own silence.
+        ok=false means "cannot see the floor" and renders as blind, identical to the world line.
+        The route never 500s over the floor's only job being to look.
+        """
+        if _oneworld_floor_view is None:
+            return self._json(
+                {
+                    "ok": False,
+                    "as_of": None,
+                    "evaluated_at": None,
+                    "age_s": None,
+                    "mode": None,
+                    "entries": [],
+                    "legend": "floor unavailable (surface adapter not importable): cannot see the floor",
+                    "legend_sha256": "",
+                }
+            )
+        return self._json(_oneworld_floor_view())
 
     def _api_channels(self):
         """Discover SIDE CHANNELS -- agent groups talking on a non-default namespace.
@@ -1703,7 +1795,7 @@ PAGE = r"""<!doctype html>
     --bg:#0a0b0f; --bg2:#0e1015; --panel:#14161d; --panel2:#171a22; --border:#242833;
     --text:#e7e9f0; --muted:#8b90a2; --faint:#727890;
     --claude:#e0915c; --deepseek:#7aa2f7; --user:#5fd39b; --system:#7c8296;
-    --accent:#7aa2f7; --accent2:#9d7cf7; --amber:#f0b246; --danger:#f0666e;
+    --accent:#7aa2f7; --accent2:#9d7cf7; --amber:#f0b246; --danger:#f0666e; --ok:#5fd39b;
     --fleet:#f472b6;
     /* USER-RESIZABLE PANES. Both are DEFAULTS, not ceilings -- a stored user size overrides
        them and survives reload (see the resize controller near mountHeroAvatar). The old
@@ -1996,6 +2088,61 @@ PAGE = r"""<!doctype html>
   @keyframes fpulseRed{0%,100%{box-shadow:0 0 6px rgba(240,102,110,.4)}50%{box-shadow:0 0 18px rgba(240,102,110,.7)}}
   @keyframes fpulseRing{0%,100%{border-color:rgba(240,102,110,.25)}50%{border-color:rgba(240,102,110,.55);inset:-6px}}
   @media (prefers-reduced-motion:reduce){.fpulse.red,.fpulse.red::after{animation:none}}
+  /* one-world surface (spec d622ac): a compact bounds legend + per-agent liveness. The line is
+     the W1 contract made visible -- it ALWAYS says what the view could not see, so a blind read
+     ("cannot say who is online") is distinguishable from an empty one ("nobody") at a glance. */
+  .worldline{font-size:10.5px;font-family:var(--mono,ui-monospace,monospace);color:var(--muted);
+             flex:none;display:flex;align-items:center;gap:8px;cursor:default;max-width:520px;
+             overflow:hidden;padding:0 8px;border-left:1px solid var(--glass-line,rgba(255,255,255,.08))}
+  .worldline .wbadge{font-size:8.5px;letter-spacing:.05em;text-transform:uppercase;padding:1.5px 5px;
+             border-radius:5px;font-weight:700;border:1px solid var(--glass-line,rgba(255,255,255,.14));flex:none}
+  .worldline.wblind .wbadge{color:var(--danger,#f0666e);border-color:rgba(240,102,110,.4);background:rgba(240,102,110,.10)}
+  .worldline.wok .wbadge{color:var(--user,#5fd39b);border-color:rgba(95,211,155,.38);background:rgba(95,211,155,.10)}
+  .worldline .wbounds{opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:none;max-width:200px}
+  .worldline .wrow{display:inline-flex;align-items:center;gap:4px;flex:none;white-space:nowrap}
+  .worldline .wdot{width:7px;height:7px;border-radius:50%;flex:none}
+  .worldline .wdot.live{background:var(--ok,#5fd39b);box-shadow:0 0 5px rgba(95,211,155,.5)}
+  .worldline .wdot.stale{background:var(--amber,#f0b246)}
+  .worldline .wdot.dead,.worldline .wdot.offline{background:var(--muted,rgba(255,255,255,.3))}
+  .worldline .wname{font-weight:600}
+  .worldline .wstate{opacity:.7}
+  /* floor (spec d622ac W3/W4): the manifest of loud absence, mounted beside #worldline. The legend
+     is ENGINE-WRITTEN and rendered by textContent ONLY -- W4 (Navi): the surface may not adjudicate
+     its own silence, so no "all clear" is ever composed client-side around it. status cells:
+     fired (red) / clear (green) / unavailable (muted "cannot see") / off (faint). UNAVAILABLE is
+     NOT clear: it renders as "cannot see", never green. */
+  .floorline{font-size:10.5px;font-family:var(--mono,ui-monospace,monospace);color:var(--muted);
+             flex:none;display:flex;align-items:center;gap:8px;cursor:default;max-width:520px;
+             overflow:hidden;padding:0 8px;border-left:1px solid var(--glass-line,rgba(255,255,255,.08))}
+  .floorline .flegend{white-space:nowrap;text-overflow:ellipsis;overflow:hidden;flex:1;opacity:.85;
+             border-left:1px solid var(--glass-line,rgba(255,255,255,.08));padding-left:8px}
+  .floorline .flegend.fquiet{opacity:.7}
+  .floorline.fblind .flegend{color:var(--danger,#f0666e);opacity:1}
+  .floorline ul{display:inline-flex;align-items:center;gap:8px;list-style:none;margin:0;padding:0;flex:none}
+  .floorline li{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;flex:none}
+  .floorline .fdot{width:7px;height:7px;border-radius:50%;flex:none}
+  .floorline .fdot.fired{background:var(--danger,#f0666e);box-shadow:0 0 5px rgba(240,102,110,.6)}
+  .floorline .fdot.clear{background:var(--ok,#5fd39b)}
+  .floorline .fdot.unavailable{background:var(--amber,#f0b246)}
+  .floorline .fdot.off{background:var(--muted,rgba(255,255,255,.25))}
+  .floorline .fstat{color:var(--muted);text-transform:uppercase;font-size:8.5px;letter-spacing:.05em}
+  .floorline .frow.unavailable .fstat{color:var(--amber,#f0b246)}
+  .floorline .frow.fired .fstat{color:var(--danger,#f0666e)}
+  /* residents (T088 UI 2026-10-13): the earned NAMES, beside the world + floor. Each chip is one
+     ratified resident: CALLSIGN bold, then the designation fragments (family · team · number) and a
+     muted "formerly …" when the alias history holds a prior name. The whole point of Daniil's
+     original directive -- "help me see who is who in the console" -- with the identity that has
+     MEANING (the designation) rather than the vendor id only. rblind = registry not yet read. */
+  .residentline{font-size:10.5px;font-family:var(--mono,ui-monospace,monospace);color:var(--muted);
+    display:flex;align-items:center;gap:2px;flex:none;white-space:nowrap;overflow:hidden}
+  .residentline.rblind{color:var(--danger,#f0666e);opacity:.75}
+  .residentline .rchip{display:inline-flex;align-items:center;gap:4px;padding:1.5px 6px;margin:0 3px;
+    border:1px solid var(--border);border-radius:10px;background:var(--bg2);flex:none}
+  .residentline .rname{font-weight:650;color:var(--text)}
+  .residentline .rdes{opacity:.72;font-size:9.5px;letter-spacing:.02em}
+  .residentline .rdes .sep{opacity:.45;margin:0 2px}
+  .residentline .rform{opacity:.55;font-size:9px;font-style:italic}
+  .residentline .rform b{font-weight:600;font-style:normal;opacity:.85}
   button.ctl{
     font:inherit; font-size:13px; font-weight:600; color:var(--text); cursor:pointer;
     border:1px solid var(--border); background:var(--panel); padding:8px 14px; border-radius:10px;
@@ -2653,6 +2800,9 @@ PAGE = r"""<!doctype html>
   <header>
     <div class="brand"><div class="logo"></div> Bifrost <small>live agent console</small></div>
     <div class="fpulse green" id="fpulse" title="fleet: all clear"></div>
+    <div class="worldline" id="worldline" title="one-world: not yet read — bind the roster"></div>
+    <div class="floorline fblind" id="floorline" title="floor: not yet read — bind floor_view"></div>
+    <div class="residentline rblind" id="residentline" title="residents: not yet read — bind the registry"></div>
     <div class="spacer"></div>
     <div class="pills-wrap" id="pillsWrap"><div class="pills" id="pills"></div><div class="rsz rsz-pills" id="pillsGrip" title="drag to resize the agents bar · double-click to reset"></div></div>
     <div id="tiles" class="deck-grid"></div>
@@ -4321,6 +4471,7 @@ function applyStatus(s){
   syncAuroraState(paused, Object.keys(s.halted||{}).length);
   refreshNarrButtons(s.narration || 'key');
   updateFleetPulse(s);
+  renderResidentView();          // T088 UI: the earned names strip, from _residents (already loaded above)
   // renderRecipient() removed from poll loop — the recipient chip only changes on explicit user action
   // (roster click / setTarget). Calling it every 1.2s was doing getBoundingClientRect() layout thrash.
 }
@@ -4548,6 +4699,230 @@ function updateFleetPulse(s){
     cls='green'; title='fleet: all clear';
   }
   if(fp.className!==('fpulse '+cls)){ fp.className='fpulse '+cls; fp.title=title; }
+}
+
+// ---- ONE-WORLD SURFACE (spec d622ac): /api/world, browser-side diff --------------------
+// The wire is Heimdall's; the adapter (core/oneworld/surface.py) is Vandor's. This render is the
+// spec's rule 1+2 made literal: the DOM is a PROJECTION, never a store. The SERVER always replays
+// the full current truth (it is a pure function of the live roster and holds nothing between
+// calls, so it cannot serve a past diff); the BROWSER does the diffing -- it holds the last view
+// IT rendered (presentation state, not truth) and patches only the rows and the bounds line that
+// changed since. The one contract held verbatim: ok=false carries an empty agents list and a
+// "cannot see" bounds string, and THIS renders it as BLIND (red), never as "nobody online" (which
+// is a different fact). The bounds line always shows, whatever it says -- W1's law, surfaced.
+var _lastWorldAgents = {};                    // agent -> last rendered line, for the row diff
+var _lastWorldBounds = '';                    // last rendered bounds line
+function renderWorldView(w){
+  var el = document.getElementById('worldline'); if(!el) return;
+  w = w || {};
+  var ok = !!w.ok;
+  var bounds = w.bounds || 'no bounds returned (adapter silent)';
+  var agents = w.agents || [];
+  var seen = {};
+  // Per-row diff: build a line per agent, keep the DOM node when its line is unchanged, patch the
+  // rest. The roster is the truth source; _lastWorldAgents is display state only.
+  agents.forEach(function(a){
+    var aid = a.agent;
+    seen[aid] = 1;
+    var line = aid + '=' + (a.state||'?') + '/' + (a.phase||'?') + '/' + (a.beat_age_s==null?'-':a.beat_age_s);
+    if(_lastWorldAgents[aid] === line) return;   // unchanged row: leave its node alone
+    _lastWorldAgents[aid] = line;
+    var node = document.getElementById('wrow-' + aid);
+    var stateLabel = String(a.state||'?');
+    var inner = '<span class="wdot ' + stateLabel.toLowerCase() + '" title="'+esc(aid)+' '+esc(stateLabel)+'"></span>' +
+                '<span class="wname">' + esc(aid) + '</span>' +
+                '<span class="wstate">' + esc(stateLabel) + (a.phase && a.phase !== '?' ? ' · ' + esc(a.phase) : '') + '</span>';
+    if(node) node.innerHTML = inner;
+    else {
+      node = document.createElement('span');
+      node.id = 'wrow-' + aid;
+      node.className = 'wrow';
+      node.innerHTML = inner;
+      el.appendChild(node);
+    }
+  });
+  // Drop rows for agents no longer present (a seat that left is a CHANGE, not a ghost).
+  Object.keys(_lastWorldAgents).forEach(function(aid){
+    if(!seen[aid]) { delete _lastWorldAgents[aid]; var n = document.getElementById('wrow-' + aid); if(n) n.remove(); }
+  });
+  // Bounds line + class, diff'd too.
+  if(bounds !== _lastWorldBounds || el.getAttribute('data-ok') !== String(ok)){
+    _lastWorldBounds = bounds;
+    el.setAttribute('data-ok', String(ok));
+    el.className = 'worldline ' + (ok ? 'wok' : 'wblind');
+    var bl = el.querySelector('.wbounds');
+    var bd = el.querySelector('.wbadge');
+    var bdHtml = '<span class="wbadge">' + (ok ? 'world' : 'blind') + '</span>';
+    var blHtml = '<span class="wbounds">' + esc(bounds) + '</span>';
+    if(bd) bd.outerHTML = bdHtml; else el.insertAdjacentHTML('afterbegin', bdHtml);
+    if(bl) bl.outerHTML = blHtml; else el.insertAdjacentHTML('beforeend', blHtml);
+    el.title = 'one-world (' + (w.as_of || 'no stamp') + '): ' + bounds;
+  }
+}
+async function pollWorld(){
+  try {
+    var w = await (await fetch('/api/world')).json();
+    renderWorldView(w);
+  } catch(e) {
+    // A dead poll is indistinguishable from a blind roster to the VIEWER, and must look like it:
+    // render the honest "cannot see" rather than leaving a stale "world" badge that implies health.
+    renderWorldView({ok:false, as_of:null, agents:[], bounds:'roster unavailable (poll failed): cannot say who is online'});
+  }
+}
+
+// Start the world poll on its OWN modest cadence (presence-beat changes are slow compared to the
+// 2s /api/now hot path; 5s is live enough and keeps the roster read off the console's critical
+// poller). Diff-only via as_of, so each tick costs a roster fold + a small JSON diff, not a DOM
+// rebuild.
+setInterval(pollWorld, 5000);
+pollWorld();
+
+// ---- THE FLOOR (spec d622ac W3/W4): /api/floor, beside #worldline -------------------------
+// The floor rides the SAME tick as the world line, on purpose. It does NOT get its own slower one:
+// the adapter (floor_view) caches for 60s and journals only state CHANGES, so a 5s poll that
+// forwards verbatim costs one cached hop per tick and never re-evaluates -- polling faster than the
+// cache only SPENDS cache hits, it never triggers an evaluate. A separate slower cadence would add
+// a second timer for zero saving and would LAG the floor's first cold read behind the world line's.
+// The one contract held verbatim, W4: the legend is rendered by textContent ONLY from `.legend` --
+// NO string composition around it, NO "all clear" of the surface's own. The adapter writes its own
+// found-vs-taken line and the surface must not adjudicate its silence. unavailable is NEVER clear:
+// it renders as "cannot see" (amber), not green.
+var _lastFloorLegend = '';                     // last rendered engine-written legend line
+function renderFloorView(f){
+  var el = document.getElementById('floorline'); if(!el) return;
+  f = f || {};
+  var ok = !!f.ok;
+  var entries = f.entries || [];
+  // Build the entry rows: one <li> per entry, keyed by entry.key for stable diffing. Each cell is
+  // a dot (status) + key. status -> class: fired/clear/unavailable/off. UNAVAILABLE and CLEAR are
+  // different facts and must stay visually distinct -- unavailable is amber "cannot see", never
+  // green (a floor reporting all-clear while unwired is the guard-reporting-success failure it
+  // exists to catch).
+  var ul = el.querySelector('ul');
+  if(!ul){ ul = document.createElement('ul'); el.appendChild(ul); }
+  var byKey = {};
+  entries.forEach(function(entry){
+    var key = entry.key || '?';
+    var status = entry.status || 'clear';
+    byKey[key] = {status: status, detail: entry.detail || '', state: entry.state || ''};
+    var node = document.getElementById('frow-' + key);
+    var rowClass = 'frow ' + status;
+    var inner = '<span class="fdot ' + status + '"></span>' +
+                '<span class="fstat">' + esc(status) + '</span>' +
+                '<span class="fname">' + esc(key) + '</span>';
+    if(node){
+      node.className = rowClass;
+      node.querySelector('.fdot').className = 'fdot ' + status;
+      node.querySelector('.fstat').textContent = status;
+      node.querySelector('.fname').textContent = key;
+      node.title = status + (entry.detail ? ' · ' + esc(entry.detail) : '');
+    } else {
+      node = document.createElement('li');
+      node.id = 'frow-' + key;
+      node.className = rowClass;
+      node.innerHTML = inner;
+      node.title = status + (entry.detail ? ' · ' + esc(entry.detail) : '');
+      ul.appendChild(node);
+    }
+  });
+  // Drop rows for entries no longer present.
+  Array.prototype.slice.call(ul.children).forEach(function(li){
+    var id = li.id.replace(/^frow-/, '');
+    if(!(id in byKey)){ li.remove(); }
+  });
+  // The legend, textContent ONLY. No composition. If the surface is blind, the whole line goes
+  // blind (red); the legend still shows, whatever it says -- W1/W4's law, surfaced.
+  var legend = f.legend || '';
+  if(legend !== _lastFloorLegend || el.getAttribute('data-ok') !== String(ok)){
+    _lastFloorLegend = legend;
+    el.setAttribute('data-ok', String(ok));
+    el.className = 'floorline ' + (ok ? '' : 'fblind');
+    var leg = el.querySelector('.flegend');
+    if(!leg){ leg = document.createElement('span'); leg.className = 'flegend'; el.appendChild(leg); }
+    leg.textContent = legend;                  // textContent, verbatim, nothing composed around it
+    leg.classList.toggle('fquiet', ok && !legend);
+    leg.classList.toggle('fblind', !ok && !legend);
+    var modeSuffix = (f.mode ? ' · mode:' + esc(f.mode) : '');
+    el.title = 'floor (' + (f.as_of || 'no stamp') + ')' + modeSuffix + ': ' + legend;
+  }
+}
+async function pollFloor(){
+  try {
+    var f = await (await fetch('/api/floor')).json();
+    renderFloorView(f);
+  } catch(e) {
+    // Same discipline as pollWorld: a dead poll looks blind to the viewer, so render blind with an
+    // honestly-named legend rather than leave a stale floor that implies all-clear.
+    renderFloorView({ok:false, as_of:null, entries:[],
+                     legend:'floor unavailable (poll failed): cannot see the floor'});
+  }
+}
+// Shares the world poll's 5s tick. See the note above on why it does not get a slower cadence.
+pollFloor();
+// Also re-poll the floor on the world tick's cadence so they stay in lockstep without a second timer.
+setInterval(pollFloor, 5000);
+
+// ---- RESIDENTS (T088 UI 2026-10-13): the earned names, beside #worldline/#floorline --------
+// Renders from the ALREADY-POLLED /status `residents` map (applyStatus stores it into _residents),
+// so this costs ZERO extra network/Redis calls -- it re-renders the same data the console already
+// holds, just in the one place Daniil's original directive pointed at: the UI he actually watches.
+//
+// Each chip: CALLSIGN (bold) + the designation fragments (family · team · number) +, when the
+// append-only alias history holds a prior name, a muted "formerly X". This is the identity that
+// HAS meaning -- the designation, the former-name lineage -- surfaced where it can teach the
+// operator, instead of living only in `resident show` and agent-to-agent speech (T272 Finding 5).
+//
+// Honesty: rblind (registry not reached) is RED and distinct; a poll failure renders blind with
+// the reason, never a silent empty strip that implies nobody is a resident.
+var _lastRosterSigForRes = '';
+function renderResidentView(){
+  var el = document.getElementById('residentline'); if(!el) return;
+  var ids = Object.keys(_residents);
+  if(!ids.length){
+    // No residents known: render blind-not-empty on first paint only; after that, keep whatever
+    // was last drawn (an empty registry is a transient, not a full re-bind). The blind cue is the
+    // honest "nothing read yet", not "nobody is a resident" -- the two must not look the same.
+    el.className = 'residentline rblind';
+    el.innerHTML = '<span class="rname">residents: none read</span>';
+    return;
+  }
+  // Stable sort by callsign so chips do not dance between polls.
+  ids.sort(function(x,y){ return (_residents[x].callsign||'').localeCompare(_residents[y].callsign||''); });
+  var sig = ids.map(function(a){ var r=_residents[a]; return a+'|'+r.callsign+'|'+(r.family||'')+'|'+(r.team||'')+'|'+(r.number!=null?r.number:'')+'|'+(r.formerly||[]).join(','); }).join(';;');
+  if(sig === _lastRosterSigForRes){ /* nothing changed -- avoid a DOM rebuild on every 2s status poll */ return; }
+  _lastRosterSigForRes = sig;
+  el.className = 'residentline';
+  el.innerHTML = '';
+  ids.forEach(function(a){
+    var r = _residents[a];
+    var chip = document.createElement('span');
+    chip.className = 'rchip';
+    chip.title = a;                              // hover reveals the stable agent id
+    var name = document.createElement('span');
+    name.className = 'rname';
+    name.textContent = r.callsign;
+    chip.appendChild(name);
+    // designation fragments: family · team · number, only those present (placement may be partial).
+    var des = document.createElement('span');
+    des.className = 'rdes';
+    var parts = [];
+    if(r.family) parts.push(esc(r.family));
+    if(r.team) parts.push(esc(r.team));
+    if(r.number != null) parts.push(String(r.number));
+    if(parts.length){
+      des.innerHTML = ' <span class="sep">·</span> ' + parts.join(' <span class="sep">·</span> ');
+      chip.appendChild(des);
+    }
+    // formerly: the lineage -- who they were. Muted, but present, so a rename is legible.
+    var former = (r.formerly && r.formerly.length) ? r.formerly : [];
+    if(former.length){
+      var f = document.createElement('span');
+      f.className = 'rform';
+      f.innerHTML = ' <span class="sep">←</span> <b>' + esc(former[former.length-1]) + '</b>';
+      chip.appendChild(f);
+    }
+    el.appendChild(chip);
+  });
 }
 
 // --- drag & drop + clipboard paste ---

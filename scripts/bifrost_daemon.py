@@ -356,6 +356,17 @@ def managed_runner_env(
 
 
 def main(argv=None) -> int:
+    # FIRST, before argparse and before anything can print. Under Task Scheduler this process gets
+    # no console and CPython sets sys.stdout to None, so print() succeeds and discards -- and this
+    # daemon's output is its whole account of which listeners it spawned and which markers it
+    # swept. Added 2026-10-07 when it became AkashicAurora-WakeDaemon; without it the supervisor
+    # would run forever and report nothing, which is the failure it exists to prevent, one level up.
+    try:
+        from core.infrastructure.background_stdio import repair_background_stdio
+
+        repair_background_stdio("bifrost-daemon")
+    except Exception:  # noqa: BLE001
+        pass  # a diagnostics helper must never be the reason the supervisor fails to start
     args = build_parser().parse_args(argv)
 
     from core.comm import daemon_state as _ds
@@ -386,6 +397,7 @@ def main(argv=None) -> int:
     # ---- A1 listener management state -------------------------------------------
     listeners: dict[str, ManagedChild] = {}  # sid[:8] -> ManagedChild
     next_marker_sweep: float = 0.0  # boot + hourly
+    resume_said: dict[str, tuple[str, ...]] = {}  # S2: last (sid, verdict, reason) said per listener sid
 
     def _spawn_listener(sid: str, ns: str | None = None) -> bool:
         """Spawn a wake listener ManagedChild for sid. Reuses existing child if
@@ -402,7 +414,10 @@ def main(argv=None) -> int:
         sid8 = sid[:8] if len(sid) > 8 else sid
         if sid8 in listeners and listeners[sid8].alive:
             return True  # already seated
-        _env = dict(os.environ, BIFROST_WAKE_LANE="work")
+        # ORIGIN stamp (2026-10-01): a daemon child holds the seat and consumes, but a
+        # detached process can start NO turn -- it is presence, never wake. The stop hook
+        # reads this stamp and keeps demanding a harness-parented listener beside it.
+        _env = dict(os.environ, BIFROST_WAKE_LANE="work", BIFROST_WAKE_ORIGIN="daemon")
         if ns:
             _env["BIFROST_NAMESPACE"] = str(ns)
         lch = ManagedChild(
@@ -413,6 +428,10 @@ def main(argv=None) -> int:
                 agent,
                 "--session",
                 sid,
+                # S3: presence listeners exit (and S2 considers a resume) only for mail that
+                # NEEDS the seat -- operator, directed asks, answers to its own asks.
+                "--min-tier",
+                "2",
             ],
             env=_env,
             cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -708,8 +727,61 @@ def main(argv=None) -> int:
                         child = None
                         idle_mode = True
                         runner_down_since = None
+            if manage_listener:
+                try:  # S2 / Heimdall R4: settle in-flight resumes -- an early death is a FAILED
+                    #    receipt the breaker counts; a child alive past the floor leaves the registry
+                    from core.comm import resume_on_deaf as _rod_s
+
+                    for _rs, _st in _rod_s.settle_in_flight(agent):
+                        if _st == "dead":
+                            _say(
+                                f"[daemon] resume-on-deaf: resume for sid={_rs[:8]} DIED early "
+                                f"(counted toward the breaker; see state/wake-resumes/{agent}.jsonl)"
+                            )
+                        elif _st == "alive":
+                            _say(f"[daemon] resume-on-deaf: resume for sid={_rs[:8]} alive past the floor")
+                except Exception:
+                    pass
             for _sid, lch in list(listeners.items()):
-                lch.poll()
+                _code = lch.poll()
+                # ---- S2 (T420): RESUME-ON-DEAF. The daemon's own listener exiting 0 means
+                # mail arrived (or a deadline cycled) for a session this daemon holds presence
+                # for. If that session is EXPECTED-UP (its launcher said so), has had no
+                # harness-parented listener, and has been silent past the grace, the house
+                # re-opens it headlessly (`claude -p --resume <sid>`) under the vaulted token.
+                # Every hold is named; a resume leaves a .rearm trigger so presence returns.
+                if manage_listener and _code == 0:
+                    try:
+                        _largs = list(getattr(lch, "_args", []) or [])
+                        _full_sid = _largs[_largs.index("--session") + 1] if "--session" in _largs else ""
+                        if _full_sid:
+                            from core.comm import resume_on_deaf as _rod
+
+                            _v, _why = _rod.maybe_resume(agent, _full_sid)
+                            _key = (_sid, _v, _why[:40])
+                            if _v == "resume":
+                                _say(f"[daemon] RESUME-ON-DEAF agent={agent} sid={_sid}: {_why}")
+                                _ds.write_rearm_trigger(agent, _full_sid, tempfile.gettempdir())
+                            elif _key != resume_said.get(_sid):
+                                _say(f"[daemon] resume-on-deaf hold agent={agent} sid={_sid}: {_why}")
+                                if _why.startswith("breaker"):
+                                    # Heimdall R6 item 5: "a human looks first" must REACH a
+                                    # human -- a daemon log line is not a page.
+                                    try:
+                                        from core.comm import pager as _pager
+
+                                        _pager.page(
+                                            agent,
+                                            f"resume-on-deaf BREAKER for {agent}#{_sid}: "
+                                            f"{_why} -- drill: state/wake-resumes/{agent}.jsonl, "
+                                            f"then clear with pager.clear_key('{agent}:resume_breaker')",
+                                            key=f"{agent}:resume_breaker",
+                                        )
+                                    except Exception:
+                                        pass
+                            resume_said[_sid] = _key
+                    except Exception as _e:
+                        _say(f"[daemon] resume-on-deaf error sid={_sid}: {type(_e).__name__}: {_e}")
 
             # ---- W102: idle-mode reclaim probe (once per heartbeat) ---------------
             # When the daemon booted under a foreign holder (bare runner, self-

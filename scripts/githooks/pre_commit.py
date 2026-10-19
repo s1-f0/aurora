@@ -14,6 +14,7 @@ file after pre-commit runs, so the private-plane message guard lives in the comm
 Install once per clone/worktree:  py scripts/githooks/install_git_hooks.py
 """
 
+import contextlib
 import os
 import re
 import shutil
@@ -258,6 +259,25 @@ GUARDRAILS = (
     "check_wiring",
     "check_door_parity",
     "check_kind_policy",
+    # 2026-10-03: "which session is this" had SIXTEEN implementations that did not
+    # agree -- three env-var orders, three return shapes, two empty conventions and
+    # two truncation sites, one of which minted ids that could never join a
+    # full-length one. Measured consequence: learning 0/4, fail 0/17, boot 0/23
+    # carried a session id while touch was at 796/796. Counted rather than swept
+    # because several sites sit in other seats' lanes; adopted at today's 16, may
+    # fall, may never rise.
+    "check_session_resolvers",
+    # 2026-10-05: an outside contributor's basedpyright pass found SIX undefined
+    # names in agent_cli.py, and three failed SILENTLY because the unbound name sat
+    # inside `except Exception: pass` -- a handler for runtime DATA errors eating a
+    # STATIC defect, which is the purest mechanical generator of a false zero in
+    # this tree. Measured consequence: the continuity-drift line had NEVER rendered
+    # (its only caller passes no args; all four of its tests pass one), and the wish
+    # door had emitted 0 events against 254 filed wishes. A seventh was then found
+    # by the checker itself (geminiAgent/GeminiAgent). Adversarially validated by
+    # four independent lenses against 43 constructed scope cases: 43/43. Cached by
+    # content hash, so it costs ~750ms warm rather than 5.9s.
+    "check_unbound_names",
 )
 
 # GENERATED, not authored. Committing a derivative and then gating on its freshness is a
@@ -412,6 +432,25 @@ def ensure_baseline(live=None) -> tuple:
         json.dump(payload, fh, indent=2)
         fh.write("\n")
 
+    # AND STAGE IT, or the adoption never leaves this workstation. The baseline is TRACKED,
+    # so writing it mid-commit leaves it unstaged: the commit lands without the new entry,
+    # the next clone has no baseline for that guard, and ratchet_ok -- which iterates the
+    # BASELINE's keys -- never compares it. That is verbatim the check_kind_policy fate this
+    # function's own docstring describes ("enforced on exactly one workstation: it blocked
+    # nobody, and it protected nobody"), and it was measured happening AGAIN to the 7th
+    # guardrail: origin/master's baseline carries 6 keys while local HEAD carries 7. Found by
+    # an adversarial reader of the 8th. Adopting a debt level is a decision about the repo,
+    # so it belongs in the commit that makes it.
+    # A failed stage must not fail the commit; the note below still prints.
+    with contextlib.suppress(Exception):
+        subprocess.run(
+            ["git", "add", "--", os.path.relpath(BASELINE_PATH, ROOT)],
+            cwd=ROOT,
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            close_fds=True,
+        )
+
     if status == "missing":
         return True, (
             f"no guardrail baseline existed -- created {BASELINE_PATH} adopting today's debt {merged}. "
@@ -448,13 +487,16 @@ def ratchet_ok(baseline=None, live=None):
             "the guardrail baseline is EMPTY, so it ratchets nothing -- which is not "
             "the same as clean. Populate it, or remove the gate deliberately."
         )
-    worse = []
+    worse: list[str] = []
+    better: list[str] = []
     for name, was in base.items():
         is_now = now.get(name, 0)
         if is_now == -1:
             worse.append(f"{name}: the guardrail did not RUN (crash/missing) -- absence is not a pass")
         elif is_now > was:
             worse.append(f"{name!s}: {int(was)} -> {int(is_now)} violation(s)")
+        elif is_now < was:
+            better.append(f"{name!s}: {int(was)} -> {int(is_now)} ({int(was - is_now)} slot(s) of slack)")
     if worse:
         return False, (
             "guardrail debt INCREASED:\n    "
@@ -462,6 +504,24 @@ def ratchet_ok(baseline=None, live=None):
             + "\n  Fix it, or pay something else down first. To accept a deliberate "
             "rise, update state/ci/guardrail_baseline.json in the same commit so the "
             "increase is a RECORDED decision rather than a silent one."
+        )
+    if better:
+        # A FALL IS NEWS, because the gate is weakest immediately after one. ratchet_ok only
+        # refuses a RISE, and re-baselining is deliberately manual -- an automatic tighten
+        # would let a transiently broken checker lock in a count nobody can reach again. The
+        # cost of that correct choice is that the second step has no prompt: measured
+        # 2026-10-03, check_session_resolvers sat at a baseline of 16 against a live 12 after
+        # four sites were migrated, so four new hand-rolled resolvers could have landed
+        # without the gate firing. It closed only because the author happened to re-read the
+        # number. Same genus as _count_violations' own warning about a baseline built from a
+        # wrong count: a baseline left ABOVE the truth is a rubber stamp by a different road.
+        return True, (
+            "guardrail debt FELL:\n    "
+            + "\n    ".join(better)
+            + "\n  Re-baseline to keep the gate tight -- until you do, the slack above "
+            "is room a future commit can fill silently. Clear those entries from "
+            "state/ci/guardrail_baseline.json and the hook re-adopts them at today's "
+            "count, so the number is measured rather than typed."
         )
     return True, ""
 
@@ -601,6 +661,11 @@ def main():
     if not _r_ok:
         sys.stderr.write("pre-commit BLOCKED: " + _r_msg + "\n  Emergency bypass: `git commit --no-verify`.\n")
         return 1
+    if _r_msg:
+        # A PASSING ratchet can still have something to say, and until 2026-10-03 this message
+        # was computed and thrown away -- the caller read it only inside `if not _r_ok`. Debt
+        # falling is the one case where the gate is quietly weaker than it looks.
+        sys.stderr.write("pre-commit: " + _r_msg + "\n")
 
     rc, out = _comprehensibility_fast()
     if rc == 1:

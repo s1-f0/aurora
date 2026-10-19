@@ -55,6 +55,411 @@ def activity_marker_path(agent: str, session_id: str, tmp: str | None = None) ->
     return os.path.join(tmp or tempfile.gettempdir(), f"bifrost_wake_{agent}_{session_id}.alive")
 
 
+# ---------------------------------------------------------------- listener ORIGIN (2026-10-01)
+# WHY THIS EXISTS. Two listeners can hold one seat file and look identical to every reader:
+# one launched by a harness-tracked parent (bifrost-standby as a run_in_background task, or
+# bifrost_wake.py launched the same way) whose EXIT STARTS A TURN, and one spawned by
+# bifrost_daemon --manage-listener, which holds the seat, consumes mail, and can wake
+# NOBODY -- a detached process notifies no harness. The stop hook read "seat pid alive" as
+# "wakeable" and passed, so an interactive session went deaf while every surface said armed
+# (lesson detached_daemon_listener_holds_the_seat_but_cannot_wake_an_interactive_session;
+# Daniel 2026-10-01: "How do we take the discipline out of it and have an ergonomic solution
+# that just works."). The origin is stamped by the LAUNCHER through BIFROST_WAKE_ORIGIN and
+# written by the listener beside its seat; a seat with no origin record, or an UNSTAMPED
+# launch, is UNKNOWN, and unknown is not wakeable -- a false block costs one re-arm, a
+# false pass costs deafness (Heimdall D6c: a silent default must never be a wakeable one).
+ORIGIN_HARNESS = "harness"  # harness-tracked parent: its exit re-invokes the session
+ORIGIN_DAEMON = "daemon"  # bifrost_daemon child: presence + consume, never a wake
+ORIGIN_DIRECT = "direct"  # EXPLICIT stamp only: a launcher asserting a harness parent (D6c)
+ORIGIN_ENV = "BIFROST_WAKE_ORIGIN"
+WAKEABLE_ORIGINS = frozenset({ORIGIN_HARNESS, ORIGIN_DIRECT})
+
+
+def origin_path(agent: str, session_id: str | None = None, tmp: str | None = None) -> str:
+    """Sidecar beside the seat: the seat keeps its bare-int contract for every reader."""
+    base = tmp or tempfile.gettempdir()
+    if session_id:
+        return os.path.join(base, f"bifrost_wake_{agent}_{session_id}.origin")
+    return os.path.join(base, f"bifrost_wake_{agent}.origin")
+
+
+def write_origin(agent: str, session_id: str | None, origin: str, pid: int, tmp: str | None = None) -> bool:
+    """Record `<origin>:<pid>`; best-effort, never raises (a stamp must not stop the arm)."""
+    try:
+        with open(origin_path(agent, session_id, tmp), "w", encoding="utf-8") as f:
+            f.write(f"{(origin or ORIGIN_DIRECT).strip()}:{int(pid)}")
+        return True
+    except Exception:
+        return False
+
+
+def remove_origin(agent: str, session_id: str | None, pid: int | None = None, tmp: str | None = None) -> None:
+    """Remove the sidecar -- only if it still names `pid` when one is given (newest-wins:
+    a successor's stamp is never deleted by a retiring predecessor)."""
+    try:
+        p = origin_path(agent, session_id, tmp)
+        if pid is not None:
+            _, opid = read_origin(agent, session_id, tmp)
+            if opid is not None and opid != int(pid):
+                return
+        os.remove(p)
+    except Exception:
+        pass
+
+
+def read_origin(agent: str, session_id: str | None = None, tmp: str | None = None) -> tuple[str, int | None]:
+    """(origin, pid) from the sidecar; ('none', None) when absent or unreadable."""
+    try:
+        with open(origin_path(agent, session_id, tmp), encoding="utf-8") as f:
+            raw = f.read().strip()
+    except Exception:
+        return "none", None
+    if not raw:
+        return "none", None
+    origin, _, pid_s = raw.partition(":")
+    try:
+        pid = int(pid_s) if pid_s else None
+    except Exception:
+        pid = None
+    return (origin.strip() or "none"), pid
+
+
+def wake_origin_state(
+    agent: str, session_id: str | None = None, tmp: str | None = None, pid_probe=None
+) -> tuple[str, int | None]:
+    """PURE: the seat's watcher_state refined by WHO launched the seated listener.
+
+    'armed-harness' / 'armed-direct'   seat alive, launched by a harness-tracked parent
+    'armed-daemon'                     seat alive, daemon child -- presence, NOT wake
+    'armed-unknown'                    seat alive, no origin record or a stale one
+    'none' / 'dead-seat' / 'unknown'   exactly watcher_state's own verdicts
+    """
+    state, pid = watcher_state(agent, session_id, tmp, pid_probe)
+    if state != "armed":
+        return state, pid
+    origin, opid = read_origin(agent, session_id, tmp)
+    if origin == "none" or (opid is not None and pid is not None and opid != pid):
+        return "armed-unknown", pid
+    if origin in (ORIGIN_HARNESS, ORIGIN_DAEMON, ORIGIN_DIRECT):
+        return f"armed-{origin}", pid
+    return "armed-unknown", pid
+
+
+def arm_command(agent: str, session_id: str | None = None, *, repo: str | None = None) -> str:
+    """THE one arm command. Every surface that tells a seat how to arm must call this.
+
+    WHY THIS EXISTS (2026-10-02). Two surfaces used to build their own, and they disagreed in a
+    way that broke the thing they were both trying to fix:
+
+        boot, agent/harness/context.py
+            py scripts/bifrost_wake.py --agent <a> --min-tier 0
+        the stop hook, agent/harness/hooks/claude_stop.py
+            BIFROST_CONSUME_LANE=work BIFROST_WAKE_LANE=work py agent_cli.py bifrost-standby <a>
+                --session <sid>
+
+    `scripts/bifrost_wake.py` stamps its origin from BIFROST_WAKE_ORIGIN and DEFAULTS TO
+    "unknown"; `bifrost-standby` sets it to "harness"; and WAKEABLE_ORIGINS does not contain
+    "unknown", so `harness_armed()` is False for a listener armed the first way. A seat that
+    obeyed BOOT therefore armed a watcher the STOP HOOK refused, and was blocked with "holds the
+    seat with no origin record". The house recorded that recurring three or more times and read it
+    as a seat forgetting its ritual. The ritual was fine; the instruction was wrong.
+
+    So this function is deliberately shaped so it CANNOT emit the broken form: it always routes
+    through `bifrost-standby`, which is the launcher that stamps a wakeable origin, and it always
+    carries the lane env and the session.
+
+    IT IS A STRING, NOT A SPAWN, and that is not an oversight. `scripts/bifrost_wake.py` delivers
+    by PRINTING to stdout and exiting, so a wake only lands if something is reading that stream. A
+    watcher spawned detached from inside a hook or a CLI prints into a void while `any_armed()`
+    cheerfully answers "armed" -- a surface asserting reachability it does not have, which is
+    strictly worse than reporting none. The arm has to be launched on a channel the harness is
+    watching, which means the SEAT must run it. Every caller here hands the string over; nobody
+    runs it for the seat.
+    """
+    root = repo or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    cli = os.path.join(root, "agent_cli.py").replace("\\", "/")
+    sess = f" --session {session_id}" if session_id else ""
+    # THE ENV PREFIX IS GONE (2026-10-05), and only because the DOOR now sets it. Until
+    # today `cmd_bifrost_standby` never defaulted BIFROST_CONSUME_LANE -- its sibling
+    # cmd_bifrost_sync did (T133) and wake_lane() follows the consume lane (T198) -- so this
+    # prefix was compensating, in an instruction string, for a default missing in the code.
+    # Measured before the fix: wake_lane() -> '' with no env, 'work' with it set. It now
+    # lives in bifrost_api.ensure_lane_defaults(), which runs at import, so the shortest
+    # correct command is also the safe one. Three fewer tokens is three fewer chances to
+    # mistype an arm the memory records going subtly wrong three-plus times, once causing a
+    # measured outage.
+    #
+    # THE LAUNCHER is core.paths.python_launcher() (`uv run` where uv and the pyproject exist,
+    # `py` on Windows without uv, else `python3`), never a hardcoded `py`, which does not exist
+    # off Windows. `uv run` also needs --project: the seat's cwd drifts off the repo root, and
+    # from there uv would not find the locked environment (the stop hook's own arm line does
+    # the same, for the same reason).
+    try:
+        from core.paths import python_launcher
+
+        launch = python_launcher()
+    except Exception:
+        launch = "py" if os.name == "nt" else "python3"
+    if launch.startswith("uv run"):
+        launch += " --project " + root.replace("\\", "/")
+    return f"{launch} {cli} bifrost-standby {agent}{sess}"
+
+
+def harness_armed(agent: str, session_id: str | None = None, tmp: str | None = None, pid_probe=None) -> bool:
+    """True only for a seat whose listener can START A TURN when it exits."""
+    state, _ = wake_origin_state(agent, session_id, tmp, pid_probe)
+    return state in {f"armed-{o}" for o in WAKEABLE_ORIGINS}
+
+
+# ---------------------------------------------------------------- wake RECEIPTS (S3, 2026-10-01)
+# Every wake is a full model turn. Before S3 nothing recorded how many there were or whether
+# they carried mail, so "a chatty sender burns plan" was a feeling. One JSON line per listener
+# exit -- woke / quiet / cycled, the tiers that fired, what the floor held back -- lets the
+# standby print the day's count on every arm and lets doctor page on a seat that wakes for
+# nothing. Lives under state/ (git-ignored) beside the other machine-local ledgers.
+def wake_receipts_path(agent: str, base: str | None = None) -> str:
+    root = (
+        base
+        or os.environ.get("AKASHIC_WAKE_RECEIPTS_DIR")
+        or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "state", "wake-receipts"
+        )
+    )
+    return os.path.join(root, f"{agent}.jsonl")
+
+
+def append_wake_receipt(agent: str, receipt: dict, base: str | None = None) -> bool:
+    """Append one receipt; best-effort, never raises (a receipt must never cost the wake).
+    Under pytest the MACHINE ledger is never written unless the test names a directory
+    (base or AKASHIC_WAKE_RECEIPTS_DIR): the listener pins drive watch() on a fake clock, and
+    their receipts would otherwise land in state/wake-receipts/ with 1970 timestamps."""
+    try:
+        import json
+
+        if os.environ.get("PYTEST_CURRENT_TEST") and not base and not os.environ.get("AKASHIC_WAKE_RECEIPTS_DIR"):
+            return False
+        p = wake_receipts_path(agent, base)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        rec = dict(receipt)
+        rec.setdefault("ts", time.time())
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=True) + "\n")
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------- wake OBSERVABILITY (S5, 2026-10-01)
+# Daniel's ladder property (5): doctor shows per seat who launched the listener, since when, and
+# what the wakes cost; and PAGES when a session that is demonstrably alive has had no listener
+# that can start a turn. A heartbeat proves presence and cannot prove absence (the standing
+# lesson): the EXPECTATION here is the session's own activity marker, touched at every hook
+# firing -- a seat alive within the hour that is not reachable from idle is a finding, not a gap.
+WAKE_PAGE_AFTER_MIN = 10.0  # unarmed this long with the session alive -> page
+WAKE_STALE_AFTER_MIN = 60.0  # alive marker older than this -> the session is gone, janitor's job
+
+
+def agents_with_seats(tmp: str | None = None) -> list[str]:
+    """Agents that have ANY seat file in the tempdir (exact-component split, as iter_seats)."""
+    base = tmp or tempfile.gettempdir()
+    found: list[str] = []
+    try:
+        for name in os.listdir(base):
+            if name.startswith("bifrost_wake_") and name.endswith(".pid"):
+                parts = name[len("bifrost_wake_") : -4].split("_")
+                agent = "_".join(parts[:-1]) if len(parts) > 1 else parts[0]
+                if agent and agent not in found:
+                    found.append(agent)
+    except Exception:
+        pass
+    return sorted(found)
+
+
+def wake_tag(agent: str, session_id: str | None, tmp: str | None = None) -> str:
+    """One word for a roster row: armed-harness / armed-daemon / armed-unknown / dead-seat /
+    unarmed (watcher_state's own vocabulary; 'unarmed' is a measured absence of a seat file,
+    never a probe failure, which is 'unknown')."""
+    try:
+        state, _ = wake_origin_state(agent, session_id or None, tmp)
+        return state
+    except Exception:
+        return "unknown"
+
+
+def wake_observations(agent: str, tmp: str | None = None, now: float | None = None, pid_probe=None) -> list[dict]:
+    """PURE read, one row per session seat of `agent`: state, origin, pid, armed_since (seat
+    file mtime), alive_age_min (activity marker; None = no marker ever)."""
+    t = now if now is not None else time.time()
+    rows: list[dict] = []
+    for path, sid in iter_seats(agent, tmp):
+        state, pid = wake_origin_state(agent, sid, tmp, pid_probe)
+        origin, _ = read_origin(agent, sid, tmp)
+        try:
+            armed_since = os.path.getmtime(path)
+        except Exception:
+            armed_since = None
+        alive = activity_age_min(agent, sid, now=t, tmp=tmp) if sid else None
+        rows.append(
+            {
+                "agent": agent,
+                "session_id": sid or "",
+                "state": state,
+                "origin": origin,
+                "pid": pid,
+                "armed_since": armed_since,
+                "alive_age_min": alive,
+            }
+        )
+    # sessions with an activity marker but NO seat file at all are the loudest case
+    try:
+        base = tmp or tempfile.gettempdir()
+        seen = {r["session_id"] for r in rows}
+        prefix = f"bifrost_wake_{agent}_"
+        for name in os.listdir(base):
+            if name.startswith(prefix) and name.endswith(".alive"):
+                sid = name[len(prefix) : -len(".alive")]
+                if sid and sid not in seen and "_" not in sid:
+                    rows.append(
+                        {
+                            "agent": agent,
+                            "session_id": sid,
+                            "state": "unarmed",
+                            "origin": "none",
+                            "pid": None,
+                            "armed_since": None,
+                            "alive_age_min": activity_age_min(agent, sid, now=t, tmp=tmp),
+                        }
+                    )
+    except Exception:
+        pass
+    return rows
+
+
+def wake_findings(
+    agents: list[str] | None = None,
+    tmp: str | None = None,
+    now: float | None = None,
+    receipts_base: str | None = None,
+    pid_probe=None,
+    arm_hint=None,
+) -> list[dict]:
+    """Doctor-shaped findings ({agent, state, grade, line, drill}) for reachability from idle.
+
+      page       a session alive within WAKE_STALE_AFTER_MIN, unarmed (no harness-parented
+                 listener) for more than WAKE_PAGE_AFTER_MIN
+      dashboard  reachable seats (origin + since + alive age); unarmed inside the grace
+                 (a turn may be running); stale seats the janitor owns; the 24 h receipt counts
+    arm_hint(agent, sid) -> the exact arm line for the drill (the caller knows its cwd)."""
+    t = now if now is not None else time.time()
+    out: list[dict] = []
+    for agent in agents if agents is not None else agents_with_seats(tmp):
+        rows = wake_observations(agent, tmp, t, pid_probe)
+        for r in rows:
+            sid8 = (r["session_id"] or "legacy")[:8]
+            alive = r["alive_age_min"]
+            alive_txt = f"alive {alive:.0f}m ago" if alive is not None else "no activity marker"
+            reachable = r["state"] in {f"armed-{o}" for o in WAKEABLE_ORIGINS}
+            drill = (
+                arm_hint(agent, r["session_id"])
+                if (arm_hint and r["session_id"])
+                else arm_command(agent, r["session_id"] or None)
+            )
+            if reachable:
+                since = time.strftime("%H:%M", time.localtime(r["armed_since"])) if r["armed_since"] else "?"
+                out.append(
+                    {
+                        "agent": agent,
+                        "state": "wake_reachable",
+                        "grade": "dashboard",
+                        "line": f"{agent}#{sid8}: reachable from idle -- {r['state']} since {since}, {alive_txt}",
+                        "drill": "",
+                    }
+                )
+            elif alive is None:
+                continue  # no evidence of a live session: not a finding
+            elif alive <= WAKE_PAGE_AFTER_MIN:
+                out.append(
+                    {
+                        "agent": agent,
+                        "state": "wake_unarmed_grace",
+                        "grade": "dashboard",
+                        "line": f"{agent}#{sid8}: unarmed ({r['state']}) but {alive_txt} -- inside the "
+                        f"{WAKE_PAGE_AFTER_MIN:.0f} min grace, a turn may be running",
+                        "drill": drill,
+                    }
+                )
+            elif alive <= WAKE_STALE_AFTER_MIN:
+                out.append(
+                    {
+                        "agent": agent,
+                        "state": "wake_deaf",
+                        "grade": "page",
+                        "line": f"{agent}#{sid8}: DEAF -- session {alive_txt} but NOT reachable from idle "
+                        f"({r['state']}: no harness-parented listener) for > "
+                        f"{WAKE_PAGE_AFTER_MIN:.0f} min; mail queues until someone arms it",
+                        "drill": drill,
+                    }
+                )
+            else:
+                out.append(
+                    {
+                        "agent": agent,
+                        "state": "wake_seat_stale",
+                        "grade": "dashboard",
+                        "line": f"{agent}#{sid8}: seat records stale ({r['state']}, {alive_txt}) -- "
+                        f"the session is gone; janitor",
+                        "drill": "",
+                    }
+                )
+        s = wake_receipts_summary(agent, since_s=24 * 3600, now=t, base=receipts_base)
+        if s["wakes"] or rows:
+            out.append(
+                {
+                    "agent": agent,
+                    "state": "wake_cost",
+                    "grade": "dashboard",
+                    "line": f"{agent}: wakes 24h {s['wakes']} ({s['with_mail']} with mail, "
+                    f"{s['quiet']} quiet, {s['cycled']} deadline cycles; "
+                    f"{s['held_below_floor']} held below floor)",
+                    "drill": "",
+                }
+            )
+    return out
+
+
+def wake_receipts_summary(
+    agent: str, since_s: float = 24 * 3600, now: float | None = None, base: str | None = None
+) -> dict[str, int]:
+    """Counts over the window: wakes (listener exits), with_mail, quiet, cycled,
+    held_below_floor (sum). Missing file -> zeros, which is a measured zero: the ledger
+    exists from the first arm after S3, and absence before that is 'not yet recorded'."""
+    out = {"wakes": 0, "with_mail": 0, "quiet": 0, "cycled": 0, "held_below_floor": 0}
+    try:
+        import json
+
+        cutoff = (now if now is not None else time.time()) - float(since_s)
+        with open(wake_receipts_path(agent, base), encoding="utf-8") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                except Exception:
+                    continue
+                if float(r.get("ts") or 0) < cutoff:
+                    continue
+                out["wakes"] += 1
+                o = r.get("outcome")
+                if o == "woke":
+                    out["with_mail"] += 1
+                elif o == "cycled":
+                    out["cycled"] += 1
+                else:
+                    out["quiet"] += 1
+                out["held_below_floor"] += int(r.get("below_floor") or 0)
+    except Exception:
+        pass
+    return out
+
+
 def iter_seats(agent: str, tmp: str | None = None) -> list[tuple[str, str | None]]:
     """All seat files for THIS agent: [(path, session_id_or_None_for_legacy)].
     Prefix-exact so agent 'claude' never enumerates 'claude-2' seats."""

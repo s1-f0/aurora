@@ -420,8 +420,15 @@ class GeminiAgent:
                 self._trace("tool", f"{c.function.name}({json.dumps(args)[:200]})")
                 self._activity("tool", c.function.name)
                 out = self._run_tool(c.function.name, args)
+                from core.comm.toolbox import recall_tool_request
+
+                rendered = f"[hop {hop}/{self.max_hops}] {out}"
                 self.history.append(
-                    {"role": "tool", "tool_call_id": c.id, "content": f"[hop {hop}/{self.max_hops}] {out}"[:20000]}
+                    {
+                        "role": "tool",
+                        "tool_call_id": c.id,
+                        "content": rendered if recall_tool_request(c.function.name, args) else rendered[:20000],
+                    }
                 )
         return (
             f"{partial}\n[gemini tool budget exhausted at {self.max_hops} hops -- "

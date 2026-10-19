@@ -113,10 +113,56 @@ class SearchResult:
     scanned_dirs: int = 0
     roots: list[str] = field(default_factory=list)
     elapsed_s: float = 0.0
+    #: How many returned names contained a byte that is not valid UTF-8 and were REPAIRED with
+    #: a replacement character. Non-zero means those strings no longer round-trip to a real file,
+    #: so a caller comparing them against a real path must not treat a mismatch as absence.
+    #: It is a count rather than a flag because "one weird filename" and "the whole drive is
+    #: mojibake" want different reactions. Zero is the overwhelmingly common case and costs
+    #: nothing. See tests/test_everything_decode_failure_is_not_absence.py for why this exists:
+    #: strict decoding used to drop the ENTIRE result set on one bad byte and report it as
+    #: "Everything answered, nothing found".
+    undecodable: int = 0
 
     @property
     def count(self) -> int:
         return len(self.paths)
+
+
+def _run_es(argv, timeout):
+    """Run es.exe and decode its output WITHOUT letting one bad byte destroy the answer.
+
+    Returns (proc_returncode, text, stderr_text, repaired_count), or raises the same exceptions
+    subprocess.run does so each caller keeps its own timeout/spawn handling.
+
+    WHY THIS IS NOT `text=True`. Filenames on Windows are UTF-16 and es.exe emits them in the
+    console code page; a name that is not valid UTF-8 makes a strict decode raise inside
+    subprocess's own reader THREAD, where the exception cannot reach the caller. The caller then
+    sees returncode 0 and an EMPTY stdout, and reports a confident "nothing found" for a search
+    that actually matched. Measured on this machine: byte 0x89, and `find ".flp"` returning
+    nothing while five FL Studio projects sat on the C: drive.
+
+    So: capture bytes, decode once with errors="replace", and COUNT the repairs. Keeping a
+    mangled name beats losing the search, because `find` is a locator and a path with one
+    replacement character still tells a human where to look. But a repair is a real loss of
+    fidelity, so it is counted and surfaced rather than performed silently -- a silent repair
+    would only trade a loud wrong answer for a quiet one.
+    """
+    proc = subprocess.run(argv, capture_output=True, timeout=timeout or 15.0)
+
+    def _dec(raw):
+        if raw is None:
+            return "", 0
+        if isinstance(raw, str):  # a caller or test handed us text already
+            return raw, raw.count("�")
+        txt = raw.decode("utf-8", errors="replace")
+        return txt, txt.count("�")
+
+    out, _bad = _dec(getattr(proc, "stdout", None))
+    err, _ = _dec(getattr(proc, "stderr", None))
+    # Count NAMES repaired, not bytes: one mojibake filename is one problem, however many of
+    # its bytes were bad.
+    repaired = sum(1 for ln in out.splitlines() if "�" in ln)
+    return proc.returncode, out, err, repaired
 
 
 def resolve_es() -> str | None:
@@ -184,8 +230,8 @@ _WALK_SKIP = frozenset(
 )
 
 
-def _rank_exact_first(paths, needle):
-    """Exact basename matches first, for EVERY engine.
+def _rank_exact_first(items, needle, *, sorted_by: str = "", key=None):
+    """Exact basename matches first, for EVERY engine -- UNLESS the caller named a sort.
 
     Substring matching is Everything's own default and we keep it -- dropping it would lose
     real hits -- but unranked it buries the answer. Searching `es.exe` on this machine returns
@@ -193,20 +239,49 @@ def _rank_exact_first(paths, needle):
     genuinely contains the literal "es.exe". A reader skimming the first line of that list
     learns the opposite of the truth.
 
-    This lives OUTSIDE walk_search on purpose. The first version of it was inside, so the
-    bounded walk was ranked and the indexed path -- the one people will actually use -- was
-    not. Fixing the instance and leaving the class open is the recurring defect of this
-    session; a shared helper is the version that cannot drift apart.
+    ``sorted_by`` NAMES AN ORDER THE CALLER ASKED FOR, and then this is a no-op. Until
+    2026-10-07 the ranking was unconditional, which made every ``--sort`` key and every
+    ``--preset`` silently inert: the flag reached es.exe, es.exe answered in the requested
+    order, and then this function replaced that answer with (exact-basename, path-length).
+    Measured on the day it was found, ``--sort date-modified-descending`` returned
+    10/6, 9/14, 8/26, 10/2, 8/26, 10/2, 9/24, 8/25 -- i.e. ascending PATH LENGTH, because the
+    primary key tied on every row and the tiebreak did all the sorting.
+
+    The ranking itself is not the bug and is kept. It exists because es.exe applies ``-n`` in
+    ITS OWN order, so truncating can drop the exact match before we ever see it (see the
+    over-fetch comment in ``search``). That hazard is real only when es.exe's order is
+    arbitrary. With an explicit ``-sort`` the truncation happens in the REQUESTED order, so
+    the thing the ranking protects against cannot occur.
+
+    ``key`` extracts the path from each item, so ONE helper serves both the plain-path forms
+    (strings) and the json/csv forms (``Hit`` objects). Four call sites had each grown their
+    own inline copy of the sort expression, and a fix applied to one of them leaves ``--sort``
+    working on some paths and broken on others -- the hardest version to notice. Keeping the
+    decision here is the same argument this docstring already made about walk_search: fixing
+    the instance and leaving the class open is the recurring defect, and a shared helper is
+    the version that cannot drift apart.
     """
+    if str(sorted_by or "").strip():
+        return list(items)
+    get = key or (lambda x: x)
+    # _basename, not os.path.basename: es.exe answers with Windows paths even when read off
+    # Windows, and posixpath.basename would return the whole string (see _basename).
     base = _basename(str(needle or "").strip().lower())
-    return sorted(paths, key=lambda p: (_basename(p).lower() != base, len(p)))
+    return sorted(items, key=lambda it: (_basename(get(it)).lower() != base, len(get(it))))
 
 
 #: es.exe's -sort keys (verified against -h); the named flag surfaces these verbatim.
-#: Each key ALSO accepts a ``-descending`` suffix (es.exe's own inversion, verified live)
-#: so `recent`/`biggest` can mean most-recent / largest FIRST instead of forcing the reader
-#: to scan to the end of a long list -- which is how a "recent first" intent silently became
-#: "recent last" when the descending form was not representable.
+#: Each key also accepts ``-ascending`` or ``-descending``.
+#:
+#: A BARE KEY IS DESCENDING. es.exe's help reads ``-sort <name[-ascending|-descending]>``, which
+#: reads as though bare means ascending. It does not. Measured 2026-10-07 against es.exe itself::
+#:
+#:     es Transcript -sort date-created            -> 10/7, 10/7, 10/7, 10/6      DESCENDING
+#:     es Transcript -sort date-created-ascending  -> 11/1/2025, 11/9/2025, ...   ascending
+#:
+#: So any ASCENDING intent must say ``-ascending`` out loud. The presets below did not, and
+#: `oldest` returned the newest files while `smallest` returned the biggest -- the exact
+#: opposite of their names, for as long as they had existed.
 _SORT_KEYS = frozenset(
     {
         "name",
@@ -249,9 +324,11 @@ def is_valid_sort_key(sort: str) -> bool:
 PRESETS = {
     "recent": {"sort": "date-modified-descending"},
     "newest": {"sort": "date-created-descending"},
-    "oldest": {"sort": "date-created"},
+    # -ascending stated EXPLICITLY on both: a bare es.exe key sorts DESCENDING (see the note
+    # above _SORT_KEYS), so these two returned the exact opposite of their names until 2026-10-07.
+    "oldest": {"sort": "date-created-ascending"},
     "biggest": {"sort": "size-descending"},
-    "smallest": {"sort": "size"},
+    "smallest": {"sort": "size-ascending"},
     # deep modes -- the capabilities the research pass found but a newcomer would never
     # name (-get-result-count / -get-total-size / journal are es.exe internals, not goals):
     "folders": {"dirs_only": True},
@@ -627,26 +704,21 @@ def search(
     argv.extend(["-n", str(_fetch)])
 
     try:
-        proc = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            timeout=timeout or 15.0,
-        )
+        _rc, _out, _err, _repaired = _run_es(argv, timeout)
     except subprocess.TimeoutExpired:
         return SearchResult(query=query, ok=False, error=f"timed out after {timeout}s")
     except OSError as e:
         return SearchResult(query=query, ok=False, error=f"spawn failed: {e}")
 
-    if proc.returncode != 0:
-        err = (proc.stderr or "").strip() or f"exit {proc.returncode}"
+    if _rc != 0:
+        err = (_err or "").strip() or f"exit {_rc}"
         return SearchResult(query=query, ok=False, error=err)
 
     if format in ("json", "csv"):
-        parsed = _parse_json_hits(proc.stdout or "") if format == "json" else _parse_csv_hits(proc.stdout or "")
-        base = _basename(str(query or "").strip().lower())
-        # rank exact-basename-first, same rule as the path form (shared intent, Hits not paths)
-        parsed.sort(key=lambda h: (_basename(h.path).lower() != base, len(h.path)))
+        parsed = _parse_json_hits(_out) if format == "json" else _parse_csv_hits(_out)
+        # Same rule as the path form, through the SAME helper (shared intent, Hits not paths).
+        # An inline copy here is exactly how --sort stayed honored on one path and not another.
+        parsed = _rank_exact_first(parsed, query, sorted_by=sort, key=lambda h: h.path)
         sliced = parsed[: int(max_results)]
         return SearchResult(
             query=query,
@@ -655,14 +727,20 @@ def search(
             ok=True,
             engine="everything",
             exhaustive=len(parsed) < _fetch,
+            undecodable=_repaired,
         )
 
-    lines = [ln.rstrip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
-    ranked = _rank_exact_first(lines, query)
+    lines = [ln.rstrip() for ln in _out.splitlines() if ln.strip()]
+    ranked = _rank_exact_first(lines, query, sorted_by=sort)
     # `exhaustive` reports whether ES had MORE than our fetch window, not whether we trimmed
     # to max_results -- the caller asked for a page, and a page is not a bounded search.
     return SearchResult(
-        query=query, paths=ranked[: int(max_results)], ok=True, engine="everything", exhaustive=len(lines) < _fetch
+        query=query,
+        paths=ranked[: int(max_results)],
+        ok=True,
+        engine="everything",
+        exhaustive=len(lines) < _fetch,
+        undecodable=_repaired,
     )
 
 
@@ -765,20 +843,19 @@ def search_page(
         argv.extend(["-n", str(fetch)])
 
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout or 15.0)
+        _rc, _out, _err, _repaired = _run_es(argv, timeout)
     except subprocess.TimeoutExpired:
         return SearchResult(query=query, ok=False, error=f"timed out after {timeout}s")
     except OSError as e:
         return SearchResult(query=query, ok=False, error=f"spawn failed: {e}")
 
-    if proc.returncode != 0:
-        err = (proc.stderr or "").strip() or f"exit {proc.returncode}"
+    if _rc != 0:
+        err = (_err or "").strip() or f"exit {_rc}"
         return SearchResult(query=query, ok=False, error=err)
 
     if format in ("json", "csv"):
-        parsed = _parse_json_hits(proc.stdout or "") if format == "json" else _parse_csv_hits(proc.stdout or "")
-        base = _basename(str(query or "").strip().lower())
-        parsed.sort(key=lambda h: (_basename(h.path).lower() != base, len(h.path)))
+        parsed = _parse_json_hits(_out) if format == "json" else _parse_csv_hits(_out)
+        parsed = _rank_exact_first(parsed, query, sorted_by=sort, key=lambda h: h.path)
         sliced = parsed[offset:] if unlimited else parsed[offset : offset + limit]
         return SearchResult(
             query=query,
@@ -787,10 +864,11 @@ def search_page(
             ok=True,
             engine="everything",
             exhaustive=True if fetch is None else len(parsed) < fetch,  # fetch is None iff unlimited
+            undecodable=_repaired,
         )
 
-    lines = [ln.rstrip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
-    ranked = _rank_exact_first(lines, query)
+    lines = [ln.rstrip() for ln in _out.splitlines() if ln.strip()]
+    ranked = _rank_exact_first(lines, query, sorted_by=sort)
     sliced = ranked[offset:] if unlimited else ranked[offset : offset + limit]
     # Unlimited means we returned everything ES gave us, therefore exhaustive by
     # definition (there is no further page). Bounded means ES may hold more than our
@@ -801,6 +879,7 @@ def search_page(
         ok=True,
         engine="everything",
         exhaustive=True if fetch is None else len(lines) < fetch,
+        undecodable=_repaired,
     )
 
 
@@ -825,10 +904,27 @@ def format_result(res: SearchResult) -> str:
         tail = "" if res.exhaustive else "  [BOUNDED -- more may exist beyond the budget]"
         return f"{res.count} match(es) for {res.query!r}  [engine: walk, {scope}]{tail}:" + "\n" + "\n".join(res.paths)
 
+    # A REPAIRED NAME IS A LOSS, AND IT IS SAID OUT LOUD. The strings below no longer round-trip
+    # to a real file, so a caller that compares one against a real path and finds no match must
+    # not read that as absence. This notice is also the only trace that the old strict decode
+    # would have discarded the WHOLE result set here and called it "nothing found".
+    note = ""
+    if getattr(res, "undecodable", 0):
+        note = (
+            f"\n  [{res.undecodable} name(s) contained bytes that are NOT VALID UTF-8 and were "
+            f"REPAIRED with � -- those paths will not match a real filename exactly. "
+            f"Nothing was dropped.]"
+        )
     if not res.paths:
+        if getattr(res, "undecodable", 0):
+            return (
+                f"(no decodable matches for {res.query!r} -- Everything answered, but "
+                f"{res.undecodable} name(s) were NOT VALID UTF-8. This is UNCHECKABLE, "
+                f"NOT an absence.)"
+            )
         return f"(no matches for {res.query!r} — Everything answered, nothing found)"
     header = f"{res.count} match(es) for {res.query!r}  [engine: Everything index]:"
-    return header + "\n" + "\n".join(res.paths)
+    return header + note + "\n" + "\n".join(res.paths)
 
 
 def format_csv(res: SearchResult) -> str:

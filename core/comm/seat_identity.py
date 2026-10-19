@@ -35,6 +35,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+from typing import Any
 
 # A seat id is a short kebab/underscore token. Anything else is refused rather than trusted:
 # an id is used to build Redis keys and file names, so it is an injection surface.
@@ -126,6 +127,120 @@ def declared(session_id: str, binding_dir: str | None = None) -> str | None:
         return None
 
 
+def claim_id(
+    agent_id: str, session_id: str, *, ttl_s: float | None = None, client=None, ns: str | None = None
+) -> dict[str, Any]:
+    """Register THIS session as the live holder of `agent_id` -- the first-boot claim step.
+
+    T088 part (a), the collision-safety half listed FIRST in the identity directive and left
+    unbuilt: can two new seats spawning with ONE id break coordination? `resolve()` answers
+    WHO a session is; until this function existed, nothing answered WHO ELSE holds that name,
+    so a fresh seat just started beating `worklive` under its name and the rest of the fleet
+    addressed it -- collision was DETECTED after the fact (roster `split_brain`,
+    `STALE_INCARNATION`) but never PREVENTED at claim time.
+
+    THIS IS THE XMPP BIND 2 POSTURE, one notch softer -- the docstring above already cites it.
+    Bind 2 REFUSES to serve a stanza with no explicit sender when several resources share a
+    stream; we do not refuse to run (a hook must never break a session, T029/K8) -- we return
+    a VERDICT the caller may act on, and resolve() keeps the honest `unknown-<sid8>` fallback
+    rather than silently borrowing a peer's name.
+
+    Redis-based, TTL'd like the incarnation cards (core/comm/incarnation.py), and FAIL-OPEN:
+    when the store is unreachable this returns `ok: True, verdict: "unverified"` rather than
+    blocking a seat. Never raises. Pure in the R6 sense -- all inputs arrive as parameters, so
+    a pin can drive it with no bus.
+
+    Verdicts:
+      mine        this session already holds the id -- idempotent re-claim, refresh the TTL
+      taken       a DIFFERENT live session holds the bare id -- the caller should re-name to
+                  `{agent}#{sid8}` (the existing fleet-wide incarnation discriminator)
+      free        nobody holds it -- this session now claims it
+      unverified  the store could not be consulted -- absence of evidence is not evidence of
+                  absence; the caller keeps resolving loudly rather than assuming safety
+    """
+    aid = str(agent_id or "").strip()
+    sid = str(session_id or "").strip()
+    if not aid or not valid(aid):
+        return {
+            "ok": True,
+            "verdict": "unverified",
+            "why": "no valid agent_id to claim",
+            "agent_id": aid,
+            "session_id": sid,
+            "claimed": False,
+        }
+    if not sid:
+        # A session id is what makes two seats distinct; without one there is nothing to
+        # register as a holder, and claiming in its absence would mint a shared row.
+        return {
+            "ok": True,
+            "verdict": "unverified",
+            "why": "no session_id to register",
+            "agent_id": aid,
+            "session_id": sid,
+            "claimed": False,
+        }
+    try:
+        from core.comm.bus import _connect as _bus_connect
+
+        cli = client or _bus_connect()
+    except Exception:
+        cli = None
+    if cli is None:
+        return {
+            "ok": True,
+            "verdict": "unverified",
+            "why": "no client reachable",
+            "agent_id": aid,
+            "session_id": sid,
+            "claimed": False,
+        }
+    key_ns = str(ns or os.environ.get("BIFROST_NAMESPACE", "bifrost"))
+    key = f"{key_ns}:claim:{aid}"
+    try:
+        holder = cli.get(key)
+        if holder is not None and str(holder) == sid:
+            cli.expire(key, ttl_s if ttl_s is not None else float(os.environ.get("AKASHIC_CLAIM_TTL_S", "180")) or 180)
+            return {"ok": True, "verdict": "mine", "agent_id": aid, "session_id": sid, "claimed": True}
+        if holder is not None:
+            # Another live session owns the bare id. Verified-taken, not assumed: the key
+            # exists and names a DIFFERENT session, so the collision is a fact, not a guess.
+            return {
+                "ok": True,
+                "verdict": "taken",
+                "holder": str(holder),
+                "agent_id": aid,
+                "session_id": sid,
+                "claimed": False,
+            }
+        # Free: claim it. SETNX so two seats racing from two processes cannot BOTH read
+        # "free" and both become the holder -- the atomic claim the house already trusts in
+        # bridge_seal (concurrent claims never hand out the same seq).
+        ttl = ttl_s if ttl_s is not None else float(os.environ.get("AKASHIC_CLAIM_TTL_S", "180") or 180)
+        got = cli.set(key, sid, nx=True, ex=ttl)
+        if got:
+            return {"ok": True, "verdict": "free", "agent_id": aid, "session_id": sid, "claimed": True}
+        # Lost the race: someone else claimed between our read and write. Re-read so the
+        # caller gets the TRUE holder rather than "free" that is no longer true.
+        return {
+            "ok": True,
+            "verdict": "taken",
+            "holder": str(cli.get(key) or ""),
+            "agent_id": aid,
+            "session_id": sid,
+            "claimed": False,
+        }
+    except Exception:
+        return {
+            "ok": True,
+            "verdict": "unverified",
+            "why": "claim read/write failed",
+            "agent_id": aid,
+            "session_id": sid,
+            "claimed": False,
+        }
+
+
 def resolve(session_id: str, binding_dir: str | None = None, env_var: str = "AKASHIC_AGENT_ID") -> str:
     """binding -> env -> unknown-<sid8>. NEVER raises, NEVER returns a peer's name on a guess.
 
@@ -143,6 +258,82 @@ def resolve(session_id: str, binding_dir: str | None = None, env_var: str = "AKA
     if valid(env):
         return env
     return unknown_id(session_id)
+
+
+def subject_check(
+    requested: str,
+    session_id: str = "",
+    binding_dir: str | None = None,
+    env: dict | None = None,
+    env_var: str = "AKASHIC_AGENT_ID",
+    override_var: str = "AKASHIC_BOOT_AS_OTHER",
+) -> dict:
+    """T418 (2026-10-01): may THIS process boot as `requested`?
+
+    The identity law: the house's own organ must never hand a resident another resident's
+    identity or history. Two receipts in one day said the boot door answered as whoever the
+    caller claimed to be (Sunshine served as Heimdall through a hardcoded id; Rill served as
+    Heimdall through a typed one) while the session's own stamp sat in the environment.
+
+    Returns {ok, requested, resolved, source, override, why}. PURE: takes its environment.
+      ok=True   requested == the session's resolved identity, OR no stamp exists anywhere
+                (source 'unknown': the honest case, said so), OR the explicit override is set.
+      ok=False  a stamp exists (binding or env) and names someone else.
+    """
+    e = os.environ if env is None else env
+    req = str(requested or "").strip()
+    got = declared(session_id, binding_dir) if session_id else None
+    source = "binding" if got else ""
+    if not got:
+        try:
+            envv = (e.get(env_var) or "").strip()
+        except Exception:
+            envv = ""
+        if valid(envv):
+            got, source = envv, "env"
+    if not got:
+        return {
+            "ok": True,
+            "requested": req,
+            "resolved": "",
+            "source": "unknown",
+            "override": False,
+            "why": f"no stamp anywhere (no binding for this session, {env_var} unset) -- "
+            f"booting as the typed id {req!r}, unverified",
+        }
+    if got == req:
+        return {
+            "ok": True,
+            "requested": req,
+            "resolved": got,
+            "source": source,
+            "override": False,
+            "why": f"subject {req!r} matches the session's {source} stamp",
+        }
+    if str(e.get(override_var) or "").strip() == "1":
+        return {
+            "ok": True,
+            "requested": req,
+            "resolved": got,
+            "source": source,
+            "override": True,
+            "why": f"{override_var}=1: booting as {req!r} while this session is {got!r} "
+            f"({source}) -- an explicit, named override",
+        }
+    return {
+        "ok": False,
+        "requested": req,
+        "resolved": got,
+        "source": source,
+        "override": False,
+        "why": (
+            f"REFUSED: this session is {got!r} (from its {source} stamp) and asked to boot "
+            f"as {req!r}. The boot door serves a resident its OWN record only; a packet for "
+            f"{req!r} would hand you another resident's identity, mail and history (T418). "
+            f"Boot as {got!r}. If you really mean to read {req!r}'s packet, set "
+            f"{override_var}=1 for that one call."
+        ),
+    }
 
 
 def resolved_from(session_id: str, binding_dir: str | None = None, env_var: str = "AKASHIC_AGENT_ID") -> str:

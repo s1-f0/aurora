@@ -69,7 +69,16 @@ except Exception:
     pass
 
 
-from kimi_chat import DEFAULT_EFFORT, DEFAULT_MODEL, MAX_COMPLETION_TOKENS, KimiAgent, SpendMeter, load_key
+from kimi_chat import (
+    _HOPS_CAPPED,
+    DEFAULT_EFFORT,
+    DEFAULT_MODEL,
+    MAX_COMPLETION_TOKENS,
+    MAX_TOOL_HOPS,
+    KimiAgent,
+    SpendMeter,
+    load_key,
+)
 
 from core.comm import (
     context_hints,
@@ -95,7 +104,10 @@ CARD = {
 ANSWERABLE = frozenset({"chat", "request", "question", "handoff", "nudge", "inform"})
 
 REPLY_TIMEOUT_SEC = cast("int", _scaled(600))  # scaled(int) is an int; thinking turns run long; drill-shrinkable
-KIMI_MAX_HOPS = int(os.getenv("KIMI_MAX_HOPS", "30"))
+# ONE source for the tool budget: kimi_chat owns it (Daniil 2026-10-06, "no max
+# toolcalls"). Re-reading the env here is how a default drifts from its sibling --
+# this file said 30 and deepseek_chat said UNLIMITED for six weeks.
+KIMI_MAX_HOPS = MAX_TOOL_HOPS
 BUDGET_EXEMPT_SENDERS = frozenset({"user", "daniel"})  # directed human asks always answer
 
 DEFAULT_SYSTEM = (
@@ -302,10 +314,11 @@ def make_kimi_replier(
     base WHILE composing its reply. Per-peer KimiAgent conversations for continuity; ONE
     shared SpendMeter across all of them (a budget is per-seat, not per-friendship)."""
     # T050 Q3+Q4: capabilities declared UP FRONT -- no hop wasted discovering what a session can do.
+    _budget = f"{KIMI_MAX_HOPS} hops per task" if _HOPS_CAPPED else "UNLIMITED (Daniil 2026-10-06)"
     system = (
         f"[session capabilities] write_mode: "
         f"{'ENABLED (guarded write_file/edit_file live; locks self-release at reply)' if allow_write else 'READ-ONLY -- write_file/edit_file will refuse; investigate and report'}"
-        f" | tool budget: {KIMI_MAX_HOPS} hops per task, running counter [hop N] rides every result"
+        f" | tool budget: {_budget}, running counter [hop N] rides every result"
         f" | reasoning: always-on (kimi-k3), thinking streams to the bus | recall-at: off\n" + system
     )
     toolbox = ToolBox(

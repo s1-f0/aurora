@@ -360,12 +360,23 @@ OUTCOME_STREAM = "recall:outcome"
 OUTCOME_MAXLEN = 20000
 
 
+# The convention is "Use when ...", and the parser accepted ONLY that spelling, so a lesson
+# that opened "When ..." or "Before ..." forfeited its trigger weight to a wording choice.
+# Measured on the live corpus (1,489 lessons): 997 lead "use when" and 95 lead an
+# alternative -- when 66, before 20, on 4, after 3, use for 2. Hand-checked, 95 of 95 are
+# genuinely trigger-shaped imperatives, not narrative openers, so there is no false-trigger
+# population to trade against. Only the spellings actually present are listed: adding
+# unmeasured ones would be speculation, and a WRONG trigger can still boost a lesson onto
+# the wrong query even though a MISSING one no longer costs it anything (1b1f5a6e).
+_TRIGGER_RE = re.compile(r"\s*(?:use\s+when|use\s+for|when|before|after|on)\s+(.{3,240}?)(?::|\.\s|$)", re.IGNORECASE)
+
+
 def _parse_trigger(text: str) -> str:
     """The lesson convention encodes its own firing condition: 'Use when <symptom>, before
     <action>: <advice>'. Return that leading trigger clause ('' when absent) so matching can
     weight the DESIGNED trigger over incidental prose -- the vNext precision fix for lessons
     firing on generic tokens like 'continue working' (docs/library/design/20260701_recall-vnext-closing-the-four-loops-2026_b93539.md loop 2)."""
-    m = re.match(r"\s*use\s+when\s+(.{3,240}?)(?::|\.\s|$)", str(text or ""), re.IGNORECASE)
+    m = _TRIGGER_RE.match(str(text or ""))
     return m.group(1).strip() if m else ""
 
 
@@ -485,6 +496,22 @@ def _project_items(recs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 break
         if not summary:
             continue
+        # MATCHING WIDENS, DISPLAY DOES NOT (2026-10-03). The loop above picks ONE field to
+        # SHOW, deliberately, for the claim-vs-evidence reason in the comment above it -- and
+        # until now that one field was also the only thing a query could MATCH. Measured over
+        # all 1,562 lessons: `recommendation` won on 1,509 of 1,534 projected rows, `actual` on
+        # 25, and `what_tried` on ZERO despite being carried by 1,533 of them. 1,110,737 of
+        # 1,925,277 characters -- 57.7% of the corpus's prose -- could not be reached by any
+        # query, including the whole of the longest field in the schema.
+        #
+        # Concatenating the three into `text` would fix that and destroy the thing the comment
+        # above protects, because _provenance_tag reads `field` to tell a seat whether it is
+        # looking at a claim or at an observation. So the match surface is carried SEPARATELY:
+        # `match_text` feeds _item_tokens (the one seam where an item becomes matchable tokens)
+        # and `text` stays the single tagged field the reader is shown.
+        #
+        # A surface may widen WHAT IT MATCHES. It may not widen WHAT IT CLAIMS TO BE.
+        match_text = " ".join(str(rec.get(f) or "") for f in ("recommendation", "actual", "what_tried")).strip()
         success = str(rec.get("success", "")).lower()
         items.append(
             {
@@ -513,6 +540,9 @@ def _project_items(recs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 # Task 10: where the lesson is compiled into a harness (hybrid mode skips it there).
                 "compiled_into": rec.get("compiled_into", ""),
                 "field": field,
+                # What the ranker matches against: all three text fields. `text` above is what the
+                # reader is SHOWN. Keeping them apart is the whole point -- see the note above.
+                "match_text": match_text,
                 # Carried so the renderer can say so. A probed lesson was benched for failing to
                 # earn credit and is being re-tested -- presenting it as an ordinary lesson would
                 # overclaim its standing, which is the failure genus this whole arc is about.
@@ -716,8 +746,21 @@ def _with_mined_triggers(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _item_tokens(it: dict[str, Any]) -> set:
+    """The ONE seam where an item becomes matchable tokens.
+
+    Prefers `match_text` (all three lesson text fields) over `text` (the single
+    provenance-tagged field the reader is shown). Falling back to `text` keeps every
+    non-lesson item -- and any caller that builds an item by hand -- working unchanged.
+    """
     blob = " ".join(
-        filter(None, [str(it.get("text") or ""), str(it.get("trigger") or ""), " ".join(it.get("trigger_terms") or [])])
+        filter(
+            None,
+            [
+                str(it.get("match_text") or it.get("text") or ""),
+                str(it.get("trigger") or ""),
+                " ".join(it.get("trigger_terms") or []),
+            ],
+        )
     )
     return {w.lower() for w in _TOKEN_RE.findall(blob) if len(w) > 3}
 
@@ -779,13 +822,42 @@ def _trigger_aware_relevance(by_text: dict[str, dict[str, Any]]):
 
     def fn(text: str, query: str) -> float:
         it = by_text.get(text)
-        prose = _damped_overlap(text, query, weights)
+        # THE MATCH SURFACE, and this is the seam that scores (2026-10-05). `match_text` spans
+        # all three lesson text fields; `text` is the single provenance-tagged field the reader
+        # is shown. The Ranker hands this fn only (text, query) and `by_text` is keyed by the
+        # DISPLAY text, so the wide surface has to be fetched from the item here.
+        #
+        # Shipped wrong on 2026-10-03: match_text was added to the item and wired into
+        # `_item_tokens`, which is called in exactly one place -- `_idf_weights` -- so it
+        # widened the IDF CORPUS and not what anything could MATCH. The commit claimed "the
+        # ranker now matches 1.87M characters instead of 795k" and the ranker went on matching
+        # 795k. Navi's half_b caught it: her live-HEAD bench was identical to the pre-change
+        # bench, same three unmatchable ids, while her controlled proxy showed +4/+4/-5.
+        # Nothing had changed live because nothing about matching had changed.
+        prose_src = (it.get("match_text") if it else "") or text
+        prose = _damped_overlap(prose_src, query, weights)
         if not it:
             return prose
         trig = " ".join(filter(None, [it.get("trigger") or "", " ".join(it.get("trigger_terms") or [])]))
         if not trig.strip():
             return prose
-        return 0.6 * _damped_overlap(trig, query, weights) + 0.4 * prose
+        # A TRIGGER MAY ONLY HELP, NEVER COST (2026-10-06). The blend alone made obeying the
+        # doctrine a penalty: AGENTS.md tells every agent to write "Use when <symptom>...",
+        # and a trigger names ONE situation, so at every other moment it earns ~0 and the
+        # compliant lesson scored 0.4x beside a non-compliant one at 1.0x.
+        #
+        # Measured over 400 harvested impressions replayed through this very function:
+        #     trigger HELPED 0 | HURT 16 | no change 7     (275 lessons carry no trigger)
+        #     worst 0.333 -> 0.233, 0.312 -> 0.200; a perfect 1.0 prose match became 0.4.
+        # And structurally, 0.6t + 0.4p can never exceed p when p is strong -- so a trigger
+        # could not help a good prose match even when perfectly on-topic. It could only fail
+        # to hurt.
+        #
+        # The blend is KEPT, not deleted: a trigger that genuinely names the moment must still
+        # win, and it does whenever it outscores the prose. max() removes the penalty and
+        # preserves the signal. Deleting the term instead would have thrown away the thing the
+        # doctrine exists to create.
+        return max(prose, 0.6 * _damped_overlap(trig, query, weights) + 0.4 * prose)
 
     return fn
 
@@ -801,18 +873,115 @@ def _proven_factor(item: dict[str, Any]) -> float:
         return 1.0
 
 
+#: Smoothing constant for the judgment-rate estimate. One judgment moves the multiplier half of
+#: its available swing, two move two thirds, and it approaches the full swing from there. Chosen as
+#: the largest value that keeps every pre-existing contract in tests/test_recall_at.py (two noise
+#: votes must land below 0.7), so the only behaviour this rewrite changes is the one it means to.
+_JUDGMENT_SMOOTHING = 1.0
+
+
 def usefulness_factor(use: dict[str, int] | None) -> float:
-    """Smoothed ranking multiplier in [0.5, 1.5]. Neutral (1.0) for unseen; ->1.5 for proven-useful;
-    ->0.5 for noise-voted or surfaced-often-yet-never-useful (the automatic noise decay)."""
+    """Ranking multiplier in (0.5, 1.5), estimated from JUDGMENTS and never from impressions.
+    Neutral (1.0) when nothing has been judged; above for net-positive evidence, below for
+    net-negative, shrunk toward neutral while the evidence is thin.
+
+    WHY THIS WAS REWRITTEN, 2026-10-02, and what the old rule actually did. The previous form was
+    `0.5 + clamp((eff + 1) / (max(surfaced, judgments) + 2))`, with `surfaced` in the denominator.
+    For any lesson with NO judgments at all -- which is almost every lesson, because this house
+    judges 2.2% of surfacings (532 of 24,344) -- that reduces exactly to:
+
+        factor = 0.5 + 1 / (surfaced + 2)
+
+    a strictly decreasing function of exposure and of nothing else. Verified against the live
+    corpus: surfaced 1 -> 0.833, 3 -> 0.700, 6 -> 0.625, 13 -> 0.567, 28 -> 0.533, 72 -> 0.514.
+
+    Three consequences, all measured rather than argued:
+
+    1. IT PUNISHED RELEVANCE. A lesson that matches a RECURRING situation earns the most
+       impressions, so it took the deepest penalty. On the recall bench, N3's correct lesson
+       (surfaced 72, useful 2, noise 1 -> 0.527) was multiplied down past three never-credited
+       lessons whose only distinction was barely having been shown. Every right answer in the
+       10-moment set sat below its usurpers for this reason. Pinning this function to a constant
+       1.0, changing nothing else, took recall@1 from 17% to 33%.
+
+    2. RECALL WAS THE AGENT OF ITS OWN SUPPRESSION. `bump_surfaced` is called by `recall_at`
+       itself on the surfacing path, so the loop closed with no external input: show a lesson,
+       increment its count, lower its multiplier, show it less next time.
+
+    3. THE BOOST HALF WAS DEAD. Clearing 1.0 required `useful` on more than half of all
+       surfacings (6/10, 26/50, 51/100). At a 2% credit rate the reachable range was [0.5, 1.0]:
+       a decay wearing a multiplier's name. `helped`, the one positive the reader never has to
+       volunteer, was stuck in the dead zone too.
+
+    The rule was documented as "surfaced-often-yet-never-useful" decay and that intent is right.
+    It simply could not tell that case from "surfaced-often-and-never-JUDGED", and treated absence
+    of evidence as evidence of noise. The decay's purpose is PRESERVED here: negative judgments
+    still sink a lesson, and sink it further as they accumulate (which the old clamp could not do,
+    saturating at 0.5 after a few votes). Only the conflation is gone.
+
+    A VIRTUE SEVERED FROM ITS SIBLING. This decay was built to sit beside a working judgment
+    channel, where never-credited would genuinely mean not-useful. Isolated from that sibling it
+    inverted into an anti-relevance filter. So the contract requires the restored-sibling case
+    too: if judgments start arriving, a well-judged and a badly-judged lesson at the SAME exposure
+    must separate, and separate the right way round.
+
+    WHY `surfaced` NOW ONLY CAPS `helped`, stated because it was considered and rejected rather
+    than overlooked. Many impressions with no judgment is weak evidence of INDIFFERENCE, and it is
+    tempting to spend it. But it is not distinguishable from many impressions that nobody was ever
+    asked to judge, and spending it is precisely the defect above. A lesson credited once in a
+    thousand showings therefore reads as weakly positive here: the 999 silent showings are not
+    negative evidence, they are no evidence. The honest way to recover that signal is to make the
+    judgment channel work, not to infer judgments from volume. `surfaced` is still used to cap
+    `helped` at the number of impressions, which defends against join drift crediting a flip to a
+    lesson that was never shown.
+
+    MEASURED LATER THE SAME DAY, AND IT CORRECTS THE CLAIM THIS FUNCTION SHIPPED WITH. The GREEN
+    commit said the judgment estimator doubled recall@1. The doubling is real; the ATTRIBUTION was
+    wrong. Rank-1 hits on the recall bench, as counts, which is the honest unit at this sample size:
+
+        set                 n     this estimator    constant 1.0    the old exposure rule
+        16-moment set      10            2                3                  1
+        batch 2 only        4            0                1                  0
+        batch 3 only        8            2                1                  0
+        all 25             18            4                4                  1
+
+    So REMOVING the exposure decay is a large, consistent win in every row. Replacing it with a
+    judgment estimator rather than a flat 1.0 is UNDECIDABLE here: the two tie overall, every
+    subset disagreement is one or two moments, and the sign flips depending on which subset you
+    look at. A corpus lesson claiming "a constant 1.0 beat the judgment-estimated version 30
+    percent to 20 percent on held-out moments" reproduces exactly on the 16-moment set, and
+    reverses on batch 3. Both readings are noise.
+
+    THE ESTIMATOR IS KEPT ANYWAY, FOR A REASON THAT IS NOT RETRIEVAL. A flat 1.0 would discard the
+    ability to act on negative evidence entirely: noise votes would do nothing, forever. The
+    estimator ties on retrieval and preserves the decay's original purpose, so it is the better
+    choice on grounds the bench cannot measure. If a later set ever separates them on retrieval,
+    that evidence wins over this paragraph.
+
+    NOT USED: `engaged`. `record_feedback` says of it, deliberately, "counted + shown in triage
+    and protective against benching, but deliberately NOT a ranking boost until it earns one".
+    That is its author's standing decision and this rewrite does not overturn it. Worth flagging
+    separately: `core/recall/curator.py` DOES count engaged among `_CREDIT_FIELDS`, so the curator
+    and the ranker disagree about what a credit is. That disagreement is real, is not this
+    function's to settle, and is recorded here so the next reader finds it.
+    """
     use = use or {}
     useful = int(use.get("useful", 0))
     noise = int(use.get("noise", 0))
     helped = int(use.get("helped", 0))  # automatic contrastive positive (FAIL->SUCCESS flip)
     surfaced = int(use.get("surfaced", 0))
-    eff = useful - noise + min(helped, surfaced)  # cap helped at impressions (defends join drift)
-    denom = max(surfaced, useful + noise + helped) + 2.0  # rate, not raw count -> anti-runaway
-    rate = max(0.0, min(1.0, (eff + 1.0) / denom))  # ~0.5 neutral; ->1 proven; ->0 stale/noise
-    return 0.5 + rate
+
+    pos = useful + min(helped, surfaced)  # cap helped at impressions (defends join drift)
+    neg = noise
+    judgments = pos + neg
+    if judgments <= 0:
+        # ZERO IS NOT NO. Nothing has been judged, so there is no evidence in either direction and
+        # the ranker must not invent one. This is the whole fix.
+        return 1.0
+
+    balance = (pos - neg) / float(judgments)  # -1 all noise .. +1 all useful
+    confidence = judgments / (judgments + _JUDGMENT_SMOOTHING)  # thin evidence stays near 1.0
+    return 1.0 + 0.5 * balance * confidence
 
 
 def canonicalize_source(source: str, *, learning_store: Any | None = None) -> str:
@@ -989,6 +1158,263 @@ def normalize_target(path: str | None = None, command: str | None = None) -> str
     return ""
 
 
+# --------------------------------------------------------------------------------------
+# THE SECOND JOIN AXIS (2026-10-06). `normalize_target` keys a command on its WHOLE
+# literal string, and the credit loop joins on that key by exact equality. So the one
+# event worth observing -- an agent fixing its own command -- can never close the loop:
+# the FAIL is filed under the broken spelling and the SUCCESS asks about the fixed one.
+# Measured: 17,606 of 18,024 distinct outcome keys (97.7%) are command keys, so this is
+# ~98% of the sensor's surface, not an edge case.
+#
+# WHY NOT JUST COARSEN `normalize_target`. `replay.parse_target` INVERTS it to replay a
+# historical target through the live matcher, and tests/test_forge_replay.py pins that
+# inversion; a coarser primary key would hand the replay bench truncated commands while
+# reporting success. Twenty-odd other call sites share the key shape too. So this is an
+# ADDITIONAL axis, and `resolve_action_outcome` stamps every credit with the axis that
+# won it -- coarsening raises recall AND raises false joins, and credit here is already
+# assigned with no causal check (core/recall/prevention.py), so an unstamped coarse
+# credit would trade one blindness for a quieter one.
+# Redirection ARROWS are deliberately NOT here: `cat > f` (write), `cat >> f` (append) and
+# `cat f` (read) are three different actions on one path, and dropping the arrow made them
+# one key -- a failed write joined by a successful read mints credit. Only the noise forms
+# (stream duplication, discards) are dropped.
+_SHELL_OPS = {"|", "||", "&", "&&", ";", "2>&1", "1>&2", "&>", "2>/dev/null", ">/dev/null", "2>nul", ">nul"}
+# PREAMBLE tokens carry no identity: an env assignment, a wrapper, or a wrapper's numeric
+# argument. They must not COUNT toward the identity floor, which is how `PYTHONUTF8=1 py`
+# and `timeout 600 py` each bought a key the floor would otherwise have refused. Dropping
+# them also earns a real join: `PYTHONUTF8=1 py x.py` and `py x.py` are the same action.
+_PREAMBLE = {
+    "export",
+    "env",
+    "timeout",
+    "time",
+    "sudo",
+    "nice",
+    "command",
+    "exec",
+    "builtin",
+    "setx",
+    "set-variable",
+    "measure-command",
+}
+# PowerShell's nav verbs are nav too. `cd` was dropped and `Set-Location` was not, so the
+# house's own PowerShell idiom CREATED a bypass of the identity floor (2 live false flips).
+_CD_RE = re.compile(r"^(cd|set-location|sl|pushd|popd)(\s|$)")
+# `$t = get-date;` / `d="state/x";` -- a statement that only binds a variable is a preamble,
+# not an action, and leaving it in supplied the second token the identity floor wanted.
+# ANCHORED AT BOTH ENDS: the value must be the last thing in the statement. Without the
+# tail anchor this also swallowed the inline-env form `PYTHONUTF8=1 py scripts/x.py`, whose
+# statement merely STARTS with an assignment and then performs a real action.
+_ASSIGN_ONLY_RE = re.compile(r"^[\$\w:.\[\]]+\s*=\s*\S*$")
+_EXT_RE = re.compile(r"\.\w{1,6}$")
+_DRIVE_RE = re.compile(r"^/([a-z])/")
+# A line continuation is not a path. `_looks_pathy("\\")` was True, so a trailing backslash
+# became a phantom "/" token that satisfied the floor on its own.
+_LINE_CONT = {"\\", "`"}
+# When the program is passed IN AN ARGUMENT, the argument is the identity -- and it is
+# exactly what this function drops. Scoped to real interpreters because `-c` means "count"
+# to grep and "commit" to others; only these treat it as "here is the program".
+_INTERPRETERS = {
+    "py",
+    "py3",
+    "python",
+    "python3",
+    "python3.11",
+    "node",
+    "nodejs",
+    "deno",
+    "bun",
+    "perl",
+    "ruby",
+    "sh",
+    "bash",
+    "zsh",
+    "pwsh",
+    "powershell",
+}
+_INLINE_PROG = {"-c", "-e", "--eval", "--command", "-command", "-encodedcommand"}
+_REPO_ROOT_KEY = (
+    os.path.normcase(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    .replace("\\", "/")
+    .rstrip("/")
+)
+
+
+def _same_tree(target: str) -> bool:
+    """Is this `cd` target the repo we are already in?
+
+    `cd <repo root> &&` is the house idiom for "be where we already are", and dropping it
+    earns a join between a dressed command and its bare sibling. `cd <anywhere else>` is
+    IDENTITY: this box has a sandbox clone, persistent worktrees and three sibling repos,
+    so `cd /e/AI-Setup && npm run build` and `cd /e/akashiclabs-site && npm run build`
+    are different actions that were landing on one key.
+    """
+    t = os.path.normcase(target.strip().strip("'\"")).replace("\\", "/").rstrip("/")
+    t = _DRIVE_RE.sub(r"\1:/", t)  # /e/ai-setup (git bash) -> e:/ai-setup
+    return t == _REPO_ROOT_KEY
+
+
+def _iter_unquoted(s: str):
+    """Yield (index, char) for every character OUTSIDE single/double quotes.
+
+    Shell structure only counts unquoted. A regex split on `;|&&` read the `;` inside
+    `py -c "import io; io.open(1)"` as a statement separator and invented a second
+    'action' out of a string literal; the same blindness mangled `-match 'a|b'`.
+    """
+    q = ""
+    for i, ch in enumerate(s):
+        if q:
+            if ch == q:
+                q = ""
+            continue
+        if ch in "'\"":
+            q = ch
+            continue
+        yield i, ch
+
+
+def _split_statements(s: str) -> list[str]:
+    """Split on `;`, `&&` and `||` that are outside quotes."""
+    out, prev = [], 0
+    skip_to = 0
+    for i, ch in _iter_unquoted(s):
+        if i < skip_to:
+            continue
+        width = 0
+        if ch == ";":
+            width = 1
+        elif ch in "&|" and s[i : i + 2] in ("&&", "||"):
+            width = 2
+        if width:
+            out.append(s[prev:i])
+            prev = i + width
+            skip_to = i + width
+    out.append(s[prev:])
+    return [x.strip() for x in out if x.strip()]
+
+
+def _pipeline_head(s: str) -> str:
+    """Everything before the first UNQUOTED pipe -- the command that owns the action."""
+    for i, ch in _iter_unquoted(s):
+        if ch == "|":
+            return s[:i]
+    return s
+
+
+def _is_preamble(tok: str) -> bool:
+    """An env assignment, a wrapper verb, or a wrapper's numeric argument -- never identity."""
+    return tok in _PREAMBLE or "=" in tok or tok.isdigit()
+
+
+def _looks_pathy(tok: str) -> bool:
+    """A file argument is the strongest identity a command has -- keep it even past a flag."""
+    return "/" in tok or "\\" in tok or _EXT_RE.search(tok) is not None
+
+
+def _coarse_command(payload: str) -> str:
+    """Reduce a command to its ACTION: executable, subcommand words, and file arguments.
+
+    Dropped: heredoc bodies, the house's `cd <repo> &&` prefix, pipeline tails, shell
+    redirections, and every flag together with its value. Kept: the first token, every
+    bare word before the first flag, and any path-like token anywhere -- so
+    `grep -n foo file.py` and `grep -n bar file.py` agree (same file, same action) while
+    `py a.py` and `py b.py` never do.
+    """
+    cut = payload.find("<<")  # a 40-line heredoc body is not an identity
+    had_heredoc = cut >= 0
+    s = payload[:cut] if had_heredoc else payload
+    # EVERY STATEMENT, NOT JUST THE FIRST. Measured on the live stream: keying a compound
+    # command on its first statement produced `k:$t = get-date` for
+    # `$t = get-date; node tests/score_export.test.mjs ...` -- a timing preamble, under
+    # which three genuinely different actions (node vs py, different test files) all
+    # collapsed into one key. A compound command's identity is all of its statements.
+    kept: list[str] = []
+    has_path = False
+    # Did we drop anything that COULD have been identity? Only then is a one-token key
+    # suspicious. Navigation and a pipeline tail are not identity; a flag, a heredoc body
+    # and an inline program are. Without this distinction the floor refused `cd <repo> &&
+    # pytest` while allowing bare `pytest` -- punishing the dressed spelling of a command
+    # that lost nothing, which is the missed join test_j5 promises not to create.
+    dropped_identity = had_heredoc
+    for stmt in _split_statements(s):
+        if _CD_RE.match(stmt):
+            parts = stmt.split(None, 1)
+            if len(parts) == 1 or _same_tree(parts[1]):
+                continue  # being where we already are
+            kept.append("cd")  # a DIFFERENT tree is the action
+            kept.append(os.path.normcase(parts[1].strip().strip("'\"")).replace("\\", "/"))
+            has_path = True
+            continue
+        if _ASSIGN_ONLY_RE.match(stmt):
+            continue  # binds a variable, performs nothing
+        toks = [t.strip("'\"") for t in _pipeline_head(stmt).split()]
+        toks = [t for t in toks if t and t not in _SHELL_OPS and t not in _LINE_CONT and not _is_preamble(t)]
+        if not toks:
+            continue
+        if toks[0] in _INTERPRETERS and any(t.lower() in _INLINE_PROG for t in toks[1:]):
+            # THE PROGRAM IS IN AN ARGUMENT WE JUST DROPPED. `py -c "<script>"` has no
+            # identity left, and the floor could not see that because a quoted path INSIDE
+            # the script text reads as a file argument -- which is how the live hook
+            # credited six unrelated lessons and why that key was STILL non-empty after the
+            # first two fixes. There is nothing to join two different programs on.
+            return ""
+        kept.append(toks[0])
+        seen_flag = False
+        for t in toks[1:]:
+            if t.startswith("-") and t != "-":
+                seen_flag = True  # the flag AND its value are both noise
+                dropped_identity = True
+                continue
+            if _looks_pathy(t):
+                # A FILE ARGUMENT RESTARTS THE IDENTITY SPACE. Without this reset a flag
+                # before the program erased the subcommand: `py -3.11 agent_cli.py
+                # bifrost-send --help` keyed as `py agent_cli.py`, collapsing the whole
+                # CLI -- including a mailbox WRITE -- into one key.
+                kept.append(t)
+                has_path = True
+                seen_flag = False
+            elif not seen_flag:
+                kept.append(t)
+    key = " ".join(kept).replace("\\", "/")
+    # A HEREDOC MOVES THE PROGRAM INTO THE BODY, and the body is exactly what was dropped.
+    # `py - <<PY` therefore keys on the interpreter alone; measured on the live stream, one
+    # such key collided with 105 distinct later successes and minted two false credits. If
+    # nothing survived the cut but the program being run, there is no identity to join on.
+    if had_heredoc and not has_path:
+        return ""
+    if len(set(key.split())) < 2 and dropped_identity:
+        return ""
+    return key
+
+
+def coarse_target(target: str) -> str:
+    """The second join axis for a `normalize_target` key, or "" when there is no second axis.
+
+    "" is reserved for keys that need no axis: a `p:` path key already joins exactly, and
+    an unparseable key has nothing to offer.
+
+    A COMMAND ALWAYS GETS AN AXIS, EVEN WHEN NOTHING WAS DROPPED, and that asymmetry is
+    load-bearing -- it is the bug test_j2 caught. The fix for a broken command is often
+    the MINIMAL spelling of it, so suppressing the axis for minimal commands means
+    `cd /repo && py x.py --bad` (axis "k:py x.py") could never be joined by plain
+    `py x.py` (no axis), which is precisely the fix-your-own-command case. The "k:" tag
+    keeps the coarse key in its own namespace, so filing both costs one dict entry and
+    can never collide with a "c:" key.
+    """
+    t = str(target or "")
+    if not t.startswith("c:") or len(t) <= 2:
+        return ""
+    # THE IDENTITY FLOOR LIVES IN `_coarse_command`, which is the only place that knows
+    # WHAT was dropped to produce the key. Two findings drove it there, both from live data:
+    #   `py -c "<script>"`  -> "py"     (dogfooding: credited six unrelated lessons)
+    #   `py -m a --help; py -m a moment X` -> "py py"  (measure_credit_join sample)
+    # The second slips any length-based floor while carrying no more identity than the
+    # first. Deciding it out here, on `key != payload`, ALSO refused `cd <repo> && pytest`
+    # while allowing bare `pytest` -- the dressed spelling lost nothing but navigation.
+    key = _coarse_command(t[2:])
+    return "k:" + key if key else ""
+
+
 def mark_impression(session_id: str, target: str, sources) -> None:
     """Record that `sources` were surfaced for `target` this session (the outcome-join key)."""
     srcs = [s for s in (sources or []) if s]
@@ -1002,14 +1428,25 @@ def mark_impression(session_id: str, target: str, sources) -> None:
         pass
 
 
-def _impressions_for(session_id: str, target: str) -> list:
+def _imp_match(stored_t: str, target: str, coarse: str) -> bool:
+    """One matcher for both readers below, so read and clear can never disagree.
+
+    The coarse side is computed from the STORED key rather than written alongside it, so
+    impression rows already on disk from before this slice retro-join without migration.
+    """
+    if stored_t == target:
+        return True
+    return bool(coarse) and coarse_target(stored_t) == coarse
+
+
+def _impressions_for(session_id: str, target: str, *, coarse: str = "") -> list:
     out = []
     try:
         with open(os.path.join(_IMP_DIR, _safe_id(session_id) + ".jsonl"), encoding="utf-8") as f:
             for line in f:
                 try:
                     rec = json.loads(line)
-                    if rec.get("t") == target:
+                    if _imp_match(rec.get("t") or "", target, coarse):
                         out += rec.get("s", [])
                 except Exception:
                     pass
@@ -1018,14 +1455,14 @@ def _impressions_for(session_id: str, target: str) -> list:
     return list(dict.fromkeys(out))  # dedup, order-stable
 
 
-def _clear_impressions(session_id: str, target: str) -> None:
+def _clear_impressions(session_id: str, target: str, *, coarse: str = "") -> None:
     try:
         p = os.path.join(_IMP_DIR, _safe_id(session_id) + ".jsonl")
         kept = []
         with open(p, encoding="utf-8") as f:
             for line in f:
                 try:
-                    if json.loads(line).get("t") != target:
+                    if not _imp_match(json.loads(line).get("t") or "", target, coarse):
                         kept.append(line)
                 except Exception:
                     pass
@@ -1073,21 +1510,31 @@ def resolve_action_outcome(
     was just earned, so it is the raw material for the JIT learn nudge and the wrap-time candidate
     lessons (friction audit D5). Returns {"flipped", "credited", "sources"}; best-effort + fail-soft
     -- a first-try success credits and logs nothing (the contrastive gate)."""
-    out: dict[str, Any] = {"flipped": False, "credited": 0, "sources": []}
+    out: dict[str, Any] = {"flipped": False, "credited": 0, "sources": [], "join": None}
     if not session_id or not target:
         return out
     try:
+        # The second axis (coarse_target). "" when the target needs none, which keeps
+        # every path key and every already-minimal command on exactly the old behaviour.
+        coarse = coarse_target(target)
         # Read impressions ONCE, before any clear -- the outcome stage needs to know a
         # lesson was surfaced even when nothing flipped (that is the prevention case).
-        srcs_now = _impressions_for(session_id, target)
-        if success and _get_outcome(session_id, target) == "FAIL":
+        srcs_now = _impressions_for(session_id, target, coarse=coarse)
+        if success:
+            # EXACT FIRST, ALWAYS. The coarse axis is the fallback, never the primary, so
+            # a target that already joined keeps crediting through the pre-existing path.
+            if _get_outcome(session_id, target) == "FAIL":
+                out["join"] = "exact"
+            elif coarse and _get_outcome(session_id, coarse) == "FAIL":
+                out["join"] = "coarse"
+        if out["join"]:
             out["flipped"] = True
             out["sources"] = srcs_now
             for src in out["sources"]:
                 if record_feedback(src, "helped", store=store):
                     out["credited"] += 1
-            _clear_impressions(session_id, target)
-            _log_flip(session_id, target, out["credited"], out["sources"])
+            _clear_impressions(session_id, target, coarse=coarse)
+            _log_flip(session_id, target, out["credited"], out["sources"], join=out["join"])
         # Stage separation: record EVERY resolution, flipped or not. Purely additive --
         # the flip path above is byte-for-byte unchanged, and nothing here steers ranking.
         _log_outcome_stage(
@@ -1098,8 +1545,11 @@ def resolve_action_outcome(
             flipped=out["flipped"],
             credited=out["credited"],
             agent_id=agent_id,
+            join=out["join"],
         )
         _set_outcome(session_id, target, "SUCCESS" if success else "FAIL")
+        if coarse:
+            _set_outcome(session_id, coarse, "SUCCESS" if success else "FAIL")
     except Exception:
         pass
     return out
@@ -1110,10 +1560,10 @@ def resolve_outcome(session_id: str, target: str, success: bool, *, store=None) 
     return resolve_action_outcome(session_id, target, success, store=store)["credited"]
 
 
-def _log_flip(session_id: str, target: str, credited: int, sources) -> None:
+def _log_flip(session_id: str, target: str, credited: int, sources, join: str | None = None) -> None:
     try:
         os.makedirs(_FLIP_DIR, exist_ok=True)
-        rec = {"t": target, "credited": credited, "s": list(sources or []), "at": time.time()}
+        rec = {"t": target, "credited": credited, "s": list(sources or []), "at": time.time(), "join": join or "exact"}
         with open(os.path.join(_FLIP_DIR, _safe_id(session_id) + ".jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
@@ -1129,6 +1579,7 @@ def _log_outcome_stage(
     flipped: bool,
     credited: int,
     agent_id: str | None = None,
+    join: str | None = None,
 ) -> None:
     """Record the OUTCOME stage for EVERY resolution -- not only for flips.
 
@@ -1169,6 +1620,10 @@ def _log_outcome_stage(
         "s": srcs,
         "flipped": bool(flipped),
         "credited": int(credited or 0),
+        # WHICH AXIS WON THE JOIN -- "exact", "coarse", or None for no flip. The
+        # coarse axis buys reach at the cost of false joins, so its share must stay
+        # auditable forever; a credit that cannot name its axis cannot be audited.
+        "join": join,
         # t383 identity thread: the explicit param beats env — a harness seat that
         # INHERITS a foreign AKASHIC_AGENT_ID (the DSH-under-Claude-Code case) must
         # not stamp its outcome rows with the parent's identity.
@@ -1653,8 +2108,21 @@ def _lessons(
     cands: list = []
     seen = set()
     ranker = Ranker(relevance_fn=_trigger_aware_relevance(by_text))
-    for s in ranker.rank(items, query=query, now=now):  # Ranker excludes superseded (is_active)
-        if s.components.get("relevance", 0.0) <= min_relevance:
+    ranked = list(ranker.rank(items, query=query, now=now))  # Ranker excludes superseded (is_active)
+    # RELATIVE FLOOR (off by default; AKASHIC_RECALL_REL_FLOOR=0.5 to arm it). A per-query
+    # SHAPE statistic rather than a second absolute number: when one lesson clearly wins,
+    # do not pad the surface with a weak tail. `max()` means it can only ever be STRICTER
+    # than the calibrated absolute floor, never looser, so arming it cannot un-silence a
+    # call. Pre-registered as F-relfloor-2026-10-06 with its own dies-when BEFORE being
+    # measured, because a threshold tuned on the labels you already hold is fitted, not
+    # measured.
+    cut = min_relevance
+    ratio = _rel_floor_ratio()
+    if ratio > 0.0 and ranked:
+        best_rel = max(s.components.get("relevance", 0.0) for s in ranked)
+        cut = max(min_relevance, best_rel * ratio)
+    for s in ranked:
+        if s.components.get("relevance", 0.0) <= cut:
             continue  # SHOW-NOTHING floor (T_min): must actually match this path/command; never pad to `limit`
         # R2 s0 P8 (sol's fence): count the stages so the outcome row can tell
         # "nothing cleared the floor" apart from "cleared, then withheld". A mixed
@@ -1708,6 +2176,16 @@ def _floor_default() -> float:
         return float(os.getenv("AKASHIC_RECALL_FLOOR", "0.20"))
     except Exception:
         return 0.20
+
+
+# RELATIVE floor ratio, as a fraction of the best relevance in THIS call. 0 = off, which is
+# the shipped default: the absolute floor above is calibrated against historical credits and
+# this is an experiment beside it, not a replacement for it.
+def _rel_floor_ratio() -> float:
+    try:
+        return float(os.getenv("AKASHIC_RECALL_REL_FLOOR", "0") or 0)
+    except Exception:
+        return 0.0
 
 
 # --- T311 capability-recall: the verb channel -------------------------------------------------

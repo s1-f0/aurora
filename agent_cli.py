@@ -330,6 +330,59 @@ def cmd_boot(args):
     from agent.initializer import derive_agent_context_from_startup_sources
     from core.axi import out
 
+    # T418 (2026-10-01): the SUBJECT CHECK runs before any registry record is served. Every
+    # boot door funnels here (CLI, MCP boot(), the ToolBox's knowledge_boot), so one gate
+    # covers all three. A session whose stamp names someone else is refused by name.
+    try:
+        from core.comm import seat_identity as _si
+        from core.coord.session_id import ambient_session_id as _amb_sid
+
+        _sid = _amb_sid()[0]
+        _chk = _si.subject_check(
+            args.agent_id, session_id=_sid, binding_dir=os.getenv("AKASHIC_SEAT_BINDING_DIR") or None
+        )
+    except Exception:
+        _chk = {"ok": True, "why": "subject check unavailable (fail-open)"}
+    if not _chk.get("ok"):
+        print(_chk["why"])
+        print(_chk["why"], file=sys.stderr)
+        try:
+            from core.events.event_log import capture_event
+
+            capture_event(
+                "boot_refused",
+                f"{_chk.get('resolved')} asked to boot as {args.agent_id}",
+                agent_id=str(_chk.get("resolved") or args.agent_id),
+                detail={"requested": args.agent_id, "resolved": _chk.get("resolved"), "source": _chk.get("source")},
+            )
+        except Exception:
+            pass
+        return 2
+    # The subject line is collected with the other pre-lines below, so --json still gets it first
+    # and the agent and human views carry it as the `boot_subject` section.
+    _subject_line = None
+    if _chk.get("override"):
+        _subject_line = f"# boot subject: {_chk['why']}"
+    elif _chk.get("source") == "unknown":
+        # T418-b (2026-10-02), found by Rill drilling the fence's I3 blind. `subject_check` computes
+        # this sentence and nothing ever showed it, so a boot the house COULD NOT VERIFY rendered
+        # exactly like one it could. That is zero-is-not-no broken by the organ whose subject is
+        # identity. Unknown still SERVES -- a fresh clone and a first boot are real paths, and
+        # refusing them would be the cure killing the patient -- but it says so, and it is counted,
+        # because a line scrolls past while an event can be asked a question. Measured the night it
+        # was fixed: four of seven live MCP doors carry no stamp at all.
+        _subject_line = f"# boot subject: {_chk['why']}"
+        try:
+            from core.events.event_log import capture_event
+
+            capture_event(
+                "boot_unverified",
+                f"booted as {args.agent_id} with no stamp to check it against",
+                agent_id=str(args.agent_id),
+                detail={"requested": args.agent_id, "source": "unknown"},
+            )
+        except Exception:  # noqa: BLE001 -- the count is evidence, never a reason a boot fails
+            pass
     res = derive_agent_context_from_startup_sources(args.agent_id, args.task, verbose=False)
     bifrost = collect_boot_bifrost(args.agent_id, limit=8)
     ctx = res.get("context") or {}
@@ -354,6 +407,8 @@ def cmd_boot(args):
     # The lines below were printed ahead of everything, --json included. They are collected now so
     # the agent and human views can place them, and --json still gets them first, byte for byte.
     pre: dict = {}
+    if _subject_line:
+        pre["boot_subject"] = _subject_line
     # Pre-warm recall-at-action so the agent's FIRST edit this session gets instant recall (boot is
     # the universal session-start ritual -> covers the read-bootstrap flow). Prune stale state too.
     # W09 (kimi F2): say the surface is ARMED so downstream silence reads as CALIBRATED (the surface
@@ -454,6 +509,8 @@ def cmd_boot(args):
     doc["orientation"] = _boot_lines(_orientation_header(args.agent_id, primer_aware=_pa))
     doc["recall_at"] = _unhash(pre["recall_at"]).removeprefix("recall-at: ")
     doc["door"] = _unhash(_transport_line()).removeprefix("door: ")  # T081-W1: can I use tools?
+    if pre.get("boot_subject"):
+        doc["boot_subject"] = _unhash(pre["boot_subject"]).removeprefix("boot subject: ")
     if pre.get("identity"):
         doc["identity"] = _boot_lines(pre["identity"])
     if pre.get("mail_hygiene"):
@@ -673,6 +730,7 @@ def _printed(fn, *a, **kw) -> str:
 
 #: Boot sections in the human view: key -> heading. Keys not listed print in the generic layout.
 _BOOT_SECTIONS = {
+    "boot_subject": "Boot subject",
     "identity": "Identity",
     "mail_hygiene": "Mail hygiene",
     "context": "Lessons and context (most relevant first)",
@@ -757,6 +815,13 @@ def cmd_delta(args):
 
     doc = _delta_doc(args.agent_id, render_full(args.agent_id))
     hints = []
+    if getattr(args, "disk", False):
+        # The GAP, never the overlap: T052 just rendered the planes above, so this adds only what
+        # those planes structurally cannot see. core/provenance/delta.py never calls render_full.
+        from core.provenance import delta as _disk
+
+        _since = _disk.since(hours=float(getattr(args, "hours", 12.0) or 12.0), roots=getattr(args, "scope", None))
+        doc["disk"] = [{"line": ln} for ln in _disk.render(_since).splitlines() if ln.strip()]
     if getattr(args, "ack", False):
         _t, commit = delta_boot_block(args.agent_id)
         # A failed write still exits 0, as it always has: the delta was delivered, only the mark
@@ -811,6 +876,10 @@ def _human_delta(console, doc):
             console.print(f"  [cyan]{out._esc(r['area'])}[/]  {out._esc(r['change'])}")
         for r in doc.get("commits", []):
             console.print(f"      [dim]{out._esc(r['commit'])}[/]")
+    if doc.get("disk"):  # --disk: what moved on disk that no plane recorded
+        console.print()
+        for r in doc["disk"]:
+            console.print(f"  {out._esc(r['line'])}")
     if doc.get("mark"):
         colour = "green" if doc["mark"].startswith("advanced") else "red"
         console.print(f"[{colour}]mark {out._esc(doc['mark'])}[/]")
@@ -1013,13 +1082,26 @@ def cmd_learn(args):
         # Auto-logger (Slice 2): the lesson is also a RAW event -- the full experiment
         # payload as drill-down detail beneath the salient learning Beat. Best-effort.
         try:
+            # A lesson that cannot be joined to the session that produced it loses the only
+            # link between the claim and the work that earned it. Measured 2026-10-03: 0 of 4
+            # `learning` events in a 24h window carried a session id, while touch and phase
+            # were at 100% -- because those two are handed one in a hook payload and this is a
+            # CLI process that never asked. The session provenance record above is the first
+            # authority; when it has no id, the ambient environment IS the ground truth, and
+            # `ambient_session_id` says so in its own name and returns the source alongside,
+            # which lands in the detail below.
+            from core.coord.session_id import ambient_session_id as _amb
             from core.events.event_log import capture_event
 
+            _amb_sid, _sid_src = _amb()
+            _sid = session_id or _amb_sid
+            if session_id and session_id != _amb_sid:
+                _sid_src = "provenance"
             capture_event(
                 "learning",
                 f"lesson: {signal['experiment_name']}",
                 agent_id=signal.get("agent_id"),
-                session_id=session_id,
+                session_id=_sid,
                 refs=[f"learn:experiment:{signal['experiment_name']}"],
                 detail=provenance.stamp(
                     {
@@ -1027,8 +1109,13 @@ def cmd_learn(args):
                         "result": signal.get("actual_outcome"),
                         "category": signal.get("category"),
                         "success": signal.get("success"),
+                        # Typed absence: an id resolved from the ambient environment is a
+                        # weaker fact than one handed over in a payload, and "no session
+                        # anywhere" is a third state. A consumer that cannot tell them
+                        # apart will eventually join on the weakest one.
+                        "session_source": _sid_src,
                     },
-                    session_id=session_id,
+                    session_id=_sid,
                 ),
             )
         except Exception:
@@ -1107,6 +1194,53 @@ def cmd_learn(args):
             hints.insert(
                 0, f"{cli} tag-anti-pattern {args.agent_id} --experiment {signal['experiment_name']} --name {slug}"
             )
+    # W237: THE WISH DOOR, OFFERED AT THE MOMENT THE TOOL IS CONCEDED. Sibling of the hint
+    # above, same slot, same shape. Measured 2026-10-02 01:05-07:25: 11 `learn` invocations,
+    # 0 `wish`, at least five of those lessons naming a tool defect in their own text. The
+    # cost of each miss is the INVERSION -- a lesson teaches the next seat to tolerate the
+    # defect, so it survives and is paid for again every session. The standing rule says file
+    # a wish the moment friction is felt; the door that records the friction should ask.
+    #
+    # The draft is WRITTEN TO A FILE and the hint hands back --text-file rather than inline
+    # prose, deliberately: W213 records three separate manglings in one night from prose
+    # through the shell, and a draft containing the lesson's own quotes and backticks is
+    # exactly the payload that breaks. The gate's measurement lives on wish_candidate.
+    #
+    # Entirely fail-soft. The lesson is ALREADY recorded by this point, and no hint is worth
+    # turning a successful capture into a traceback.
+    try:
+        import tempfile as _tf
+
+        from core.learning.learning_store import wish_candidate
+
+        _root = os.getenv("AKASHIC_RECALL_STATE_DIR") or _tf.gettempdir()
+        _dir = os.path.join(_root, "wish_drafts")
+        _path = os.path.join(_dir, "{}.md".format(re.sub(r"[^A-Za-z0-9_.-]", "_", signal["experiment_name"])[:120]))
+        cand = wish_candidate(
+            category=signal.get("category"),
+            tried=signal.get("what_tried"),
+            result=signal.get("actual_outcome"),
+            recommendation=signal.get("recommendation"),
+            root_cause=signal.get("root_cause"),
+            experiment=signal["experiment_name"],
+            agent_id=args.agent_id,
+            draft_path=_path,
+        )
+        if cand:
+            os.makedirs(_dir, exist_ok=True)
+            with open(_path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(cand["body"])
+            doc["wish"] = {
+                "why": f"this lesson concedes a tool ({cand['why']}); a lesson teaches the next seat to work "
+                "around it, a wish gets it fixed",
+                "draft": _path,
+                "next": "read the draft (written from your own words), edit it, then file it",
+            }
+            # The command is printed through the launcher, so it reads `aurora wish ...` where
+            # Aurora is installed; cand["command_hint"] carries the same verb and arguments.
+            hints.append(f"{cli} wish {args.agent_id} --text-file {_path}")
+    except Exception as e:  # noqa: BLE001 - a hint must never cost a recorded lesson
+        doc["wish"] = {"why": f"hint unavailable: {type(e).__name__}: {e}"}
     return out.emit(doc, hints=hints, human=_human_learn, title="Lesson recorded")
 
 
@@ -1131,6 +1265,11 @@ def _human_learn(console, doc):
             console.print(f"  {out._esc(r['advice'])}; edge {out._esc(r['edge'])}")
     if doc.get("anti_pattern_hint"):
         console.print(f"[yellow]! {out._esc(doc['anti_pattern_hint'])}[/]")
+    if doc.get("wish"):
+        w = doc["wish"]
+        console.print(f"[yellow]! wish: {out._esc(w['why'])}[/]")
+        if w.get("draft"):
+            console.print(f"  [dim]draft:[/] {out._esc(w['draft'])} -- {out._esc(w['next'])}")
 
 
 def cmd_tag_anti_pattern(args):
@@ -3353,6 +3492,10 @@ def _continuity_drift(notes=None) -> str:
         from datetime import datetime as _dt
 
         if notes is None:
+            # The import was MISSING, so this branch -- the only one the sole production
+            # caller (cmd_boot's orientation, no args) takes -- raised NameError into this
+            # function's own `except Exception: return ""` and the drift line never rendered once.
+            # All four tests in tests/test_continuity_drift.py pass notes= and skip it.
             from core.learning.agent_memory import get_agent_memory  # noqa: PLC0415, RUF100  # lazy, as elsewhere
 
             notes = get_agent_memory().get_decisions(days=90)
@@ -3834,6 +3977,38 @@ def cmd_wish_curate(args):
             hints=[] if os.getenv("AKASHIC_WISHLIST_FILE") else ["git checkout -- docs/WISHLIST.md"],
             exit_code=out.EXIT_USAGE,
         )
+    # THE SAME LOCK THE FILING DOOR TAKES (2026-10-02, hours after cmd_wish got it in
+    # bbdc3584). A lock excludes only the writers that TAKE it, and this is the SECOND door
+    # onto docs/WISHLIST.md: it reads the whole file, rewrites one row, and writes the whole
+    # file back. Locking filings against each other while leaving curation unlocked buys
+    # nothing at all between a filing and a curation.
+    #
+    # Measured here, four filings against four curations per round, two distinct failures:
+    # a write is LOST (the process prints "folded W##", exits 0, and its row is overwritten
+    # wholesale), and a read is TORN (`write_text` truncates before it writes, so a peer
+    # observes the file without its '## Folded' anchor and refuses with "structure drifted --
+    # file by hand" on damage the ledger never actually had). The first is silent, the second
+    # sends a seat to hand-repair a healthy file.
+    #
+    # Found by taking the advice in the lesson filed immediately after bbdc3584: at the moment
+    # a shared fix-primitive lands, grep the tree for the UNFIXED SHAPE, because the sites
+    # diagnosed BEFORE the primitive existed never get revisited by anyone. The sweep's first
+    # hit was the door I had just fixed, from the other side.
+    from core.foundation.filelock import exclusive as _exclusive
+
+    with _exclusive(path):
+        return _wish_curate_run(path, args, _re, cli)
+
+
+def _wish_curate_run(path, args, _re, cli):
+    """The whole read-modify-write, run while the caller holds the ledger's lock.
+
+    The read-only listing runs in here too. It is not a write, but an unlocked read of a file
+    another process is mid-truncation on prints counts for a state that never existed -- and
+    this listing is what a gate reads to decide what to dispose of.
+    """
+    from core.axi import out
+
     doc = path.read_text(encoding="utf-8")
 
     if not getattr(args, "wish_id", None):
@@ -3880,6 +4055,9 @@ def cmd_wish_curate(args):
         return out.fail(f"refused: {e}", code="REFUSED", hints=[f"{cli} wish-curate {args.agent_id}"], exit_code=2)
     path.write_text(new_doc, encoding="utf-8")
     with contextlib.suppress(Exception):
+        # The import was once missing; the NameError went into a bare `except Exception: pass`, so
+        # no wish-curation ever reached the events spine. Measured 2026-10-05: 0 events with
+        # kind='wish' across 11,242 events in 58 streams, against 254 wishes in the ledger.
         from core.events.event_log import capture_event  # noqa: PLC0415, RUF100  # lazy: as every agent_cli verb
 
         capture_event(
@@ -3928,6 +4106,30 @@ def cmd_wish(args):
             hints=[f'{cli} wish {args.agent_id} "<what would have helped>" --trigger "<what hurt>"'],
             exit_code=out.EXIT_USAGE,
         )
+    # ONE WRITER AT A TIME (2026-10-02). Everything from the read to the write is a single
+    # read-modify-write of the whole file, and it used to run with no lock at all. Measured on a
+    # temp ledger, eight concurrent filings, five trials: 6 of 40 wishes SILENTLY LOST -- each
+    # loser's process printed "filed W##" and exited 0 while its row was overwritten by a peer.
+    # A capture door that reports success and drops the capture is the worst shape this house has
+    # a name for.
+    #
+    # The duplicate ids this door already warns about are the same race seen from the other side,
+    # and the comment below has described them since 2026-08-01. What that diagnosis could not
+    # reach for is a cross-process lock, because core/foundation/filelock.py did not exist until
+    # 2026-08-26 -- born, as its own docstring says, from a third instance of this class where an
+    # admitted message vanished. ledger.py adopted it on 2026-09-24 after the DuckDB dive measured
+    # the unlocked version losing 410 of 18,170 rows; remote_relay, task_ledger and college use it
+    # too. This door, the one that records our friction, was never told. Now it is.
+    from core.foundation.filelock import exclusive as _exclusive
+
+    with _exclusive(path):
+        return _wish_write(path, body, args, _re, _dt, cli)
+
+
+def _wish_write(path, body, args, _re, _dt, cli):
+    """The whole read-modify-write, run while the caller holds the ledger's lock."""
+    from core.axi import out
+
     text = path.read_text(encoding="utf-8")
     nums = [int(m) for m in _re.findall(r"- \[[ x~]\] W(\d+)", text)]
     # The id space can COLLIDE and nothing used to notice. max+1 never collides against a correct
@@ -3964,7 +4166,7 @@ def cmd_wish(args):
         )
     doc["cite"] = f"cite W{n:02d} at the next gate curation"
     with contextlib.suppress(Exception):
-        from core.events.event_log import capture_event  # noqa: PLC0415, RUF100  # lazy: as every agent_cli verb
+        from core.events.event_log import capture_event  # noqa: PLC0415, RUF100  # was missing -- see _wish_curate_run
 
         capture_event(
             "wish",
@@ -4232,6 +4434,33 @@ def cmd_eye(args):
         doc["operator_bearing"] = _cov["operator_bearing"]
         doc["subagent"] = _cov["subagent_transcripts"]
         doc["roots"] = [{"root": r["label"], "files": r["files"]} for r in _cov["roots"]]
+        # FOUND vs TAKEN, 2026-10-07. `corpus_files` counts files that SURVIVED dedup, so until this
+        # existed a plane deleted at enumeration was indistinguishable from a plane that does not
+        # exist -- measured at 90 files and 870 agent verdicts. `shadowed` is the precedence rule
+        # working (the live copy of a session shadows its archived copy, an archive root shadows its
+        # mirror) and should be large and dull; a collision is two DISTINCT files claiming one
+        # address, and is loss. It also explains the roots that read `0` above: a fully shadowed
+        # mirror, not an empty directory.
+        if _cov.get("found", _cov["total"]) != _cov["total"]:
+            doc["found"] = {
+                "files": _cov["found"],
+                "taken": _cov["total"],
+                "shadowed": _cov.get("shadowed", 0),
+                "lost_to_collision": _cov.get("dropped_to_collision", 0),
+            }
+            if _cov.get("collisions"):
+                doc["collisions"] = [
+                    {"session": c["session"], "files_dropped": c["files_dropped"]} for c in _cov["collisions"][:3]
+                ]
+        # Parsed cleanly, meant nothing. Distinct from files_failed (unreadable) and invisible to
+        # `unparsed` (nothing failed to parse). This is what hid the journal plane: a file stamped
+        # done with 26 lines and 0 rows, inside a report that said "unparsed 0".
+        if rep.get("files_yielded_nothing"):
+            doc["yielded_nothing"] = rep["files_yielded_nothing"]
+            doc["barren"] = [
+                {"session": b["session"], "lines_read": b["lines_read"], "path": b["path"]}
+                for b in rep.get("barren", [])[:5]
+            ]
         if not rep["manifest_complete"]:
             # The coverage gap is the finding: the index may NOT be read as whole.
             doc["failed"] = [{"path": f["path"], "why": f["why"]} for f in rep["files_failed"]]
@@ -4559,6 +4788,22 @@ def _human_eye_ingest(console, doc):
     roots = " · ".join(f"{out._esc(r['root'])} {r['files']}" for r in doc["roots"])
     console.print(f"corpus: {roots} = {doc['corpus_files']} file(s) "
                   f"[dim]({doc['operator_bearing']} operator-bearing, {doc['subagent']} subagent)[/]")  # fmt: skip
+    if doc.get("found"):
+        fd = doc["found"]
+        lost = (
+            f"[red]{fd['lost_to_collision']} LOST to an address collision[/]" if fd["lost_to_collision"] else "0 lost"
+        )
+        console.print(f"found {fd['files']} file(s): {fd['taken']} taken, "
+                      f"{fd['shadowed']} shadowed by a higher-precedence copy, {lost}")  # fmt: skip
+        for c in doc.get("collisions") or []:
+            console.print(f"  [red]collision:[/] {c['files_dropped']} file(s) claim '{out._esc(str(c['session']))}'")
+    if doc.get("yielded_nothing"):
+        console.print(f"[yellow]{doc['yielded_nothing']} file(s) parsed and yielded NO events[/] "
+                      "-- a format this index cannot read, or a run that produced nothing:")  # fmt: skip
+        for b in doc.get("barren") or []:
+            console.print(
+                f"  {out._esc(str(b['session']))}  [dim]({b['lines_read']} line(s))  {out._esc(str(b['path']))}[/]"
+            )
     for f in doc.get("failed") or []:
         console.print(f"  [red]✗[/] {out._esc(f['path'])}: {out._esc(f['why'])}")
 
@@ -8166,6 +8411,18 @@ def cmd_task(args):
     return conductor.main(list(args.rest or []))
 
 
+def cmd_media(args):
+    """The video toolbox through the ONE door: `media <verb> ...` is `python -m arsenal.media <verb> ...`, verbatim.
+
+    Why it is here and not only in arsenal: mining five days of runs (2026-10-12) found agents hand-built a
+    contact-sheet grid 333 times, typed the ffmpeg path 203 times and rewrote the League clock reader 15 times,
+    while the house versions sat unused -- agents use what is in reach. Recall-at-action's verb channel reads this
+    parser's help, so an agent about to type `ffmpeg -ss ... -frames:v 1` is shown this verb instead."""
+    from arsenal.media.__main__ import main as media_main
+
+    return media_main(list(args.rest or []))
+
+
 # ------------------------------------------------------------------------ handoff
 def _incoming_handoffs(target_agent, scan=10000):
     """Every handoff signal addressed to `target_agent`, oldest-first."""
@@ -8680,6 +8937,107 @@ def _human_promoted(console, doc):
         console.print("[yellow]older messages beyond this page[/]")
 
 
+def cmd_recall_bench(args) -> int:
+    """W0.3: grade recall against an answer key, by driving the REAL trigger.
+
+    The 2026-08-08 dossier's finding is why this drives path/command and never a query: querying
+    the store directly returns the right lesson first almost every time, so keying the bench on a
+    query would measure the half that already works. The failure is in WHEN, not WHAT.
+    """
+    import json as _json
+
+    from core.recall import bench as _b
+    from core.recall.at_action import recall_at
+
+    try:
+        meta = _b.load(getattr(args, "set", None) or None)
+    except Exception as e:  # noqa: BLE001
+        print(f"ERROR: could not load the moment set ({type(e).__name__}: {e})")
+        return 1
+    k = int(getattr(args, "limit", None) or 5)
+    # The ceiling probe must be GATE-FREE, or it measures the gate it exists to bound: with the
+    # live floor applied, a lesson the gate rejects would read as UNMATCHABLE (a matching defect)
+    # when it is really gate-suppressed. floor 0 keeps the two diagnoses separable.
+    import functools as _ft
+
+    _probe = _ft.partial(recall_at, min_relevance=0.0)
+    d = _b.score(meta.get("moments") or [], recall_at, k=k, probe_fn=_probe)
+    if getattr(args, "json", False):
+        print(
+            _json.dumps(
+                {"meta": {kk: vv for kk, vv in meta.items() if kk != "moments"}, "result": d}, indent=2, default=str
+            )
+        )
+    else:
+        print(_b.render(d, meta))
+    return 0
+
+
+def cmd_context(args) -> int:
+    """W0.4: the instrument over the touch stream. `context --stats` is the first mode of the
+    context door; the anchor modes are W0.5/W0.6 and are not built yet.
+
+    It exists because W0.2 put a new record on the hot path of every seat and shipping that
+    without a meter would ask the house to trust a cost nobody measured. The reconciliation gates
+    Wave 1 on 24 h of this number, which is why the verb landed the same night the emit did.
+    """
+    import json as _json
+    import time as _time
+
+    # W0.5/W0.6: an anchor asks the scene; --stats meters the stream. One verb, because they are
+    # the same door at two altitudes -- "what is true about this location" and "what is this
+    # organ costing" -- and splitting them would mint a second name for one surface.
+    anchor = getattr(args, "anchor", None)
+    if anchor:
+        from core.coord import scene as _scene
+        from core.events import touch as _touch
+
+        try:
+            sc = _scene.build(
+                anchor,
+                subject=(os.getenv("AKASHIC_AGENT_ID") or "claude"),
+                roots=_touch.default_roots(),
+                level=int(getattr(args, "level", None) or 1),
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"ERROR: {e}")
+            return 1
+        print(_json.dumps(sc, indent=2, default=str) if getattr(args, "json", False) else _scene.render(sc))
+        return 0
+
+    from core.events import touch_stats as _ts
+
+    window = float(getattr(args, "hours", None) or 24)
+    try:
+        from core.comm.bus import Bus
+
+        c = Bus("claude")._client
+        rows = c.xrange("events:raw", min="-", max="+", count=int(getattr(args, "limit", None) or 20000))
+    except Exception as e:  # noqa: BLE001
+        print(f"ERROR: could not read events:raw ({type(e).__name__}: {e})")
+        return 1
+    recs = []
+    for _mid, f in rows:
+        try:
+            raw = next(iter(f.values()))
+            recs.append(_json.loads(raw.decode() if isinstance(raw, bytes) else str(raw)))
+        except Exception:  # noqa: BLE001
+            continue  # one unreadable row is not a reason to report nothing
+    drops = 0
+    try:
+        from core.events import touch as _touch
+
+        drops = _touch.drops()
+    except Exception:  # noqa: BLE001
+        pass
+    rep = _ts.compute(recs, now=_time.time(), window_h=window, drops=drops)
+    if getattr(args, "json", False):
+        print(_json.dumps(rep, indent=2, default=str))
+    else:
+        print(_ts.render(rep))
+    return 0
+
+
 def cmd_doctor_deploy() -> int:
     """Is THIS machine a working deploy? One hop, before anything else is believed.
 
@@ -8880,6 +9238,41 @@ def cmd_doctor(args):
             }
             for s in rep["services"]
         ]
+    try:  # S5 (T423): who can be reached from idle -- listener origin, since when, what wakes cost;
+        from core.comm import wake_seat as _wake  # PAGE on a live session with no harness listener
+
+        # Hand over wake_seat.arm_command ITSELF -- a lookalike lambda here is how boot and
+        # the stop hook came to advertise two different commands for one job (2026-10-02),
+        # one of which stamped origin "unknown" and was then REFUSED by the gate it was
+        # meant to satisfy. One source of truth means passing the function, not copying it.
+        _wf = _wake.wake_findings(arm_hint=_wake.arm_command)
+        rep["wake"] = _wf
+        if _wf:
+            doc["wake"] = [
+                {"grade": f.get("grade"), "agent": f.get("agent"), "line": f.get("line"), "arm": f.get("drill") or None}
+                for f in _wf
+            ]
+            try:  # S2 (T420): the launcher's expected-up declarations -- the roster the
+                # daemon's resume-on-deaf rung reads; absence here means no resume, ever
+                from core.comm import resume_on_deaf as _rod
+
+                _expected = {a: _rod.expected_sessions(a) for a in sorted({f["agent"] for f in _wf})}
+                rep["wake_expected"] = _expected
+                _exp_rows = [
+                    {
+                        "agent": _a,
+                        "sessions": ", ".join(e["session_id"][:8] for e in _exp[-6:])
+                        + (f" (+{len(_exp) - 6} more)" if len(_exp) > 6 else ""),
+                    }
+                    for _a, _exp in _expected.items()
+                    if _exp
+                ]
+                if _exp_rows:  # resume-on-deaf applies to these sessions only
+                    doc["wake_expected"] = _exp_rows
+            except Exception:
+                pass
+    except Exception:
+        pass
     if progress is not None:
         doc["progress"] = progress
     try:
@@ -9000,6 +9393,18 @@ def _human_doctor(console, doc):
                 title="Services",
             )
         )
+    if doc.get("wake"):
+        console.print("[bold]Wake[/] [dim](who can be reached from idle -- origin, since, cost)[/]")
+        for f in doc["wake"]:
+            c = _GRADE_COLOUR.get(f["grade"], "white")
+            console.print(f"  [{c}]{f['grade']:<9}[/] {out._esc(str(f['line']))}")
+            if f.get("arm"):
+                console.print(f"            [dim]arm:[/] {out._esc(f['arm'])}")
+        for r in doc.get("wake_expected") or []:
+            console.print(
+                f"  [dim]{out._esc(r['agent'])}: expected-up by launcher: {out._esc(r['sessions'])} "
+                "-- resume-on-deaf applies to these only[/]"
+            )
     if doc.get("progress"):
         console.print(out.table(doc["progress"], title="Turns in progress"))
     if doc.get("links"):
@@ -9049,11 +9454,17 @@ def cmd_lookback(args):
         if layers:
             hints.append(f"{cli} lookback {question} --layers {all_layers}")
         return out.emit(doc, hints=hints, human=_human_lookback, title="Lookback")
+    # `score` is the SORT KEY, so position and figure agree; relevance rides beside it, named,
+    # because it is the one that says why the row matched. Printing only the component used to
+    # make a correctly-ordered list look unsorted (measured 0.382, 0.215, 0.248 in one layer).
+    # The column appears only when some row's relevance differs from its rank.
+    with_rel = any(h.get("relevance") is not None and h.get("relevance") != h.get("score") for h in hits)
     doc["hits"] = [
         {
             "layer": h["layer"],
             "status": h["status"],
             "score": h["score"],
+            **({"relevance": h.get("relevance")} if with_rel else {}),
             "excerpt": out.truncate(h["excerpt"], 240)[0],
             "drill": h["drill"],
         }
@@ -9067,7 +9478,8 @@ def cmd_lookback(args):
 
 
 def _human_lookback(console, doc):
-    """Human view of `lookback`: the hit count, then hits grouped under their layer."""
+    """Human view of `lookback`: the hit count, then hits grouped under their layer, each with the
+    rank that ordered it and, when it differs, the relevance that says why it matched."""
     from core.axi import out
 
     if not doc["total"]:
@@ -9080,7 +9492,9 @@ def _human_lookback(console, doc):
             layer = h["layer"]
             console.print()
             console.print(f"[bold cyan]{out._esc(layer)}[/]")
-        console.print(f"  {out.styled(h['status'])}  [dim]rel {h['score']}[/]  {out._esc(h['excerpt'])}")
+        rel = h.get("relevance")
+        why = f", rel {rel}" if rel is not None and rel != h["score"] else ""
+        console.print(f"  {out.styled(h['status'])}  [dim]rank {h['score']}{why}[/]  {out._esc(h['excerpt'])}")
         console.print(f"    [dim]{out._esc(str(h['drill']))}[/]")
 
 
@@ -9297,6 +9711,16 @@ def cmd_fence(args):
                 # M1-PV: how many file citations in the halves did not resolve; "not run" until it runs.
                 "pv_missing_citations": pv["missing_count"] if pv else "not run",
             }
+            # The path, for any slot that actually HAS content. A reader who has just been told a
+            # document is sealed and authoritative should not have to search for it -- that search is
+            # how a cold reader ends up reading a stale worktree copy that looks identical.
+            paths = [
+                {"slot": sl, "path": v["path"]}
+                for sl, v in st["slots"].items()
+                if v.get("path") and (v["written"] or v["sealed"])
+            ]
+            if paths:
+                doc["paths"] = paths
             # The next step is the first slot not yet sealed: seal it if written, else write it.
             nxt = next((r for r in slots if r["state"] != "sealed"), None)
             hints = []
@@ -9330,10 +9754,12 @@ def _human_fence_status(console, doc):
 
     console.print(f"[dim]{out._esc(doc['question'])}[/]")
     colour = {"sealed": "green", "written": "yellow", "empty": "dim"}
+    where = {p["slot"]: p["path"] for p in doc.get("paths") or []}
     for r in doc["slots"]:
         c = colour[r["state"]]
         who = f" by {out._esc(r['by'])}" if r["by"] else ""
-        console.print(f"  {r['slot']:<16} [{c}]{r['state']}[/]{who}")
+        at = f"  [dim]{out._esc(str(where[r['slot']]))}[/]" if r["slot"] in where else ""
+        console.print(f"  {r['slot']:<16} [{c}]{r['state']}[/]{who}{at}")
     pv = doc["pv_missing_citations"]
     pv_text = "[dim]not run[/]" if pv == "not run" else ("[green]0 missing[/]" if pv == 0 else f"[red]{pv} missing[/]")
     console.print(f"  {'pv':<16} {pv_text}")
@@ -9855,8 +10281,13 @@ def cmd_grant(args):
             doc = {"revoked": args.agent_id, "was": res["was"].get("role"), "by": args.by, "reason": args.reason}
             return out.emit(doc, title="Grant · revoked")  # a confirmation answers itself
 
-        caps = [c.strip() for c in args.caps.split(",") if c.strip()] if args.caps else None
-        scope = [s.strip() for s in args.path_scope.split(",") if s.strip()] if args.path_scope else None
+        def _csv(v):
+            return [x.strip() for x in v.split(",") if x.strip()] if v else None
+
+        caps = _csv(args.caps)
+        add_caps = _csv(getattr(args, "add_caps", None))
+        drop_caps = _csv(getattr(args, "drop_caps", None))
+        scope = _csv(args.path_scope)
 
         if args.dry_run:
             # Build nothing, write nothing -- just say what would land. Deliberately does not
@@ -9869,14 +10300,59 @@ def cmd_grant(args):
                 "hours": args.hours,
                 "permanent": bool(args.permanent),
                 "caps": caps,
+                "add_caps": add_caps,
+                "drop_caps": drop_caps,
                 "path_scope": scope,
                 "reason": args.reason,
             }
+            # THE DIFF, W252. This used to print the new set alone, which answers "what will it
+            # be" when the reader is asking "what will CHANGE" -- and for a REPLACE those are
+            # different questions and only one of them is dangerous. The preview whose whole job
+            # is to make the destructive half visible was the place it was invisible.
+            change: dict | None = None
+            try:
+                from core.trust import registry as _reg
+
+                _held = {getattr(c, "value", c) for c in (_reg.resolve(args.agent_id).caps or [])}
+                if caps is not None:
+                    _after = set(caps)
+                elif add_caps or drop_caps:
+                    _after = (_held | set(add_caps or [])) - set(drop_caps or [])
+                else:
+                    _after = None  # role template: resolved by the writer, not here
+                if _after is not None:
+                    _lost, _gained = sorted(_held - _after), sorted(_after - _held)
+                    change = {"caps": f"{len(_held)} -> {len(_after)}"}
+                    if _gained:
+                        change["adding"] = ", ".join(_gained)
+                    if _lost:
+                        change["removing"] = ", ".join(_lost)
+                        change["refused_without"] = "--replace (W252): the real call refuses a removal without it"
+                    if not _gained and not _lost:
+                        change["note"] = "no cap change"
+            except Exception as _e:  # noqa: BLE001 -- the preview's own failure must not read as "no change"
+                change = {
+                    "error": f"could not diff against the current grant ({type(_e).__name__}) "
+                    "-- the cap change is UNVERIFIED, not empty"
+                }
             if args.json:
                 print(json.dumps(intent, indent=2))
+                if change and "error" in change:
+                    print(f"[grant] {change['error']}")
+                elif change:
+                    print(f"[grant] caps {change['caps']}")
+                    if change.get("adding"):
+                        print("        ADDING  : " + change["adding"])
+                    if change.get("removing"):
+                        print("        REMOVING: " + change["removing"])
+                        print("        ^ the real call REFUSES this without --replace (W252)")
+                    if change.get("note"):
+                        print("        (no cap change)")
                 print("[grant] DRY RUN -- nothing written. Authority guards run on the real call.")
                 return 0
             doc = {"dry_run": True, "written": False, "would_grant": {k: v for k, v in intent.items() if v}}
+            if change:
+                doc["caps_change"] = change
             doc["note"] = "the authority guards run only on the real call, so this does not say it would pass"
             again = f"{cli} grant {shlex.quote(args.agent_id)}"
             for flag, value in (("--role", args.role), ("--by", args.by), ("--reason", args.reason)):
@@ -9884,6 +10360,9 @@ def cmd_grant(args):
                     again += f" {flag} {shlex.quote(str(value))}"
             again += " --permanent" if args.permanent else (f" --hours {args.hours:g}" if args.hours else "")
             again += f" --caps {shlex.quote(args.caps)}" if args.caps else ""
+            again += f" --add-caps {shlex.quote(args.add_caps)}" if getattr(args, "add_caps", None) else ""
+            again += f" --drop-caps {shlex.quote(args.drop_caps)}" if getattr(args, "drop_caps", None) else ""
+            again += " --replace" if getattr(args, "replace", False) else ""
             again += f" --path-scope {shlex.quote(args.path_scope)}" if args.path_scope else ""
             return out.emit(doc, hints=[again], title="Grant · dry run")
 
@@ -9897,6 +10376,9 @@ def cmd_grant(args):
             caps=caps,
             path_scope=scope,
             request_ref=args.request_ref,
+            add_caps=add_caps,
+            drop_caps=drop_caps,
+            replace=bool(getattr(args, "replace", False)),
         )
         if args.json:
             return _emit(rec)
@@ -10414,7 +10896,11 @@ def cmd_bifrost_sync(args):
     # 22 hours behind while real mail sat on `work` unread. Aligning the two ends the drift at its
     # source instead of re-discovering it with a cursor-vs-tail query every few days.
     # Per-process and still overridable: set BIFROST_CONSUME_LANE explicitly to pin either side.
-    os.environ.setdefault("BIFROST_CONSUME_LANE", "work")
+    # Delegated 2026-10-05 -- bifrost_api.ensure_lane_defaults() is the ONE place this is
+    # decided, because patching it per-door is what produced three instances of this defect.
+    from core.comm.bifrost_api import ensure_lane_defaults
+
+    ensure_lane_defaults()
     cli, me = _cli(), args.agent_id
     if args.consume:
         res = consume_inbox(me, limit=args.limit or 20)
@@ -10656,29 +11142,84 @@ def _human_sync(console, doc):
         console.print(out.table(doc["locks"], title="locks"))
 
 
+#: S3 wake-by-need (T421, Daniel 2026-10-01: "wake decides by need, not by kind"). The harness
+#: listener's DEFAULT tier floor: operator (0), directed asks (1) and answers to my own asks (2)
+#: wake the seat; ambient mail (broadcasts, peers' chat, notes, traces) waits for the next boot
+#: and is confessed by count on the quiet line. Every wake is a full model turn; before this the
+#: floor was AMBIENT and quiet cycles and peer traces each cost one. BIFROST_WAKE_MIN_TIER or
+#: --min-tier override per arm; 3 restores the old admit-everything behaviour.
+WAKE_FLOOR_DEFAULT = 2
+
+
+def standby_min_tier(flag=None) -> int:
+    """Resolve the arm's tier floor: explicit flag > BIFROST_WAKE_MIN_TIER > WAKE_FLOOR_DEFAULT.
+    Clamped to the ladder [0, 3]; an unreadable env value falls to the default, never to 3."""
+    if flag is not None:
+        return max(0, min(3, int(flag)))
+    raw = (os.environ.get("BIFROST_WAKE_MIN_TIER") or "").strip()
+    if raw:
+        try:
+            return max(0, min(3, int(raw)))
+        except ValueError:
+            pass
+    return WAKE_FLOOR_DEFAULT
+
+
+def standby_listener_argv(agent_id: str, session_id: str, min_tier: int) -> list:
+    """The exact listener command the standby parents -- one builder so the pin and the
+    launcher cannot drift (the floor MUST reach the child or the default is a fiction)."""
+    cmd = [
+        sys.executable,
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "bifrost_wake.py"),
+        "--agent",
+        agent_id,
+        "--min-tier",
+        str(int(min_tier)),
+    ]
+    if session_id:
+        cmd += ["--session", session_id]
+    return cmd
+
+
 def cmd_bifrost_standby(args):
     """T084-CL-2: the turn-end ritual as ONE verb -- drain -> seat report -> BLOCK as the wake
     listener's parent. Run THIS as the harness background task; its exit (the listener detecting
     wake-worthy mail) re-invokes the harness. --no-listen = drain + report only."""
     from agent.bifrost_pull import standby
+    from core.comm.bifrost_api import ensure_lane_defaults
+
+    # THE ARMING DOOR MUST NAME ITS OWN LANE. Until 2026-10-05 it did not, so
+    # `bifrost-standby <seat>` watched the empty/legacy lane while mail landed on `work` --
+    # T133 and T198 a third time, invisible only because the PRESCRIBED command carried
+    # BIFROST_CONSUME_LANE=work in its env prefix.
+    ensure_lane_defaults()
+    floor = standby_min_tier(getattr(args, "min_tier", None))
 
     def _listen(agent_id, session_id):
         # Blocking child, NOT detached: this CLI process is the harness-tracked parent (the T073
         # law -- a detached listener notifies nobody). Env pins the work lane (T045 cutover).
         import subprocess
 
-        env = {**os.environ, "BIFROST_WAKE_LANE": os.environ.get("BIFROST_WAKE_LANE", "work")}
-        cmd = [
-            sys.executable,
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "bifrost_wake.py"),
-            "--agent",
-            agent_id,
-        ]
-        if session_id:
-            cmd += ["--session", session_id]
-        return subprocess.run(cmd, env=env).returncode
+        env = {
+            **os.environ,
+            "BIFROST_WAKE_LANE": os.environ.get("BIFROST_WAKE_LANE", "work"),
+            # ORIGIN stamp (2026-10-01): THIS process is the harness-tracked parent, so the
+            # listener's exit starts a turn -- the stop hook passes only on this origin.
+            "BIFROST_WAKE_ORIGIN": "harness",
+        }
+        return subprocess.run(standby_listener_argv(agent_id, session_id, floor), env=env).returncode
 
-    session = args.session or os.getenv("CLAUDE_CODE_SESSION_ID") or os.getenv("CLAUDE_SESSION_ID") or ""
+    from core.coord.session_id import ambient_session_id as _amb_sid
+
+    session = args.session or _amb_sid()[0]
+    try:  # S2 (T420): the LAUNCHER declares this session expected-up, out of band of the
+        #    listener it is about to parent -- the daemon's resume-on-deaf rung reads it.
+        from core.comm import resume_on_deaf as _rod
+
+        if session and not args.no_listen:
+            _rod.declare_expected(args.agent_id, session, by="harness", cwd=os.getcwd())
+    except Exception:
+        pass
     try:  # T086-S3a: stamp the arming attempt BEFORE the drain -- the stop-hook backstop
         #    suppresses its nag while this marker is fresh (<90s), so a standby mid-drain
         #    (or a retry loop between refusals) is never nagged into double-arming.
@@ -10716,6 +11257,18 @@ def cmd_bifrost_standby(args):
         doc["mail_shown"] = len(doc["mail"])
     if res.get("expect_lines"):
         doc["expectations"] = res["expect_lines"]
+    try:  # S3: the floor and today's wake receipts, on every arm -- the instrument rides the ritual
+        from core.comm import wake_seat as _ws
+        from core.comm import wake_tiers as _wt
+
+        s = _ws.wake_receipts_summary(args.agent_id, since_s=24 * 3600)
+        doc["floor"] = f"tier {floor} ({_wt.tier_name(floor)})"
+        doc["wakes_24h"] = (
+            f"{s['wakes']} ({s['with_mail']} with mail, {s['quiet']} quiet, {s['cycled']} deadline cycles; "
+            f"{s['held_below_floor']} held below floor)"
+        )
+    except Exception:
+        pass
     if res["decision"] == "listen":
         rc = res.get("listen_rc")
         doc["listener"] = "exited"
@@ -10743,6 +11296,8 @@ def _human_standby(console, doc):
         console.print(f"  {out._esc(ln)}")
     for ln in doc.get("expectations", []):
         console.print(f"  [yellow]{out._esc(ln)}[/]")
+    if doc.get("floor"):
+        console.print(f"[dim]floor: {out._esc(doc['floor'])} | wakes 24h: {out._esc(doc.get('wakes_24h', '?'))}[/]")
     rc = doc.get("listener_rc")
     colour = "green" if rc in (None, 0) else "red"
     tail = f" (rc {rc}): woke for {doc['woke_for']}" if "listener_rc" in doc else ""
@@ -11469,6 +12024,79 @@ def _human_suite_whose(console, doc):
         console.print(f"\n[green]fixed since baseline ({doc['fixed']})[/]: re-record to keep attribution sharp")
 
 
+def cmd_suite(args):
+    """suite <diff|triage|rerun-failing|tail>: the READ-ONLY test-pipeline doors (2026-10-01).
+
+    The post-hoc analysis already lives in core/coord/suite_baseline.py (delta/verdicts/classify);
+    this family is the delivery-timing half: make the run speakable (tail), the failure set
+    attributable (diff/triage), and the retry copy-paste (rerun-failing). ALL READS -- no shared
+    state is written, recording/tightening stay behind `suite-baseline`'/`ship_gate`s explicit flags.
+    """
+    from core.coord import suite_read as sr
+
+    sub = getattr(args, "suite_sub", None)
+    # --whose is shared with suite-baseline's shape: run the tests and attribute. We reuse the
+    # SAME attribution path but via the read door so `suite diff` == `suite-baseline --whose`'s
+    # verdict half, without the recording side-effect.
+    if sub == "diff":
+        from_file = getattr(args, "from_file", None)
+        if from_file:
+            try:
+                with open(from_file, encoding="utf-8") as f:
+                    nodes = sr_ingest(f.read())
+            except OSError as e:
+                print(f"[suite diff] unreadable {from_file}: {type(e).__name__}: {e}")
+                return 2
+        else:
+            nodes = sr.lastfailed_nodes()
+        if not nodes:
+            print("[suite diff] no failing nodes (no --from-file, and lastfailed cache empty)")
+            return 0
+        res = sr.diff(nodes, full_suite=(from_file is None))
+        print(sr.render_diff(res))
+        # A YOURS verdict is the only accusation that fails a gate; UNKNOWN never exits nonzero.
+        return 1 if res["counts"].get("YOURS") else 0
+
+    if sub == "triage":
+        nodes = sr.lastfailed_nodes()
+        from_file = getattr(args, "from_file", None)
+        if from_file:
+            try:
+                with open(from_file, encoding="utf-8") as f:
+                    nodes = sr_ingest(f.read())
+            except OSError as e:
+                print(f"[suite triage] unreadable {from_file}: {type(e).__name__}: {e}")
+                return 2
+        if not nodes:
+            print("[suite triage] no failing nodes to classify")
+            return 0
+        print(sr.render_triage(sr.triage(nodes)))
+        return 0
+
+    if sub == "rerun-failing":
+        nodes = sr.lastfailed_nodes()
+        run = bool(getattr(args, "run", False))
+        code, text = sr.rerun_command(nodes, run=run)
+        print(text)
+        return code
+
+    if sub == "tail":
+        lines = int(getattr(args, "lines", 20) or 20)
+        running, text = sr.tail(lines=lines)
+        print(text)
+        return 0 if running else 1
+
+    print("[suite] need a subcommand: diff | triage | rerun-failing | tail")
+    return 2
+
+
+def sr_ingest(text):
+    """FAILED node ids from pytest output -- the same receipt format suite_baseline reads."""
+    from core.coord import suite_baseline as _sb
+
+    return _sb.ingest_pytest(text)
+
+
 def cmd_bifrost_drain(args):
     """Request a runner's graceful exit (finish current message -> release lock -> exit 0).
     TTL'd (control.DRAIN_TTL_S); the runner honors it at its next loop top. Relaunch after
@@ -11703,9 +12331,12 @@ def cmd_seat_identity(args) -> int:
     from core.comm import seat_identity as si
 
     cli = _cli()
-    sid = (
-        args.session or os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("BIFROST_INCARNATION") or ""
-    ).strip()
+    # BIFROST_INCARNATION stays an EXPLICIT extra fallback rather than folding into the
+    # shared resolver: in the runners it is a process incarnation, not a Claude session,
+    # and quietly widening the shared chain would give it that second meaning everywhere.
+    from core.coord.session_id import ambient_session_id as _amb_sid
+
+    sid = (args.session or _amb_sid()[0] or os.environ.get("BIFROST_INCARNATION") or "").strip()
     if not sid:
         return out.fail(
             "no session id: CLAUDE_CODE_SESSION_ID is unset in this process",
@@ -11748,6 +12379,26 @@ def cmd_seat_identity(args) -> int:
             "this process profile resolves the same; the help command binds it to this session"
         )
         hints.append(f"{cli} seat-identity {got}{sess}")
+    # WHICH VARIABLE NAMED THIS SESSION. A seat launched from another seat's shell inherits
+    # that shell's CLAUDE_CODE_SESSION_ID and carries two ids at once -- Rill was LIVE in the
+    # roster and could not read his own mail for days because the answer was right-shaped and
+    # came from the wrong authority (DSH_SESSION_ID=session-45421d78 beside a tombstoned
+    # CLAUDE_CODE_SESSION_ID=bb86400e-a609). `seat-identity` is where a seat asks who it is,
+    # so it is where the authority belongs; this field is what would have shown him the bug.
+    try:
+        from core.coord.session_id import ambient_session_var
+
+        _var = ambient_session_var()
+        if _var and not args.session:
+            doc["session_from"] = _var
+            if _var != "DSH_SESSION_ID" and os.environ.get("DSH_SESSION_ID"):
+                doc["warning"] = (
+                    "DSH_SESSION_ID is also set. This process looks like a DSH seat resolving to an id "
+                    "it did not choose -- the inherited-shell defect (fixed in core/coord/session_id.py "
+                    "ENV_VARS order; report this)."
+                )
+    except Exception:
+        pass
     return out.emit(doc, hints=hints, title="Seat identity")
 
 
@@ -13124,6 +13775,297 @@ def cmd_focus(args):
     return out.emit(doc, hints=[f"{cli} focus{me}{sess} --clear"], title=f"Focus · {st['task']}")
 
 
+def cmd_screen(args):
+    """The door for the screenspace ACTUATOR (core/screenspace/act.py + combo.py).
+
+    Thin by policy: every decision, refusal and post-condition lives in the tested modules, and
+    this function only parses, dispatches and prints. The actuator is gated per call against the
+    house ACL (Cap.SCREEN_*, in no role template), so this door cannot grant what the grant
+    ledger has not.
+    """
+    import json as _json
+
+    from core.screenspace import act as _act
+    from core.screenspace import combo as _combo
+
+    action = args.action
+    seat = (getattr(args, "agent", "") or "").strip() or None
+
+    if action == "status":
+        st = _combo.status(window_title=args.window, agent_id=seat)
+        if args.json:
+            print(_json.dumps(st, indent=2, default=str))
+            return 0
+        print(
+            f"[screen status] seat={st['seat']} uia={st['uia']} "
+            f"locked={st['workstation_locked']} foreground_hwnd={st['foreground_hwnd']}"
+        )
+        if not st["windows"]:
+            print(f"  no visible window matching {args.window!r}")
+        for w in st["windows"]:
+            print(
+                f"  hwnd={w['hwnd']!s:<8} pid={w['pid']!s:<7} dpi={w['dpi']!s:<4} iconic={w['iconic']!s:<5} "
+                f"foreground={w['is_foreground']!s:<5} {w['title']!r}"
+            )
+        if st.get("ambiguous"):
+            print("  AMBIGUOUS: " + st["ambiguous"])
+        print(f"  transcripts: {st['session_count']} in {st['session_dir']}")
+        held = [v for v, c in st["caps"].items() if c["allowed"]]
+        missing = [v for v, c in st["caps"].items() if not c["allowed"]]
+        print(f"  verbs permitted: {', '.join(held) or 'NONE'}")
+        if missing:
+            print(f"  verbs refused  : {', '.join(missing)}")
+        if st.get("remedy"):
+            for line in str(st["remedy"]).splitlines():
+                print("  " + line)
+        return 0
+
+    if action == "locate":
+        got = _act.locate(
+            name=(args.name or None),
+            role=(args.role or None),
+            window_title=args.window,
+            hwnd=args.hwnd,
+            ttl_s=args.ttl,
+            agent_id=seat,
+        )
+        if args.json:
+            print(_json.dumps(got.to_dict(), indent=2, default=str))
+            return 0 if got.ok else 1
+        if got.ok and got.target is not None:  # an OK locate always carries its target
+            t = got.target
+            print(f"[screen locate] OK in {got.elapsed_ms:.0f} ms -- {got.detail}")
+            print(f"  hwnd={t.hwnd} pid={t.pid} exe={t.exe} dpi={t.dpi} bounds={list(t.bounds)}")
+            print(f"  frame_hash={t.frame_hash[:16]} over rect {list(t.hash_rect)}  ttl={t.ttl_s:.1f}s")
+            return 0
+        print(f"[screen locate] REFUSED {got.refusal.value if got.refusal else '?'} -- {got.detail}")
+        for c in got.candidates:
+            print(f"    candidate: {c}")
+        return 1
+
+    # ---- prompt: the compound verb (Ctrl+N -> stage a brief -> verify -> optionally send)
+    text = ""
+    if args.text_file:
+        try:
+            text = Path(args.text_file).read_text(encoding="utf-8")
+        except OSError as e:
+            print(f"[screen prompt] --text-file unreadable ({e})", file=sys.stderr)
+            return 2
+    elif args.text:
+        text = " ".join(args.text)
+    elif args.handoff:
+        text = _latest_handoff_text(args.handoff)
+        if not text:
+            print(
+                f"[screen prompt] no unconsumed handoff addressed to {args.handoff!r} -- "
+                f"write one with `{_cli()} handoff`, or pass --text-file",
+                file=sys.stderr,
+            )
+            return 2
+    if not text.strip():
+        print(
+            "[screen prompt] nothing to send: pass --text-file PATH, --handoff AGENT, or text positionally",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.show:
+        # Read before you paste. Resolving --handoff can inline a spilled note, so the brief that
+        # would go out is not always the one a caller thinks they assembled -- and a brief is the
+        # one artifact in this verb that nothing downstream can validate for you.
+        nonce = _combo.make_nonce(text)
+        body = text.rstrip() + _combo.RECEIPT_TEMPLATE.format(nonce=nonce)
+        if args.json:
+            print(_json.dumps({"chars": len(body), "nonce": nonce, "text": body}, indent=2))
+        else:
+            print(f"[screen prompt --show] {len(body)} chars, receipt nonce {nonce}, NOTHING SENT")
+            print("-" * 72)
+            print(body)
+            print("-" * 72)
+        return 0
+
+    res = _combo.new_session_prompt(
+        text, submit=args.submit, window_title=args.window, hwnd=args.hwnd, agent_id=seat, timeout_s=args.timeout
+    )
+    if args.json:
+        print(_json.dumps(res.to_dict(), indent=2, default=str))
+    else:
+        print(res.render())
+    return 0 if res.ok or res.status == "unverified" else 1
+
+
+def _resolve_handoff_spill(text: str) -> str:
+    """Inline a spilled handoff note's FULL body in place of its retrieval pointer.
+
+    `handoff` caps its --note field at 1000 chars and spills the remainder to a durable note,
+    leaving a pointer that leads with the retrieval command (agent_cli.py:167). That is the right
+    design for a field a seat READS at boot, and the wrong thing to PASTE into a fresh session:
+    a brief whose substance is one command away is a brief the new seat has to go fetch, which is
+    precisely the hop the combo verb exists to remove. So the pointer is resolved here, at the
+    moment the text becomes a message rather than a record.
+
+    Degrades to the original text, pointer and all, if the note cannot be read -- a pointer is a
+    worse brief than the body, but a far better one than silence.
+    """
+    import re as _re
+
+    m = _re.search(r"handoff-spill:[A-Za-z0-9_.:-]+", text or "")
+    if not m:
+        return text
+    title = m.group(0).rstrip(".,;)")
+    try:
+        from core.learning.agent_memory import get_agent_memory, normalize_title
+
+        mem = get_agent_memory()
+        pool = mem.get_decisions(days=3650, include_superseded=True)
+        dec = next((d for d in pool if d.id == title), None)
+        if dec is None:
+            live = [d for d in pool if not d.superseded and normalize_title(d.title) == normalize_title(title)]
+            dec = live[0] if live else None
+        # The note's prose lives on `decision`: notes are stored as ADR-shaped records
+        # (id/title/status/context/decision/rationale/...), so `body` and `content` -- the names
+        # a reader naturally reaches for -- are both absent, and reaching for them fails SILENTLY
+        # into the pointer. Checked in that order with `decision` first, and verified against a
+        # real spilled note rather than assumed.
+        body = ""
+        if dec is not None:
+            for attr in ("decision", "body", "content", "context"):
+                v = str(getattr(dec, attr, "") or "")
+                if v.strip():
+                    body = v
+                    break
+        if body.strip():
+            return body.strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return text
+
+
+def _latest_handoff_text(agent_id: str) -> str:
+    """The newest unconsumed handoff addressed to ``agent_id``, rendered as a brief.
+
+    Reuses the house's own briefing surface (core/context/briefing_loader.py, the same one a
+    `boot` reads) rather than inventing a second notion of "the latest handoff" -- two readers
+    of one ledger drift, and a seat launched with a DIFFERENT briefing than its boot would show
+    it is the identity bug this house takes most seriously.
+
+    Best-effort and quiet: a missing briefing is an empty string the caller reports, never an
+    exception, because "no handoff" is a normal answer.
+    """
+    try:
+        from core.context.briefing_loader import load_briefing_from_previous_handoff
+
+        h = load_briefing_from_previous_handoff(agent_id)
+    except Exception:  # noqa: BLE001
+        return ""
+    if not isinstance(h, dict):
+        return ""
+    lines = [f"Handoff for {agent_id}, from {h.get('from_agent') or 'unknown'} (source {h.get('source') or '?'}).", ""]
+    if h.get("task"):
+        lines += ["TASK", str(h["task"]).strip(), ""]
+    ctx = h.get("context") or {}
+    if isinstance(ctx, dict) and ctx:
+        lines.append("CONTEXT")
+        for k, v in ctx.items():
+            lines.append(f"  {k}: {_resolve_handoff_spill(str(v))}")
+        lines.append("")
+    elif ctx:
+        lines += ["CONTEXT", _resolve_handoff_spill(str(ctx)).strip(), ""]
+    if h.get("blockers"):
+        lines.append("BLOCKERS")
+        lines += [f"  - {b}" for b in h["blockers"]]
+    return "\n".join(lines).strip()
+
+
+def cmd_recall_audit(args):
+    """The door for core/recall/precision_audit.py -- IS RECALL ACCURATE?
+
+    The module was built 52db9b5, tested, and never run, because it had no door:
+    check_wiring.py:179 grants it a "built-ahead" exception, which is precisely why it stayed
+    dead. Measured 2026-10-06: harvest() returns 1,564 impressions that have been accumulating
+    all along -- "the audit corpus already existed, it just had no reader".
+
+    WHY IT MATTERS NOW. Navi measured 988,282 chars of injected memory per credited lesson in
+    one session (1,157 distinct lessons to credit ONE). That number cannot be acted on until we
+    know WHICH half is broken, and the module's own docstring says why we do not know: "We have
+    never demonstrated a ranking failure BECAUSE WE HAVE NEVER MEASURED RANKING." Low precision
+    means ranking is the constraint; misses mean selection is. Opposite fixes.
+
+    Two subcommands, because the instrument is human-in-the-loop by design:
+      pack  -- harvest -> sample -> render a BLIND labelling pack (stdout, or --out FILE)
+      score -- take labels from one or more labellers and report precision/recall/agreement
+
+    THE DOOR ADDS NOTHING TO THE PACK. render_pack deliberately omits usefulness counters,
+    credit history and seat identity; enriching it here would make the audit measure our own
+    agreement with ourselves. Pins in tests/test_recall_audit_has_a_door.py assert that.
+    """
+    from core.recall import precision_audit as pa
+
+    if args.action == "pack":
+        items = pa.harvest(limit=args.limit or 0)
+        if not items:
+            print(
+                "[recall-audit] no impressions harvested -- the ledger is empty. That is a "
+                "state, not a score: nothing has been surfaced to audit.",
+                file=sys.stderr,
+            )
+            return 1
+        drawn = pa.sample(items, n=args.n, seed=args.seed)
+        pack = pa.render_pack(drawn)
+        if args.out:
+            Path(args.out).write_text(pack, encoding="utf-8")
+            print(
+                f"[recall-audit] {len(drawn)} case(s) of {len(items)} impression(s) "
+                f"-> {args.out}  (seed {args.seed}; same seed re-draws the same sample)"
+            )
+        else:
+            print(pack)
+        return 0
+
+    # score
+    raw = args.labels or ""
+    if args.labels_file:
+        raw = Path(args.labels_file).read_text(encoding="utf-8")
+    try:
+        labels = json.loads(raw) if raw.strip() else {}
+    except ValueError as e:
+        print(
+            f'[recall-audit] --labels is not JSON ({e}). Expected {{"<labeller>": {{"<case>:<slot>": "on|off|skip"}}}}',
+            file=sys.stderr,
+        )
+        return 2
+    misses = {}
+    if args.misses:
+        try:
+            misses = json.loads(args.misses)
+        except ValueError as e:
+            print(f"[recall-audit] --misses is not JSON ({e})", file=sys.stderr)
+            return 2
+    total = args.total_surfaced or 0
+    if not total:
+        try:
+            total = sum(len(i.get("surfaced") or []) for i in pa.harvest())
+        except Exception:  # noqa: BLE001
+            total = 0
+    res = pa.score(labels, total_surfaced=total, misses=misses)
+    if args.json:
+        print(json.dumps(res, indent=2, default=str))
+        return 0
+    print(f"# recall precision audit -- status: {res.get('status')}")
+    for k in ("precision", "recall", "labelled", "label_coverage", "agreement", "misses_named"):
+        if k in res:
+            print(f"  {k:<16} {res.get(k)}")
+    disputed = res.get("disputed") or []
+    if disputed:
+        # N-version blind review only pays if the DISAGREEMENT reaches the reader; averaging
+        # two labellers into one number hides exactly the item worth looking at.
+        print(f"  disputed ({len(disputed)}): {disputed}")
+    if res.get("verdict"):
+        print("")
+        print(f"  {res['verdict']}")
+    return 0
+
+
 def cmd_locks(args):
     """Awareness: who holds what right now (across both agents)."""
     from core.axi import out
@@ -13143,6 +14085,8 @@ def cmd_locks(args):
     rows = []
     for lk in locks:
         try:
+            # `time` was once unbound here, so this raised into the `except` below and `age` stayed
+            # empty -- lock age never displayed. It is the module-level import now.
             from core.foundation.timeutil import to_epoch
 
             age = max(0, int(time.time() - to_epoch(lk.get("ts"))))
@@ -13725,6 +14669,26 @@ def build_parser():
     dl = sub.add_parser("delta", help="what changed since this agent's last boot (T052 delta door)")
     dl.add_argument("agent_id")
     dl.add_argument("--ack", action="store_true", help="advance the seen mark to current positions after reading")
+    # THE DISK PLANE, added 2026-10-07 as a plane on this door rather than a second verb: T052
+    # answers "what moved since I was here" for git/ledger/notes/promoted, and the filesystem gap
+    # is the SAME continuity question on a plane it structurally cannot see (uncommitted work,
+    # anything outside the repo, and per-file attribution -- every seat commits as one git author).
+    # A separate verb would mint a second writer for one transition, which is the rival assembler
+    # touch.py warns about.
+    dl.add_argument(
+        "--disk",
+        action="store_true",
+        help="also report what moved ON DISK that no plane recorded: repo / private / "
+        "VOLATILE, with per-file attribution from the touch stream",
+    )
+    dl.add_argument("--hours", type=float, default=12.0, help="--disk: how far back to look (default 12)")
+    dl.add_argument(
+        "--scope",
+        action="append",
+        default=None,
+        help="--disk: restrict to this root (repeatable); default is the house roots "
+        "minus test debris, plus the private and volatile trees",
+    )
     dl.set_defaults(fn=cmd_delta)
 
     cmp_p = sub.add_parser(
@@ -15092,6 +16056,22 @@ def build_parser():
     )
     tk.set_defaults(fn=cmd_task)
 
+    md = sub.add_parser(
+        "media",
+        help="video toolbox (arsenal.media) instead of hand-rolled ffmpeg/ffprobe: probe "
+        "streams and audio track names, grab frames, contact sheet, filmstrip, trim/cut "
+        "to the exact frame, scene detection (scdet), loudness LUFS (ebur128, loudnorm), "
+        "silencedetect, waveform peaks, demux and mix audio tracks, transcribe, League "
+        "clock OCR, Riot timeline, export presets",
+    )
+    md.add_argument(
+        "rest",
+        nargs=argparse.REMAINDER,
+        help="a media verb + args, e.g.  media doctor  /  media grab v.mp4 --at 12.5 --sheet  /  "
+        "media cut v.mp4 10:00 10:20 out.mkv  /  media shots v.mp4  (bare `media` lists verbs)",
+    )
+    md.set_defaults(fn=cmd_media)
+
     st = sub.add_parser("story", help="print narrative story views")
     st.add_argument("--chronicle", action="store_true", help="run chronicle_all first")
     st.add_argument(
@@ -15195,7 +16175,25 @@ def build_parser():
     )
     gr.add_argument("--hours", type=float, default=None, help="time box (T151: an observed time box is a deadline)")
     gr.add_argument("--permanent", action="store_true", help="explicitly permanent (10 of the 11 original grants are)")
-    gr.add_argument("--caps", default=None, help="comma-separated cap override (default: role template)")
+    gr.add_argument(
+        "--caps",
+        default=None,
+        help="comma-separated FULL SET (a REPLACE; refuses if it drops a held cap unless --replace)",
+    )
+    gr.add_argument(
+        "--add-caps",
+        default=None,
+        dest="add_caps",
+        help="W252: add these to what the seat ALREADY holds (the usual intent)",
+    )
+    gr.add_argument(
+        "--drop-caps", default=None, dest="drop_caps", help="W252: remove these from what the seat already holds"
+    )
+    gr.add_argument(
+        "--replace",
+        action="store_true",
+        help="say out loud that --caps may DROP caps the seat holds, the way --permanent has to be said out loud",
+    )
     gr.add_argument("--path-scope", default=None, help="comma-separated globs (default: role template)")
     gr.add_argument("--request-ref", default=None, help="the ask this grant answers")
     gr.add_argument("--revoke", action="store_true", help="remove the grant (the undo path)")
@@ -15217,6 +16215,28 @@ def build_parser():
     )
     dr.add_argument("--json", action="store_true")
     dr.set_defaults(fn=cmd_doctor)
+
+    rb = sub.add_parser(
+        "recall-bench", help="W0.3: grade recall against the answer key (recall@k, abstention, chrome share)"
+    )
+    rb.add_argument("--set", default=None, help="path to a moments.json (default: the committed set)")
+    rb.add_argument("--limit", type=int, default=None, help="k for recall@k (default 5)")
+    rb.add_argument("--json", action="store_true")
+    rb.set_defaults(fn=cmd_recall_bench)
+
+    cx = sub.add_parser("context", help="W0.5/W0.6: one anchor, every plane -- or `--stats` to meter the stream")
+    cx.add_argument(
+        "anchor",
+        nargs="?",
+        default=None,
+        help="a context.target.v1 anchor: a path, path:line, dir/, ref (sha:/task:/lesson:/event:), url or verb:",
+    )
+    cx.add_argument("--level", type=int, default=None, help="0 summaries, 1 rows (default), 2 receipts")
+    cx.add_argument("--stats", action="store_true", help="the instrument: coverage, rate, shape, drops")
+    cx.add_argument("--hours", type=float, default=None, help="window in hours (default 24)")
+    cx.add_argument("--limit", type=int, default=None, help="max raw events to read (default 20000)")
+    cx.add_argument("--json", action="store_true")
+    cx.set_defaults(fn=cmd_context)
 
     pr = sub.add_parser("promoted", help="query durable salient Bifrost msgs (kind=bifrost_msg / B2)")
     pr.add_argument("--limit", type=int, default=None)
@@ -15411,6 +16431,16 @@ def build_parser():
     )
     sby.add_argument("--no-listen", action="store_true", help="drain + report only; do not block")
     sby.add_argument("--limit", type=int, default=None)
+    sby.add_argument(
+        "--min-tier",
+        type=int,
+        default=None,
+        dest="min_tier",
+        choices=[0, 1, 2, 3],
+        help="S3 tier floor for this arm: 0 operator only, 1 +directed asks, "
+        "2 +answers to my asks (DEFAULT; env BIFROST_WAKE_MIN_TIER), "
+        "3 everything (the pre-S3 behaviour)",
+    )
     sby.set_defaults(fn=cmd_bifrost_standby)
 
     fc = sub.add_parser(
@@ -15527,6 +16557,45 @@ def build_parser():
     )
     sbp.set_defaults(fn=cmd_suite_baseline)
 
+    su = sub.add_parser(
+        "suite",
+        help="README-ONLY test-pipeline doors: diff / triage / "
+        "rerun-failing / tail (projects over suite_baseline + "
+        "pytest's lastfailed cache + the run log; writes nothing)",
+    )
+    su_sub = su.add_subparsers(dest="suite_sub", required=True)
+    sud = su_sub.add_parser(
+        "diff",
+        help="delta + YOURS/INHERITED/UNKNOWN verdicts for the failing nodes (lastfailed by default, or --from-file)",
+    )
+    sud.add_argument(
+        "--from-file", dest="from_file", default=None, help="pytest output to ingest instead of lastfailed"
+    )
+    sud.set_defaults(fn=cmd_suite)
+    sut = su_sub.add_parser("triage", help="attribute failing nodes to their owning lane/task")
+    sut.add_argument(
+        "--from-file", dest="from_file", default=None, help="pytest output to ingest instead of lastfailed"
+    )
+    sut.set_defaults(fn=cmd_suite)
+    sur = su_sub.add_parser(
+        "rerun-failing", help="print (or --run) the exact failing-node selector from pytest's own lastfailed cache"
+    )
+    sur.add_argument(
+        "--run",
+        action="store_true",
+        dest="run",
+        help="actually execute the selector (logs full output to state/, never holds the pipe); default prints only",
+    )
+    sur.add_argument(
+        "--from-file", dest="from_file", default=None, help="pytest output to ingest instead of lastfailed"
+    )
+    sur.set_defaults(fn=cmd_suite)
+    sul = su_sub.add_parser(
+        "tail", help="tail the newest suite run log (never owns a process pipe; the FILE is the record)"
+    )
+    sul.add_argument("--lines", type=int, default=20, help="tail length (default 20)")
+    sul.set_defaults(fn=cmd_suite)
+
     dr = sub.add_parser(
         "bifrost-drain",
         help="request a runner's GRACEFUL exit: finish "
@@ -15619,6 +16688,90 @@ def build_parser():
     fcs.add_argument("--session", default="", help="override the session id (default: this session)")
     fcs.add_argument("--json", action="store_true")
     fcs.set_defaults(fn=cmd_focus)
+
+    rau = sub.add_parser(
+        "recall-audit", help="is recall ACCURATE? blind labelling pack + precision/recall/agreement score"
+    )
+    # POSITIONAL CHOICES, not add_subparsers -- `fence` sets the house convention
+    # (agent_cli.py:9213) and the door-parity checker reads subparsers as separate VERBS,
+    # which is how this verb first arrived as three phantom ones (pack/score/recall_audit).
+    rau.add_argument("action", choices=["pack", "score"])
+    rau.add_argument("--n", type=int, default=30, help="pack: cases to draw (default 30)")
+    rau.add_argument(
+        "--seed",
+        type=int,
+        default=1,
+        help="pack: deterministic draw; a published number that cannot be re-drawn cannot be audited",
+    )
+    rau.add_argument("--limit", type=int, default=0, help="pack: cap impressions harvested")
+    rau.add_argument("--out", default="", help="pack: write to a file instead of stdout")
+    rau.add_argument("--labels", default="", help='score: JSON {"<labeller>": {"<case>:<slot>": "on|off|skip"}}')
+    rau.add_argument("--labels-file", default="", help="score: read the labels JSON from a file")
+    rau.add_argument(
+        "--misses",
+        default="",
+        help='score: JSON {"<labeller>": {"<case>": ["source-or-desc", ...]}} -- '
+        "the recall arm: what SHOULD have surfaced and did not",
+    )
+    rau.add_argument(
+        "--total-surfaced", type=int, default=0, help="score: coverage denominator (default: computed from the ledger)"
+    )
+    rau.add_argument("--json", action="store_true")
+    rau.set_defaults(fn=cmd_recall_audit)
+
+    scr = sub.add_parser(
+        "screen", help="screenspace ACTUATOR: see the desktop, open a new session, hand it a brief -- refusal-first"
+    )
+    # POSITIONAL CHOICES, not add_subparsers -- same convention as `fence` and `recall-audit`:
+    # the door-parity checker reads subparsers as separate VERBS, which is how `recall-audit`
+    # first arrived as three phantom ones.
+    scr.add_argument("action", choices=["status", "locate", "prompt"])
+    scr.add_argument(
+        "text", nargs="*", help="prompt: the brief, inline (prefer --text-file for anything long or flag-shaped)"
+    )
+    scr.add_argument("--window", default="Claude", help="substring of the target window title (default: Claude)")
+    scr.add_argument(
+        "--hwnd",
+        type=int,
+        default=None,
+        help="disambiguate when more than one window matches -- the remedy for an AMBIGUOUS_TARGET refusal",
+    )
+    scr.add_argument(
+        "--name",
+        default="",
+        help="locate: the control's UIA Name (the ADDRESS -- name-first beats a tree walk 17-24x here)",
+    )
+    scr.add_argument("--role", default="", help="locate: control type, e.g. Button, Document")
+    scr.add_argument("--ttl", type=float, default=5.0, help="locate: token lifetime in seconds (default 5)")
+    scr.add_argument(
+        "--text-file",
+        default="",
+        help="prompt: read the brief from PATH (use this for anything long or containing flags)",
+    )
+    scr.add_argument(
+        "--handoff",
+        default="",
+        help="prompt: use the newest unconsumed handoff addressed to this agent, "
+        "rendered from the same briefing surface a `boot` reads",
+    )
+    scr.add_argument(
+        "--show",
+        action="store_true",
+        help="prompt: print the exact brief that WOULD be sent (spilled handoff "
+        "notes resolved) and exit without touching the desktop",
+    )
+    scr.add_argument(
+        "--submit",
+        action="store_true",
+        help="prompt: actually SEND it. Default is to stage the brief in a new "
+        "session and stop -- submitting is a separate, explicit decision",
+    )
+    scr.add_argument(
+        "--timeout", type=float, default=8.0, help="prompt: seconds to wait for each post-condition (default 8)"
+    )
+    scr.add_argument("--agent", default="", help="act as this seat (default: ambient). The ACL decides, not this flag")
+    scr.add_argument("--json", action="store_true")
+    scr.set_defaults(fn=cmd_screen)
 
     lks = sub.add_parser("locks", help="show who holds which advisory path-locks")
     lks.add_argument("agent_id", nargs="?", default="")
@@ -17094,7 +18247,13 @@ def cmd_tool_usage(args):
 def cmd_tool_run(args):
     """Play-tier sandbox: run one draft tool with sandbox bounds + receipt."""
     from core.axi import out
-    from core.toolbelt.play_sandbox import DEFAULT_TIMEOUT_S, find_tool, sandboxed_run
+
+    # ROOT is the same root sandboxed_run uses as its cwd (play_sandbox.py), so the
+    # --no-sandbox override runs the tool from the same place the sandboxed path would.
+    # It was referenced here as the undefined name `REPO`: the override printed its
+    # reassuring "running UNSANDBOXED" line and THEN died on NameError, so the operator
+    # escape hatch never once worked.
+    from core.toolbelt.play_sandbox import DEFAULT_TIMEOUT_S, ROOT, find_tool, sandboxed_run
 
     cli = _cli()
     try:
@@ -17114,7 +18273,7 @@ def cmd_tool_run(args):
         print(f"[tool] running {args.ref} UNSANDBOXED (operator override -- caveat emptor)")
         import subprocess as sp
 
-        r = sp.run([sys.executable, path] + (args.args or []), cwd=_repo_root_str())
+        r = sp.run([sys.executable, path] + (args.args or []), cwd=ROOT)
         print(f"[tool] exit {r.returncode} (unsandboxed — no receipt)")
         return r.returncode
     rec = sandboxed_run(agent, tool, path, args=args.args, timeout_s=timeout)
@@ -17948,6 +19107,12 @@ def cmd_stand_down(args):
             details={"yielded": False, "agent": args.agent},
         )
     ok = runner_lock.stand_down(args.agent, token)
+    try:  # S2 (T420): a session that stood down is no longer expected-up -- never resume it
+        from core.comm import resume_on_deaf as _rod
+
+        _rod.retract_expected(args.agent, token[len("session:") :] if token.startswith("session:") else token)
+    except Exception:
+        pass
     held = runner_lock.holder(args.agent)
     doc = {
         "agent": args.agent,
@@ -18205,15 +19370,23 @@ def cmd_defer(args):
         except ValueError as e:
             return out.fail(str(e), code="USAGE", hints=[f"{cli} defer {me} --list --fields why"], exit_code=2)
         items = dq.pending()
-        # The queue is shared, so it lists the same for any id -- which is exactly why an UNKNOWN
-        # id must still be named as such: otherwise a typo'd seat reads the queue and looks
-        # legitimate. ABSENCE AND NONEXISTENCE MUST NOT RENDER IDENTICALLY: until 2026-08-20 an
-        # unknown seat's queue printed the same cheerful "queue empty" as a real one, so an
-        # unsubstituted $SELF$ (or a plain typo) read a phantom queue and reported nothing waiting
-        # while the real queue filled (same class as eye_get_says_no_event_when_it_means_bad_address).
+        # ABSENCE AND NONEXISTENCE MUST NOT RENDER IDENTICALLY. Until 2026-08-20 an unknown seat's
+        # queue printed the same cheerful "queue empty" as a real one, so an unsubstituted $SELF$
+        # (or a plain typo) read a phantom queue and reported nothing waiting while the real queue
+        # filled. Same class as eye_get_says_no_event_when_it_means_bad_address, on another door.
         # We teach rather than refuse: a brand-new seat legitimately has no queue yet, so an
         # unknown id is a note, not a wall. And the seat is ALWAYS named, roster or not, so a
         # reader seeing an id they did not intend spots the typo without any fleet lookup.
+        #
+        # HOISTED 2026-10-06, out of the `if not items` branch it used to live in. The queue is
+        # GLOBAL by design (core/coord/defer_queue.py: a mini-registry the capable seat
+        # self-selects from, so `pending()` takes no agent and `agent_id` here means WHO YOU ARE,
+        # not whose queue to read). So the guard only ever fired while the queue happened to be
+        # empty -- and the moment a real item was filed, a typo'd or unsubstituted seat id got the
+        # full list plus a discharge command naming itself, and `mark_done(seat=...)` would stamp
+        # a permanent receipt under a seat that does not exist. Identity validity does not depend
+        # on queue contents, so it is not checked inside a branch about queue contents, and an
+        # unknown seat is shown the count but not the items or a discharge command.
         try:
             from core.comm.doctor import known_agents
 
@@ -18228,6 +19401,12 @@ def cmd_defer(args):
         else:
             known = ", ".join(sorted(roster)[:8]) + (" ..." if len(roster) > 8 else "")
             doc["seat_status"] = f"UNKNOWN to the fleet roster (known: {known})"
+            doc["pending"] = len(items)
+            doc["note"] = (
+                "not a seat that can discharge anything, so nothing listed here would be attributable; "
+                "the items are withheld until you run this as a known seat"
+            )
+            return out.emit(doc, hints=[f"{cli} defer <your_agent_id> --list"], title="Deferred queue")
         rows = []
         for i in items:
             full = {
@@ -18244,6 +19423,11 @@ def cmd_defer(args):
         if not rows:  # AXI section 5: the zero is the answer, said with whose queue was read
             return out.emit(doc, hints=[f'{cli} defer {me} "<command>" --needs exec'], title="Deferred queue")
         hints = [f'{cli} defer {me} --done <id> --receipt "what happened"']
+        # Concrete when there is nothing to choose. With one deferred item `<id>` is pure friction:
+        # the reader copies the line, gets a literal, and goes back to read the id off the row
+        # above. `--receipt` stays prose because only the reader knows what happened.
+        if len(items) == 1:
+            hints.insert(0, f'{cli} defer {me} --done {items[0]["id"]} --receipt "what happened"')
         if any(str(r.get("cmd") or "").endswith("chars total)") for r in rows):
             hints.append(f"{cli} defer {me} --list --json")  # the full commands
         return out.emit(doc, hints=hints, human=_human_defer, title=f"Deferred queue · {len(rows)} pending")

@@ -24,6 +24,7 @@ Two independent staleness signals a reader can derive:
   * ``now - beat_ts``  large                      -> the heartbeat thread itself stopped
 """
 
+import contextlib
 import json
 import os
 import re
@@ -137,12 +138,71 @@ class BusLossGuard:
         return "degraded"
 
 
+def _emit_phase(**rec) -> None:
+    """Gap 2 of the record-is-total map: a phase TRANSITION is a meaningful event that today
+    evaporates with the worklive key's TTL. One record per transition onto the spine, never one per
+    heartbeat -- refresh() re-stamps every ~5 s and emitting there is the firehose the map forbids.
+
+    kind='wedge' is deliberately NOT emitted from here. A wedge is the ABSENCE of a transition over
+    time, and this object never runs while its process is wedged, so it structurally cannot observe
+    its own. That record belongs to the watchdog that reads since_ts ageing. Both halves of the
+    one-spine round said so independently.
+
+    Never raises: its caller is the work path of every seat.
+    """
+    try:
+        from core.events.event_log import capture_event
+
+        prev, cur = rec.get("prev"), rec.get("phase")
+        capture_event(
+            "phase",
+            f"{rec.get('agent')}: {prev} -> {cur}",
+            agent_id=str(rec.get("agent") or ""),
+            session_id=str(rec.get("session_id") or ""),
+            detail={k: v for k, v in rec.items() if k != "agent"},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class WorkLive:
     """Per-agent phase tracker. ``set()`` is called from the work path on a phase change;
     ``refresh()`` is called from the heartbeat thread to keep the record alive and ageing."""
 
-    def __init__(self, agent: str):
+    def __init__(self, agent: str, session_id: str = ""):
         self.agent = str(agent)
+        # W0.2a / Gap 2: WHICH INCARNATION. Navi's half_b flagged that this class has no session in
+        # scope, so a phase record without one collapses two live incarnations of a single agent
+        # into one story -- the confusion live_incarnations() exists to prevent. Caller first (a
+        # runner knows its own session), env as the fallback, and the SOURCE rides along so an
+        # unattributable transition can never be mistaken for an attributed one.
+        sid, src = str(session_id or "").strip(), "caller"
+        if not sid:
+            for _v in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"):
+                sid = str(os.getenv(_v) or "").strip()
+                if sid:
+                    src = "env"
+                    break
+        if not sid:
+            # W227, the last rung. A RUNNER has no CLAUDE_CODE_SESSION_ID -- it derives its own
+            # incarnation id and beats the roster under it -- so without this rung every runner's
+            # phase records landed `unknown`, which the instrument measured the hour Gap 2 shipped:
+            # phase coverage 15 of 188, while touch sat at 100%.
+            #
+            # Deliberately the SAME derivation the heartbeat uses (core/comm/runner_lib), not a
+            # second one, so the phase record and the roster card carry one id and actually join.
+            # A second derivation of one identity is the fork this house keeps paying for.
+            #
+            # Labelled `derived` rather than folded into `env`: a pid-shaped incarnation id is a
+            # real identity but it is not a session anybody named, and a reader deciding whether
+            # two records are the same incarnation deserves to know which kind they are holding.
+            try:
+                from core.comm.runner_lib import seat_session_id as _ssid
+
+                sid, src = str(_ssid(self.agent) or "").strip(), "derived"
+            except Exception:  # noqa: BLE001
+                sid = ""
+        self.session_id, self.session_source = sid, (src if sid else "unknown")
         self._lock = threading.Lock()
         self._phase = "online"
         self._since = time.time()
@@ -153,14 +213,38 @@ class WorkLive:
     def set(self, phase: str, detail: str = "", new_turn: bool = False) -> None:
         """Record a phase transition (or a same-phase detail update). ``since_ts`` moves only
         when the phase actually changes, so time-in-phase is measurable across many beats."""
+        changed = None
         with self._lock:
             if phase != self._phase:
+                # W0.2a / Gap 2: THE SEAM. This predicate is the only place in the module that can
+                # tell a TRANSITION from a re-stamp, which is why Heimdall and Rill each named this
+                # exact line, blind to one another. Nothing is emitted here: we only REMEMBER that a
+                # transition happened, so the record can be written after the lock is released.
+                changed = (self._phase, str(phase))
                 self._phase = str(phase)
                 self._since = time.time()
             self._detail = str(detail)[:120]
             if new_turn:
                 self._turn += 1
         self._flush()
+        if changed is not None:
+            # Deliberately OUTSIDE the lock. Both halves placed the emit inside the branch, which
+            # sits inside this mutex; holding it across a network write would serialise every phase
+            # change in the process behind one round trip. The seam they named is the predicate, and
+            # honouring the predicate does not require holding their lock while we do I/O.
+            # A phase change is the seat's real work; telemetry never breaks it.
+            with contextlib.suppress(Exception):
+                _emit_phase(
+                    agent=self.agent,
+                    session_id=self.session_id,
+                    session_source=self.session_source,
+                    prev=changed[0],
+                    phase=changed[1],
+                    since_ts=self._since,
+                    turn=self._turn,
+                    detail=self._detail,
+                    code_sha=_safe_code_sha(),
+                )
 
     def refresh(self) -> None:
         """Re-stamp the current phase (heartbeat thread). Keeps the key + TTL fresh; since_ts unchanged."""
@@ -307,12 +391,22 @@ _INCARNATION_SUFFIX = re.compile(r"_([0-9a-f]{6,})$", re.I)
 
 
 class Attendance(tuple):
-    """A three-state verdict: ATTENDED | UNATTENDED | UNKNOWN.
+    """A four-state verdict: ATTENDED | EXPECTED_SILENT | UNATTENDED | UNKNOWN.
 
     UNKNOWN is the load-bearing member. Every gauge before this one collapsed "I cannot tell"
     into "not here", which is how a beating-but-wedged seat read as running and a registration
     echo read as online. Absence of evidence is not evidence of absence -- and it is certainly
     not evidence of presence.
+
+    EXPECTED_SILENT (added 2026-09-23, ZERO-IS-NOT-NO family) splits the old collapse the other
+    way: an interactive / one-shot / wake-armed seat (Vandor in Claude Code desktop) beats ONLY
+    while it is mid-turn, so its silence between turns is EXPECTED and carries no verdict about
+    being down. Previously that silence fell through all three probes and read UNATTENDED --
+    "he's down" -- while the seat was demonstrably reachable by sending. EXPECTED_SILENT is
+    distinct from ATTENDED (nothing on the send/succession path treats it as attending), and
+    distinct from UNATTENDED (it is not a death claim). It upgrades only when a NON-BEAT seat
+    signal (runner lock / armed wake seat) proves the seat EXISTS; silence alone still reads
+    UNATTENDED, because silence is not evidence of presence.
     """
 
     __slots__ = ()
@@ -327,6 +421,38 @@ class Attendance(tuple):
 
     def __repr__(self):
         return f"Attendance({self.state}, {self.reason!r}, beat_age_s={self.beat_age_s})"
+
+
+def _present_by_non_beat_signal(agent: str) -> bool:
+    """Does a NON-BEAT signal prove the seat EXISTS here, even though it is emitting no beat?
+
+    The same two organs doctor._present_no_worklive already trusts: a held runner lock, or an
+    armed wake-seat file. BOTH are presence evidence for a seat that has NO heartbeat thread --
+    an interactive / one-shot / wake-armed seat beats only mid-turn, so its between-turn silence
+    is EXPECTED, not a death. Fail-SAFE toward "not present": a probe that raises returns False
+    and the caller falls back to UNATTENDED (silence without presence evidence), never a
+    fabricated "present". This is deliberately NOT folded into attendance()'s ladder (which is
+    one-directional and beat-only) because: (a) it is heavier than a Redis read and attendance()
+    is on the busy send path; (b) its truth is a DIFFERENT question -- "does a seat exist" vs
+    "is a seat beating now" -- and one_word_two_meanings says collapse them only under one label.
+
+    Never raises.
+    """
+    try:
+        from core.comm import runner_lock
+
+        if runner_lock.holder(str(agent)):
+            return True
+    except Exception:
+        pass
+    try:
+        from core.comm import wake_seat
+
+        for _path, _sid in wake_seat.iter_seats(str(agent)):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def attendance(agent: str, *, namespace: str | None = None, client=None, roster_rows=None) -> "Attendance":
@@ -409,6 +535,13 @@ def attendance(agent: str, *, namespace: str | None = None, client=None, roster_
 
     if not probed_anything:
         return Attendance("UNKNOWN", "no probe could be read (bus unreachable?)", youngest, name)
+    if _present_by_non_beat_signal(name):
+        return Attendance(
+            "EXPECTED_SILENT",
+            "present (lock/wake seat) but no beat, pulse, or worklive now -- interactive/one-shot seat between turns",
+            youngest,
+            name,
+        )
     return Attendance("UNATTENDED", "no beat, pulse, or worklive", youngest, name)
 
 

@@ -118,6 +118,9 @@ def grant(
     caps=None,
     path_scope=None,
     request_ref: str | None = None,
+    add_caps=None,
+    drop_caps=None,
+    replace: bool = False,
 ) -> dict:
     """Write one grant. Returns the record written. Raises rather than half-writing.
 
@@ -154,7 +157,55 @@ def grant(
         )
 
     tmpl = ROLE_TEMPLATES[role]
-    eff_caps = caps_from(caps) if caps is not None else set(tmpl["caps"])
+
+    # W252 (2026-10-07). `--caps` is a REPLACE and reads as an ADD, which is how a command whose
+    # stated purpose was to grant four screen.* tiers would have taken the claude seat from 13
+    # caps to 4 -- losing write, exec and admin.grant from the only seat that can commit.
+    #
+    # Three changes, matching the three ways it hid:
+    #   add_caps/drop_caps  give the common intent its own spelling, computed from what the seat
+    #                       ALREADY HOLDS rather than from the role template, so "also needs X"
+    #                       stops being expressible only as "needs exactly X".
+    #   replace=False       a caps= set that DROPS something the seat currently holds now raises.
+    #                       `--permanent` already has to be said out loud because an unbounded
+    #                       grant is a decision; removing exec is at least as consequential and
+    #                       used to require typing nothing.
+    #   (the dry-run diff lives at the CLI, where the reader is.)
+    #
+    # Scoped to explicit caps on purpose: a shrink via `--role restricted` is what --role MEANS
+    # and stays quiet. The hazard is the flag that reads additive.
+    if caps is not None and (add_caps or drop_caps):
+        raise ValueError("pass --caps (full set) or --add-caps/--drop-caps (relative), not both")
+
+    held = set()
+    if add_caps or drop_caps or caps is not None:
+        try:
+            from core.trust import registry as _reg
+
+            held = {getattr(c, "value", c) for c in (_reg.resolve(agent_id).caps or set())}
+        except Exception:  # noqa: BLE001
+            held = set()  # unknown seat / unreadable acl -> treat as a fresh grant
+
+    if add_caps or drop_caps:
+        eff_caps = caps_from(sorted(held)) if held else set(tmpl["caps"])
+        if add_caps:
+            eff_caps |= caps_from(add_caps)
+        if drop_caps:
+            eff_caps -= caps_from(drop_caps)
+    elif caps is not None:
+        eff_caps = caps_from(caps)
+        losing = held - {getattr(c, "value", c) for c in eff_caps}
+        if losing and not replace:
+            gained = ",".join(sorted({getattr(c, "value", c) for c in eff_caps} - held)) or "<none>"
+            raise ValueError(
+                f"REFUSED: --caps is a full-set REPLACE and this one DROPS {len(losing)} cap(s) the seat "
+                f"holds: {', '.join(sorted(losing))}. Caps {len(held)} -> {len(eff_caps)}.\n"
+                f"  To ADD without losing anything:  --add-caps {gained}\n"
+                "  To REPLACE deliberately:         add --replace\n"
+                "W252: this flag reads as 'also give it X' and means 'give it ONLY X'."
+            )
+    else:
+        eff_caps = set(tmpl["caps"])
     eff_scope = list(path_scope) if path_scope is not None else list(tmpl["path_scope"])
     _bounded_by_granter(granter, eff_caps, eff_scope)
 

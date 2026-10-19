@@ -42,7 +42,20 @@ the whole point (an old design note read as current truth is how a project stops
 | [JOURNEY.md](JOURNEY.md) | the story of how we got here | append-only narrative |
 | [FOSSILS.md](FOSSILS.md) | abandoned decisions + what they taught | append-only |
 
+**The three that hold the why** (all three were missing from this index until 2026-10-02, which is
+the reach barrier the middle one is about, committed by the index that exists to prevent it)
+- [THE-DESIGN-CANON.md](THE-DESIGN-CANON.md) — Daniel's design goals in his own words, sourced:
+  four layers (be, see, act, return) inside the world frame, plus the arcs and what is open.
+  Read this before planning anything, and before concluding a thread is finished.
+- [THE-STRING-THROUGH-THE-FOREST.md](THE-STRING-THROUGH-THE-FOREST.md) — how the project actually
+  happened, 2026-04-11 onward, reconstructed from his typed words in the order he typed them.
+- [WHY-OUR-BEST-KNOWLEDGE-DOESNT-REACH-US.md](WHY-OUR-BEST-KNOWLEDGE-DOESNT-REACH-US.md) — the
+  2026-10-01 knowledge reach map: ten kinds of knowledge, twelve planes, one push path, and the
+  nine ranked reasons the rest stay dark.
+
 **Plan & voice**
+- [context-system.md](context-system.md) — the context system contract: the one key, the touch,
+  the scene and its four states, the doors, and what Wave 0 has and has not built.
 - [ROADMAP.md](ROADMAP.md) — the layered plan + sequenced next steps.
 - [VOICE.md](VOICE.md) — the rules for anything the project says publicly.
 - [FSQ.md](FSQ.md) — frequently anticipated skeptical questions (honest answers).

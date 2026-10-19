@@ -219,6 +219,15 @@ def collect_state(root: Path | None = None) -> tuple[list[Path], dict[str, int]]
 
 
 def main(argv: list[str] | None = None) -> int:
+    # When this runs as a WINDOWED scheduled task (on Windows, launched by `pyw`, i.e.
+    # pythonw.exe) it has NO console and NO inherited handles: sys.stdout and sys.stderr are
+    # None and every print() below is silently discarded. Measured 2026-10-06; fixes item 0 of
+    # the affordance-layer fence. A no-op for any console run. Must be the FIRST statement in
+    # main(), before argument parsing.
+    from core.infrastructure.background_stdio import repair_background_stdio
+
+    repair_background_stdio("archive-ephemeral")
+
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     ap.add_argument("--dest", action="append", default=[])
     ap.add_argument("--receipt-dir", default="")

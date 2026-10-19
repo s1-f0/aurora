@@ -17,6 +17,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from core.trust.action_authority import (
+    TOOLBOX_BUS_REQUIREMENTS,
+    requirements_for_toolbox_action,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -49,8 +54,7 @@ _STATES = {"observed", "partial", "absent", "refused", "unknown"}
 # Keeping the map per-door is load-bearing: bifrost_send is ACL-gated on the
 # ToolBox while its CLI and MCP twins currently send directly.
 _DOOR_CAP_REQUIREMENTS: dict[str, dict[str, tuple[str, ...]]] = {
-    "bifrost_send": {"toolbox": ("bus.send",)},
-    "bifrost_nudge": {"toolbox": ("bus.nudge",)},
+    **{name: {"toolbox": requirements_for_toolbox_action(name)} for name in TOOLBOX_BUS_REQUIREMENTS},
     "learn": {"toolbox": ("kb.learn",)},
     "note": {"toolbox": ("kb.learn",)},
     "write_file": {"toolbox": ("write",)},
@@ -62,6 +66,8 @@ _DOOR_CAP_REQUIREMENTS: dict[str, dict[str, tuple[str, ...]]] = {
 # unknown requirement: it was checked, and no subject capability gate exists.
 _OPEN_READ_DOORS: dict[str, tuple[str, ...]] = {
     "sweep": ("cli", "mcp", "toolbox"),
+    "orient": ("cli", "mcp", "toolbox"),
+    "shadow": ("cli", "mcp", "toolbox"),
     "ground": ("cli", "mcp", "toolbox"),
 }
 

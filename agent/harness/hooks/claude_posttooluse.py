@@ -127,13 +127,21 @@ def _tail_lines(path: str):
 
 
 def _latest_failure_id(transcript_path: str, target: str):
-    """tool_use_id of the NEWEST failed (is_error) tool call whose normalized target == `target`,
-    or None. Pairs assistant tool_use blocks (id -> target) with user tool_result blocks."""
+    """tool_use_id of the NEWEST failed (is_error) tool call matching `target`, or None.
+    Pairs assistant tool_use blocks (id -> target) with user tool_result blocks.
+
+    MATCHES ON THE COARSE AXIS TOO (at_action.coarse_target). This scan is the ONLY way a
+    FAIL reaches the engine for any tool without a PostToolUseFailure fast path (that
+    event is Bash/Write only, per #24908), so an exact-only match here meant the
+    fix-your-own-command case could not be observed even in principle: the success asks
+    about the fixed spelling and the transcript only holds the broken one.
+    """
     if not transcript_path or not target:
         return None
     try:
-        from core.recall.at_action import normalize_target
+        from core.recall.at_action import coarse_target, normalize_target
 
+        want_coarse = coarse_target(target)
         uses = {}
         latest = None
         for line in _tail_lines(transcript_path):
@@ -154,11 +162,30 @@ def _latest_failure_id(transcript_path: str, target: str):
                     if tgt:
                         uses[b.get("id")] = tgt
                 elif bt == "tool_result" and b.get("is_error") is True:
-                    if uses.get(b.get("tool_use_id")) == target:
+                    seen = uses.get(b.get("tool_use_id"))
+                    if seen and (seen == target or (want_coarse and coarse_target(seen) == want_coarse)):
                         latest = b.get("tool_use_id")
         return latest
     except Exception:
         return None
+
+
+def _wm_key(target: str) -> str:
+    """The watermark key for 'this failure has been backfilled': the COARSE key when there
+    is one, else the target itself.
+
+    Load-bearing for exactly-once. The watermark is a dict of key -> tool_use_id, so if it
+    were keyed by the exact target, one failure could be backfilled once per spelling that
+    later succeeds -- and every extra backfill is a phantom FAIL that corrupts the
+    first-try/prevention arithmetic. Keying by the coarse key gives every spelling of a
+    command one shared slot, which is exactly the "accounted for" semantics intended.
+    """
+    try:
+        from core.recall.at_action import coarse_target
+
+        return coarse_target(target) or target
+    except Exception:
+        return target
 
 
 def _safe(session_id: str) -> str:
@@ -334,9 +361,9 @@ def main() -> int:
     except Exception:
         data = {}
     _beat_seat(data)
-    # THE TOOL IS DONE, SO THE MODEL IS COMPOSING AGAIN. Placed beside _beat_seat and above every
-    # gate below for the same reason liveness is: presence must not be a hostage of the recall
-    # feature's kill switch. A seat that turns recall off must still show as working.
+    # THE TOOL IS DONE, SO THE MODEL IS COMPOSING AGAIN. Beside _beat_seat and above every gate
+    # below for the same reason liveness is: presence must not be a hostage of the recall
+    # feature kill switch. A seat that turns recall off must still show as working.
     try:
         from agent.harness.hooks._activity import report
 
@@ -360,6 +387,31 @@ def main() -> int:
         )
     except Exception:
         pass
+    # W0.2 (2026-10-02): THE TOUCH -- what this call actually touched, typed by
+    # context.target.v1 and carrying the session id, onto events:raw.
+    #
+    # Its own kill switch and its own try/except, deliberately, for the reason the two blocks
+    # above give for liveness and presence: the touch is the SPINE, not a recall feature, so it
+    # must not be a hostage of recall's switch -- and it runs on the hot path of every seat, so it
+    # must never be able to wedge a tool call. core/events/touch.py never raises and counts what
+    # it drops; W0.4 reads that counter.
+    #
+    # It also ABSORBS Gap 3 of the record-is-total map: a hook firing IS the idle-to-active
+    # transition, so there is no separate 'activity' kind. Emitting one would put a single fact on
+    # the spine twice under two names.
+    #
+    # Measured before it was built, on 6,918 raw events: 89 carried a session id and all 89 were
+    # one kind. None of the kinds THIS hook emits carried one.
+    if os.getenv("AKASHIC_TOUCH", "1") != "0":
+        try:
+            from agent.harness.scope import session_in_scope
+
+            if data and session_in_scope(data.get("cwd") or os.getcwd()):
+                from core.events import touch as _touch
+
+                _touch.emit(data)
+        except Exception:
+            pass
     if os.getenv("AKASHIC_RECALL_AT_ACTION", "1") == "0":
         return 0
     if not data:
@@ -393,22 +445,24 @@ def main() -> int:
             # watermark its tool_use_id so the transcript scan never double-processes this failure.
             if target:
                 fid = data.get("tool_use_id")
-                fresh = not (fid and _failure_processed(sid, target, fid))
+                wm = _wm_key(target)
+                fresh = not (fid and _failure_processed(sid, wm, fid))
                 resolve_action_outcome(sid, target, False)
                 if fresh:
                     _capture_fail(target, tool, sid)  # durable degraded-output label (RENEW A'), exactly-once
                 if fid:
-                    _mark_failure_processed(sid, target, fid)
+                    _mark_failure_processed(sid, wm, fid)
             return 0
         ok = _is_success(data)
         if ok and target:
             # Backfill the FAIL the hook never received (see module docstring), exactly once per
             # failure, BEFORE resolving the current success -- the engine then sees FAIL->SUCCESS.
             fid = _latest_failure_id(data.get("transcript_path") or "", target)
-            if fid and not _failure_processed(sid, target, fid):
+            wm = _wm_key(target)
+            if fid and not _failure_processed(sid, wm, fid):
                 resolve_action_outcome(sid, target, False)
                 _capture_fail(target, tool)  # durable degraded-output label (RENEW A'), exactly-once
-                _mark_failure_processed(sid, target, fid)
+                _mark_failure_processed(sid, wm, fid)
         rep = resolve_action_outcome(sid, target, ok)
         if rep.get("flipped"):
             try:  # durable funnel signal (flips observed vs lessons recorded) -- best-effort

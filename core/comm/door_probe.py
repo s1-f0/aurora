@@ -86,9 +86,28 @@ WATCHDOG_MULTIPLIER = 2
 #: park. A hang-only probe called that GREEN -- a false all-clear on the exact defect it
 #: was built to catch. So a degraded door is a RED door: C7-4 does not always present as
 #: an infinite hang, it presents as a reply parked behind someone else's timeout, and the
-#: bound can be anything. 5s matches P6's pin (which DID catch it) and still leaves ~4x
-#: headroom over a healthy probe, so ordinary load cannot trip it.
-SLOW_BUDGET_S = 5.0
+#: bound can be anything.
+#:
+#: RECALIBRATED 2026-10-07, from measurement on both sides rather than by nudging until green.
+#: The 1.29s healthy baseline is from 2026-07-25 and has rotted: the corpus has grown (1,501
+#: lessons warm) and a healthy probe now measures 4.88, 5.00, 5.18, 5.94s across four runs. At
+#: the old 5.0s the gate FLAPPED between GREEN and RED on an entirely healthy door, which is
+#: worse than a wrong threshold -- an instrument that disagrees with itself run to run teaches
+#: everyone to re-run it until it passes.
+#:
+#: 8.0s is chosen to sit between the two MEASURED bounds, and both are stated so the next
+#: reader can check the choice rather than inherit it:
+#:     healthy, today          4.88 - 5.94s   (four runs, this machine)
+#:     degraded, mutation-test 11.38s         (2026-07-25, bounded by the spawn's timeout=10)
+#: That is ~35% headroom over the worst healthy run and still ~3.4s clear of the defect this
+#: probe exists to catch. If healthy ever drifts past ~8s the answer is to find out WHY boot got
+#: slower, not to raise this again -- at that point the window closes and the probe stops
+#: discriminating, which is the only thing it is for.
+SLOW_BUDGET_S = 8.0
+
+#: The healthy figure the verdict quotes. It was hardcoded as "~1.3s" in the message string long
+#: after that stopped being true, so a RED verdict cited a baseline nobody could reproduce.
+HEALTHY_BASELINE_S = 5.0
 
 GREEN, RED, UNKNOWN = "GREEN", "RED", "UNKNOWN"
 
@@ -140,6 +159,13 @@ def _probe_env(probe_home: str) -> dict:
         "AI_SETUP": probe_home,
         "_AISETUP_TEST_ISOLATED": "1",
         "REDIS_DB": "15",
+        # T418 HATCH, scoped to this isolated child only (added 2026-10-07). The gate refuses
+        # a session booting as another resident; the probe legitimately boots a synthetic one,
+        # and T418's own refusal text names this variable as the sanctioned way to say so.
+        # Safe HERE precisely because of the two keys above: the child writes to a throwaway
+        # file plane and an isolated Redis, so "door-probe" has no record to leak and never
+        # reaches the real fleet roster. The gate stays strict everywhere a real seat lives.
+        "AKASHIC_BOOT_AS_OTHER": "1",
         "AKASHIC_RECALL_STATE_DIR": str(Path(probe_home) / "recall"),
     }
 
@@ -251,21 +277,45 @@ def _child_flow(timeout_s: float) -> dict:
                     )
 
                 # The one that matters: a verb whose body spawns a child.
+                #
+                # BOOTS AS A SYNTHETIC RESIDENT, ON PURPOSE, AND WITH T418'S OWN HATCH.
+                #
+                # 2026-10-07: T418's identity gate (correct, landed 10-01) began refusing
+                # {"agent": "door-probe"}, so the probe got a REFUSED string, missed its
+                # header, and reported boot_render_broken against a healthy door -- damming
+                # 173 commits for seven days, because this gate blocks `mirror.py --push`.
+                #
+                # I first "fixed" it by booting as the BOUND SEAT, which is more faithful and
+                # WRONG. Measured: a real seat boot through this door takes 5.01-6.35s, while
+                # the budget below is 5.0s -- and that budget is not arbitrary. It was found by
+                # mutation-testing against the reproduced 2026-07-25 bug: healthy 1.29s,
+                # DEGRADED 11.38s (the leaking spawn is bounded by a child's timeout=10).
+                # Moving "healthy" to ~6s collapses the window between healthy and degraded, so
+                # the faithful probe would have had to raise the budget past the defect it
+                # exists to catch. A probe that cannot discriminate is not a probe.
+                #
+                # So: synthetic identity, and AKASHIC_BOOT_AS_OTHER=1 set in _probe_env -- the
+                # escape hatch T418's OWN refusal text names for exactly this case. It is not a
+                # hole: the child runs in a throwaway file plane and an isolated Redis
+                # (see _probe_env), so "door-probe" has no record to leak and never reaches the
+                # real fleet roster. The gate stays strict everywhere a real seat lives, which
+                # tests/test_the_door_probe_survives_the_identity_gate.py ratchets.
                 stage = "boot"
+                probe_agent = "door-probe"
                 out = await asyncio.wait_for(
-                    s.call_tool("boot", {"agent": "door-probe", "task": "door probe -- single-frame response check"}),
+                    s.call_tool("boot", {"agent": probe_agent, "task": "door probe -- single-frame response check"}),
                     timeout=timeout_s,
                 )
                 text = "".join(getattr(c, "text", "") for c in out.content)
-                # boot's head names the agent: `agent: door-probe` for an agent reader (the MCP
-                # door captures a pipe), `Boot · door-probe` for a person.
-                if "agent: door-probe" not in text and "Boot · door-probe" not in text:
+                # boot's head names the agent: `agent: <id>` for an agent reader (the MCP
+                # door captures a pipe), `Boot · <id>` for a person.
+                if f"agent: {probe_agent}" not in text and f"Boot · {probe_agent}" not in text:
                     return _verdict(
                         RED,
                         stage,
                         time.time() - t0,
                         "boot_render_broken",
-                        f"boot returned {len(text)} chars without its CONTEXT header",
+                        f"boot as {probe_agent!r} returned {len(text)} chars without its CONTEXT header",
                         "The door answered but boot's render is wrong. Compare against "
                         f"`{_cli()} boot <you>`, which shares the code path.",
                     )
@@ -277,7 +327,8 @@ def _child_flow(timeout_s: float) -> dict:
                         stage,
                         el,
                         "response_path_slow",
-                        f"boot answered, but in {el:.1f}s against a ~1.3s healthy baseline (budget {SLOW_BUDGET_S}s)",
+                        f"boot answered, but in {el:.1f}s against a ~{HEALTHY_BASELINE_S}s "
+                        f"healthy baseline (budget {SLOW_BUDGET_S}s)",
                         "The door ANSWERS but is parked -- this is C7-4 in its bounded "
                         "form, where a reply waits behind some child's own timeout "
                         "rather than forever. Treat it as red: run "

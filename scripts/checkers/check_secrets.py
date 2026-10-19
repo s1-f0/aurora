@@ -77,6 +77,28 @@ BENIGN_FINGERPRINTS: dict[str, str] = {
     "924f713c5ef2f732": "tests/test_t156_wire_journal.py canary asserting the wire "
     "journal stores metadata only and never prompt content -- not a "
     "credential, and its presence is the proof the assertion exists",
+    # VERIFIED the same way, not assumed: sha256 of the literal was computed independently
+    # and equals the fingerprint the scan reported, so this entry names that exact 25-byte
+    # string and nothing else. The literal spells out that it is not a key.
+    "0b0e8dd958417728": "tests/test_touch_v1.py canary ('sk-ant-not-a-real-key-000', 25 "
+    "bytes) in test_the_raw_command_text_never_lands_in_the_record -- "
+    "the pin asserts a credential-shaped command never reaches a touch "
+    "record, so the fixture HAS to look like a credential or the pin "
+    "proves nothing. Same class as the t223/remote-bridge redaction "
+    "pins already allowlisted below, but entered by FINGERPRINT rather "
+    "than by path so a genuine key in that file would still fire",
+    # VERIFIED the same way (2026-10-19, e-drive reconciliation merge): sha256 of each literal
+    # line was computed independently and equals the fingerprint the scan reported. Both
+    # fixtures arrived with the E: line's shader lab and had no entry, so the merged tree's
+    # standing scan (tests/test_check_secrets.py p7) fired on them.
+    "7a3f6495f4c5cd1f": "tests/test_shader_harness.py canary (SECRET = 'TOPSECRET-not-for-the-lab', "
+    "36 bytes): planted in a file next to the shader lab so the pins can assert the harness "
+    "never serves it -- the fixture must look like a secret or the pin proves nothing. "
+    "Entered by FINGERPRINT, not path, so a genuine key in that file would still fire",
+    "24fe7cafa8bbc8b0": "tests/test_shader_serve_routes.py canary (SECRET = "
+    "'TOPSECRET-not-for-the-shelf', 38 bytes): planted beside the Shelf's served files so the "
+    "route pins can assert it never leaks into a response. Same class as the entry above; "
+    "entered by FINGERPRINT so a genuine key in that file would still fire",
 }
 
 # path -> WHY it is allowed. A bare path is refused (see _check_allowlist).
@@ -277,6 +299,20 @@ def render(rep: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # When this runs as a WINDOWED scheduled task (on Windows, launched by `pyw`, i.e.
+    # pythonw.exe) it has NO console and NO inherited handles: sys.stdout and sys.stderr are
+    # None and every print() below is silently discarded. Measured 2026-10-06; fixes item 0 of
+    # the affordance-layer fence. A no-op for any console run. Must be the FIRST statement in
+    # main(), before argument parsing.
+    import sys as _sys
+
+    _root = str(Path(__file__).resolve().parents[2])  # this script does not add the repo root
+    if _root not in _sys.path:  # to sys.path at module level, and the
+        _sys.path.insert(0, _root)  # repair lives in core/.
+    from core.infrastructure.background_stdio import repair_background_stdio
+
+    repair_background_stdio("secret-scan")
+
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     ap.add_argument("--root", default="")
     ap.add_argument("--history", action="store_true", help="scan every blob ever committed, not just the working tree")

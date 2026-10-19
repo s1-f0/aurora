@@ -124,6 +124,8 @@ MANIFEST = {
     # harness environment (CLAUDE_CODE_SESSION_ID) that the CLI shares with the PreToolUse and
     # PostToolUse hooks. An MCP call runs in a different process with a different session, so an
     # mcp door would address a record nothing writes to. CLI-only by the shape of the problem.
+    "recall_bench": "shared",  # W0.3: the answer key is read-only and Navi adjudicates it
+    "context": "shared",  # W0.4/W0.6 the context door: --stats today, anchors in W0.6
     "focus": "cli_only",
     "provenance": "cli_only",  # meta-harness task 01: diagnostic view of the session record
     "scope": "cli_only",  # meta-harness task 02: lesson applicability (show, set, widen, proposals)
@@ -302,6 +304,12 @@ MANIFEST = {
     # would become a tool any seat can call while naming itself the granter, which widens the
     # surface for exactly nothing, since the operator is the intended user. Administrative door,
     # operator-facing, stays here.
+    # screenspace ACTUATOR: drives the OPERATOR'S physical desktop (focus/keystrokes/clicks).
+    # Deliberately not self-service over MCP: design sec.6 step 7 puts fleet doors behind
+    # per-door ACL enforcement, and until that lands the only door is the one an operator types
+    # at. Already fail-closed either way (Cap.SCREEN_* sit in no role template), so this is
+    # about blast radius, not trust.
+    "screen": "cli_only",
     "grant": "cli_only",  # S-3 ACL write door: mint/revoke/list grants (atomic, audited)
     # T165. Adjudicator-side, not player-side: a player must never be able to score its own round,
     # and putting this on MCP would hand every seat the scorer. Operator surface, CLI only.
@@ -336,6 +344,15 @@ MANIFEST = {
     "mailbox": "shared",  # T095 M0 shadow mailbox: CLI+MCP twins both exist
     "roster": "shared",  # T108 S2 seat directory: CLI only; agents need an MCP read twin
     "stand_down": "gap",  # T086 session yield: CLI only; no MCP lifecycle twin yet
+    # recall-audit (2026-10-06): the retrieval-accuracy instrument, doored tonight after
+    # being built-ahead at 52db9b5 and never run. GAP, not cli_only, and the distinction
+    # is the point: `score` takes labels from MULTIPLE labellers and reports their
+    # AGREEMENT, so the instrument wants a fleet labelling one blind pack -- N-version
+    # blind review, which is exactly what the tool door exists to let a no-exec seat join.
+    # Marking it cli_only would hide a debt we intend to pay; `gap` records it where the
+    # next membrane slice will see it. (`pack` reads a machine-local ledger under the temp
+    # dir, so the MCP twin is a real slice, not a rename.)
+    "recall_audit": "gap",
     "new": "cli_only",  # subcommand of `doc`
     "arc": "cli_only",  # subcommand of `doc`: relabel an atom's arc in place (curation, like `new`)
     # ``college`` is the shared capability. These are its ergonomic argparse
@@ -447,6 +464,8 @@ MANIFEST = {
     "bifrost_standby": "cli_only",
     "list": "cli_only",  # CLI alias for `recall ""`; MCP's recall(query="") already lists all
     "fleet": "cli_only",  # local-model dispatch/roster — operator-oriented, not an agent verb
+    "media": "cli_only",  # the arsenal.media video toolbox passthrough (2026-10-12); its MCP tools live on
+    # their own door (py -m arsenal.media.door), not grafted onto the knowledge door
     "doctor": "cli_only",  # L2 fleet-liveness doctor (T030): operator diagnostic; agents get its
     # one-liner in every boot; an MCP twin lands with a real MCP-agent need
     "episode": "cli_only",  # session bookends: consumed by the Bifrost UI via CLI --json (S1). An MCP
@@ -523,6 +542,18 @@ MANIFEST = {
     "research_note": "toolbox_only",  # IR-6 category-specialized knowledge_learn wrapper
     "execute": "toolbox_only",  # the dispatch door itself (runner plumbing)
     "release_written_locks": "toolbox_only",  # runner lifecycle: locks released at reply (T048)
+    # --- suite verb family (2026-10-01, deepseek/Heimdall + Simon): READ-ONLY test-pipeline
+    #     doors over suite_baseline + pytest lastfailed + the run log. cli_only BY DESIGN: the
+    #     verbs are local-shell diagnostics (tail reads a local log file, rerun-failing spawns
+    #     pytest, diff/triage read a local baseline) -- nothing here widens the caller set or
+    #     reaches the operator's private channel, so there is no MCP/ToolBox twin to guard. The
+    #     parent `suite` parser itself is not a verb (it carries subcommands only).
+    "suite": "cli_only",
+    "diff": "cli_only",
+    # "triage" (`suite triage`) shares its key with the top-level `triage` verb, already
+    # declared cli_only above; a second literal key here would silently shadow that one.
+    "rerun_failing": "cli_only",
+    "tail": "cli_only",
 }
 
 # T067-1: shared-verb coverage on the THIRD door. The ToolBox spells some shared verbs its

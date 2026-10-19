@@ -55,9 +55,17 @@ class GuestReplyTracker:
         self._posted: set = set()
         self._dropped: set[str] = set()  # reply ids already reported as dropped
 
-    def track(self, bus_id: str, channel_key: Any) -> None:
-        """Register a guest message by its bus id, so replies to it can find their way out."""
+    def track(self, bus_id: str, channel_key: Any) -> bool:
+        """Register a guest message by its bus id, so replies to it can find their way out.
+
+        Returns False (and stores nothing) for a missing/empty bus id -- the live gateway
+        logged "bus id None" repeatedly; registering that under the literal key 'None'
+        would make every reply resolve against a phantom guest and die silently. A None id
+        is a NOT-ADMITTED guest, not a key."""
+        if bus_id is None or str(bus_id).strip() == "":
+            return False
         self._tracked[str(bus_id)] = channel_key
+        return True
 
     def poll(
         self, msgs: list[dict[str, Any]], on_drop: Callable[[dict[str, Any]], None] | None = None
@@ -65,27 +73,35 @@ class GuestReplyTracker:
         """Return the POST ops for this batch: {channel_key, frm, text} per reply that
         answers a tracked guest. Never raises; a malformed message is a no-op, not a crash.
 
-        A message whose link does not resolve to a tracked guest makes no post op; it fires
-        ``on_drop({id, frm, reply_to, reason, kind, text})`` once per message id, so a reply
-        that never reaches Discord leaves a receipt instead of dying on a bare `continue`."""
+        Every reply whose link DOES NOT resolve to a tracked guest is a DROP, and a drop
+        is VISIBLE: it fires ``on_drop({id, frm, reply_to, reason, kind, text})`` once per
+        reply id (RB-26: a crash-redelivered ghost reply must leave one receipt, not spam
+        the journal forever). The silence this retires is the 2026-08-26/2026-09-23 defect
+        class -- "your reply never landed in the discord" with NO error logged, because a
+        bare `continue` produced no receipt. Visibility first, delivery separately: the
+        drop still produces NO post op; it is now loud instead of silent."""
         ops: list[dict[str, Any]] = []
         for m in msgs or []:
             if not isinstance(m, dict):
                 continue
             meta = m.get("meta") or {}
             rid = str(m.get("id") or "")
+            frm = str(m.get("frm") or "seat")
             # Two link forms, one seam: bus.send_reply stamps meta.reply_id; the CLI's
             # --answers stamps meta.answers (the ladder's strict link). Either answers
             # a guest; the tracker follows both so the door and the ladder never fork.
             reply_to = str(meta.get("reply_id") or meta.get("answers") or "").strip()
             chan = self._tracked.get(reply_to) if reply_to else None
-            if chan is None:  # not answering a guest we admitted: a visible drop, once per id
+            if chan is None:
+                # Not answering a guest we admitted. Was: silent `continue` (ambient).
+                # Now: a reply that pointed at NOTHING (no link) or at an UNTRACKED id
+                # is a visible drop -- distinct reasons, one receipt per reply id.
                 if on_drop is not None and (not rid or rid not in self._dropped):
                     with contextlib.suppress(Exception):  # the callback must not break the batch
                         on_drop(
                             {
                                 "id": rid,
-                                "frm": str(m.get("frm") or "seat"),
+                                "frm": frm,
                                 "reply_to": reply_to,
                                 "reason": "untracked" if reply_to else "unlinked",
                                 "kind": str(m.get("kind") or ""),
@@ -102,7 +118,7 @@ class GuestReplyTracker:
             text = str(m.get("text") or "").strip()
             if not text:
                 continue
-            ops.append({"channel_key": chan, "frm": str(m.get("frm") or "seat"), "text": text[:MAX_POST_CHARS]})
+            ops.append({"channel_key": chan, "frm": frm, "text": text[:MAX_POST_CHARS]})
             if rid:
                 self._posted.add(rid)
         return ops

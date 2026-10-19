@@ -98,6 +98,75 @@ def _loud(msg: str) -> None:
         pass
 
 
+def _win_exec(command: str):
+    """Split a Windows shell command WITHOUT round-tripping it through the POSIX `shlex`
+    tokenizer, which mangles `|`, `"`, and backtick-quoting on Windows (live incident
+    2026-10-13: `powershell -Command "Get-Date"` had its quotes dropped, so PowerShell
+    ECHOED the text instead of running it; `^|` was passed literally rather than as a pipe).
+
+    A `shlex.split(..., posix=False)` "smart quote" mode exists, but it drops the quotes
+    themselves -- which PowerShell then reads as a bareword to echo. The fix is to hand a
+    PowerShell/cmd.exe command to the interpreter THAT UNDERSTANDS ITS OWN SYNTAX as a
+    single string argument, never re-tokenizing it ourselves.
+
+    Returns a subprocess argv list, or None if the command should fall back to the
+    platform's ordinary splitter. On non-Windows this is a no-op (returns None)."""
+    if os.name != "nt":
+        return None
+    stripped = command.strip()
+    low = stripped.lower()
+    # PowerShell: everything after the tool name becomes ONE -Command script string.
+    # The seat may have written `-NoProfile`/`-Command`/`-EncodedCommand` itself; those are
+    # invocation flags, not script text, so strip the ones we control and keep the REMAINING
+    # tail verbatim as the script (pipes, quotes, backticks intact) rather than re-wrapping
+    # PowerShell's own flags as script body.
+    if low == "powershell" or low.startswith("powershell "):
+        rest = stripped[len("powershell") :].strip()
+        if not rest:
+            return ["powershell"]
+        # Split off leading flag tokens only (no quoting needed at this layer; the leading
+        # flags are the first whitespace-delimited words and carry no spaces themselves).
+        tokens = rest.split()
+        i = 0
+        while i < len(tokens) and tokens[i].lower() in ("-noprofile", "-command", "-encodedcommand"):
+            i += 1
+        body = " ".join(tokens[i:])
+        if not body:
+            return ["powershell"]
+        return ["powershell", "-NoProfile", "-Command", body]
+    # cmd.exe: hand the tail to /c unchanged.
+    if low in ("cmd", "cmd.exe") or low.startswith(("cmd ", "cmd.exe ")):
+        tail = stripped.split(None, 1)
+        body = tail[1] if len(tail) > 1 else ""
+        return ["cmd", "/c", body] if body else ["cmd", "/c"]
+    return None
+
+
+# Pipes/redirects/job-control/substitution -- the operators a bare shlex split cannot carry.
+# A command that uses any of these MUST run through a shell interpreter (cmd.exe /c on
+# Windows, /bin/sh -c elsewhere), which is the one actor that understands | > >> < && || ;
+# and $(...). Without it the metacharacter is silently dropped by the splitter (live
+# incident 2026-10-13: `foo | bar` returned only `foo`'s output; the `| bar` half vanished).
+_COMPOUND_SHELL_META = frozenset("|&;<>")
+
+
+def _shell_command_for(command: str):
+    """Return a (shell, *flags, script) argv that runs `command` through a REAL shell
+    interpreter -- the shape `subprocess.run(..., shell=True)` builds implicitly. Returns
+    None when the command needs no shell (only apply this for compound commands, never to
+    a plain `python -c ...`, whose quoting must NOT round-trip through a second shell)."""
+    if os.name == "nt":
+        return ["cmd", "/c", command]
+    return ["/bin/sh", "-c", command]
+
+
+def _needs_shell(command: str) -> bool:
+    """True when the command carries a pipe/redirect/joiner that only a shell interprets.
+    Conservative: strips nothing, ignores quote context -- this is a routing hint, not a
+    security gate (the seat is already Cap.EXEC-authorised to reach this branch)."""
+    return any(ch in command for ch in _COMPOUND_SHELL_META)
+
+
 MAX_CMD_TIMEOUT = int(
     os.getenv("DEEPSEEK_MAX_CMD_TIMEOUT", "300")
 )  # ceiling a single run_command can't exceed, even if the model asks for more
@@ -1245,8 +1314,50 @@ class ToolBox:
             return err
         return self._agent_cli(["note", self.agent_id or "deepseek", "--title", str(title), "--note", str(note)])
 
+    def recall_bench(self, limit: int = 5) -> str:
+        """W0.3: grade recall against the committed answer key. Read-only.
+
+        On the third door because the seat that ADJUDICATES the answer set is Navi, who works
+        through this door. A bench its adjudicator cannot run is a bench with one grader.
+        """
+        return self._agent_cli(["recall-bench", "--limit", str(int(limit))])
+
+    def context(self, anchor: str = "", level: int = 1, hours: float = 24.0, limit: int = 20000) -> str:
+        """W0.4: meter the touch stream -- session coverage, touches per hour by seat, targets
+        per touch, the share of commands that could not be seen into, ring retention, drops.
+
+        On the third door by construction, not by courtesy: the instrument measures a cost that
+        EVERY seat pays on every tool call, so a meter only the shell-holder can read is a meter
+        owned by whoever happens to have a shell. Read-only; it reads events:raw and renders.
+
+        What is not captured (hook latency, anchor resolve cost) comes back UNCHECKABLE with the
+        reason attached, never as an estimate.
+        """
+        if anchor:
+            return self._agent_cli(["context", str(anchor), "--level", str(int(level))])
+        return self._agent_cli(["context", "--stats", "--hours", str(hours), "--limit", str(int(limit))])
+
     def knowledge_boot(self, task):
-        return self._agent_cli(["boot", self.agent_id or "deepseek", "--task", task])
+        # T418 (2026-10-01): a ToolBox boots as ITS OWN seat. This line read `boot deepseek`
+        # for every ToolBox for months, so Sunshine's knowledge_boot answered "YOU ARE:
+        # Deepseek | Heimdall" and served him Heimdall's deferred work, notes and mail (the
+        # 09:20 receipt). The seat id is the one this box was constructed with; with none,
+        # the door's own subject check decides from the process stamp, never a default name.
+        who = str(self.agent_id or "").strip()
+        if not who:
+            try:
+                from core.comm.seat_identity import resolve as _resolve
+
+                who = _resolve(os.getenv("CLAUDE_CODE_SESSION_ID") or "")
+            except Exception:
+                who = ""
+        if not who or who.startswith("unknown-"):
+            return (
+                "REFUSED: this ToolBox has no seat identity to boot as (no agent_id, no "
+                "AKASHIC_AGENT_ID stamp) -- a boot without a subject would be served someone "
+                "else's record (T418)"
+            )
+        return self._agent_cli(["boot", who, "--task", task])
 
     def knowledge_map(self, topic, per_layer=6):
         """T067-1 B1: walk the knowledge graph from a topic -- connected lessons, notes and
@@ -1920,7 +2031,7 @@ class ToolBox:
                 scope = it.get("scope") or []
                 if not scope:
                     continue
-                if any(_intent.scope_matches(s, rel) for s in scope):  # ty: ignore[unresolved-attribute]  # pyright: ignore[reportAttributeAccessIssue]  # LATENT: intent.scope_matches never existed; except swallows, tag is always ""
+                if any(_intent.scope_matches(s, rel) for s in scope):
                     return str(it.get("intent", ""))
         except Exception:
             pass
@@ -2030,6 +2141,10 @@ class ToolBox:
             "unwedge",
             "pulse",
             "flightdeck",
+            # W0.4 (2026-10-02): the context door. Read-only -- it reads events:raw and renders.
+            # Shared by construction: the instrument meters a cost every seat pays, so every seat
+            # must be able to read it, or the meter belongs to whoever happens to have a shell.
+            "context",
             # recovery/observation reads (operator-authorized 2026-08-31, door_read_allowlist_gap):
             # a live admin seat must be able to SEE the fleet and DRIVE recovery from inside a
             # session -- roster (who's up, code state), mailbox (who's emailing, undrained lane),
@@ -2344,14 +2459,26 @@ class ToolBox:
             # Unrestricted shell for an operator-authorised seat. Still shell=False (argv is
             # split, never handed to a shell interpreter), still Cap.EXEC-gated above, still
             # timeout-capped -- what is lifted is the FAMILY allowlist, not the process bounds.
+            # EXCEPTION: a compound command (pipe/redirect/&&/;) has no argv representation --
+            # shlex turns `|` into a literal token that then goes nowhere (silent pipe drop,
+            # live 2026-10-13). Those run through a real shell interpreter instead, the one
+            # actor that UNDERSTANDS the metacharacter; PATH is unchanged and no tokenization
+            # is attempted, so quoting reaches cmd.exe/sh verbatim.
             import shlex as _shlex
 
-            try:
-                argv = _normalize_launcher(_shlex.split(command, posix=False))
-            except ValueError as e:
-                return f"REFUSED: could not parse the command ({e})"
-            if not argv:
-                return "REFUSED: empty command"
+            if _needs_shell(command):
+                argv = _shell_command_for(command)
+            else:
+                argv = _win_exec(command)
+                if argv is None:
+                    try:
+                        # _normalize_launcher maps the printed launcher (`uv run ...`, and a bare
+                        # `py`/`python3` off Windows) onto this process's interpreter.
+                        argv = _normalize_launcher(_shlex.split(command, posix=True))
+                    except ValueError as e:
+                        return f"REFUSED: could not parse the command ({e})"
+                if not argv:
+                    return "REFUSED: empty command"
             env_extra = {"AKASHIC_SEAT_DOOR": "toolbox"}
         elif self.trust:
             # T067-2 G1/G2: UNATTENDED exec is families-only, shell=False.

@@ -116,7 +116,11 @@ def _unread_count(agent_id: str) -> int:
     from agent.bifrost_pull import collect_boot_bifrost
 
     try:
-        data = collect_boot_bifrost(agent_id, limit=8) or {}
+        # with_locks=False (W132, 2026-10-07): this function returns ONE INTEGER and runs in the
+        # UserPromptSubmit hook, so it executes on every user turn. It was asking for "presence +
+        # unread peek + held locks" and discarding the locks -- 3.789s of a 5.245s call, measured,
+        # to enumerate (measured) zero locks across a 66,700-key keyspace.
+        data = collect_boot_bifrost(agent_id, limit=8, with_locks=False) or {}
     except Exception:
         return 0  # fail-soft: the whisper never breaks a turn
     pending = int(data.get("pending", 0) or 0)
@@ -240,9 +244,15 @@ def _reach_line(agent_id: str) -> str:
             f"That is not 'armed'; assume the operator cannot reach you until you check."
         )
 
+    # ONE SOURCE OF TRUTH (2026-10-02). This used to build its own command, and it built the
+    # WRONG one: `scripts/bifrost_wake.py --agent X --min-tier 0` leaves BIFROST_WAKE_ORIGIN
+    # unset, which stamps origin "unknown", which is not in WAKEABLE_ORIGINS, so harness_armed()
+    # is False and the stop hook blocks the very seat that obeyed this line. Boot and the stop
+    # hook now read the same string from wake_seat.arm_command.
+    sid = (os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID") or "").strip()
     arm = (
-        f"arm it (must be harness-tracked -- a detached one fires into nothing): "
-        f"{_pyl()} scripts/bifrost_wake.py --agent {agent_id} --min-tier 0"
+        f"arm it (must be harness-tracked -- a detached one fires into nothing), as a Bash "
+        f"run_in_background task: {wake_seat.arm_command(agent_id, sid or None)}"
     )
     if state == "armed":
         return "reach: watcher ARMED -- the operator can wake you; re-arm after it fires (firing consumes it)"

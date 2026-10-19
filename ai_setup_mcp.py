@@ -246,6 +246,13 @@ _ARG_DEFAULTS = {
     # stats
     "hours": None,
     "days": None,
+    # context door (W0.4)
+    "stats": False,
+    # recall-bench (W0.3)
+    "set": None,
+    # context scene (W0.5/W0.6)
+    "anchor": None,
+    "level": None,
     # graduate
     "enforced_by": None,
     "undo": False,
@@ -448,6 +455,35 @@ async def boot(agent: str, task: str = "") -> str:
     a short stable id (e.g. 'cursor', 'claude'); `task` tunes what context is surfaced.
     """
     return await _athread(_run, agent_cli.cmd_boot, agent_id=agent, task=task or None)
+
+
+@mcp.tool()
+async def recall_bench(limit: int = 5) -> str:
+    """W0.3: grade recall against the committed answer key -- recall@1, recall@k, abstention and
+    chrome share, over moments an agent was actually in.
+
+    Drives the REAL trigger (path/command), never a query: the 2026-08-08 dossier measured that
+    querying the store directly returns the right lesson first almost every time, so a
+    query-keyed bench would grade the half that already works. The failure is in WHEN, not WHAT.
+    """
+    return await _athread(_run, agent_cli.cmd_recall_bench, limit=limit)
+
+
+@mcp.tool()
+async def context(
+    anchor: str = "", level: int = 1, stats: bool = False, hours: float = 24.0, limit: int = 20000
+) -> str:
+    """W0.5/W0.6: one anchor, every plane. Pass `anchor` (a path, path:line, dir/, a ref such as
+    sha:/task:/lesson:/event:, a url or verb:) to get the scene; pass `stats=True` instead to meter
+    the touch stream.
+
+    A plane that knows nothing and a plane that CANNOT know never render the same: every plane
+    reports ok, empty, UNCHECKABLE (with its reason) or error, and every row carries a ref the
+    house's own doors resolve. Two planes are live, git and touches; the rest say why not.
+    """
+    return await _athread(
+        _run, agent_cli.cmd_context, anchor=anchor or None, level=level, stats=stats, hours=hours, limit=limit
+    )
 
 
 @mcp.tool()
