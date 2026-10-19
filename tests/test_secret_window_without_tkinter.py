@@ -19,7 +19,7 @@ import pytest
 
 import agent_cli
 
-VALUE = "sk-pin-0000000000000000"
+VALUE = "pin-value-not-a-key-0000"
 
 
 @pytest.fixture
