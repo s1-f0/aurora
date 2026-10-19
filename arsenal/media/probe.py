@@ -23,20 +23,26 @@ league lane's HUD reader: replay, replay, replay); the same probe from its sidec
     sc["audio"][0]["house_name"]        # "Mix": a stream's own title, else the house track map (OBS track N+1)
     sc["video"]["keyint_s"]             # 4.166667: how early a copy-cut can start
 """
+
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import itertools
 import json
 import os
 import threading
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
 from . import ff, parse
-from .receipt import quick_id  # noqa: F401  (re-exported: probe.quick_id is the documented name)
+from .receipt import quick_id  # also re-exported: probe.quick_id is the documented name
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 SIDECAR_SCHEMA = "arsenal.media.sidecar/v0"
 
@@ -59,22 +65,40 @@ _KEPT_ON_REFRESH = ("kind", "kind_from", "kind_votes", "links", "spans", "artifa
 SHARE_RETRY_S = 2.0
 
 BLIND = [
-    "vfr is ffprobe's average-vs-base frame rate comparison unless pymediainfo is installed (it reads the "
-    "container's own frame-rate mode)",
+    (
+        "vfr is ffprobe's average-vs-base frame rate comparison unless pymediainfo is installed (it reads the "
+        "container's own frame-rate mode)"
+    ),
     "keyint_s without keyframes=True is measured on the first 20 s of packets only; keyframes_n needs keyframes=True",
-    "recorded_at from an OBS file name is LOCAL wall time with 1 s resolution; from tags it is the container's "
-    "creation_time, which some tools reset on remux",
-    "kind is league_* only when arsenal.media.league.hud can look at 3 keyframes; otherwise screen (an OBS "
-    "recording) or unknown",
+    (
+        "recorded_at from an OBS file name is LOCAL wall time with 1 s resolution; from tags it is the container's "
+        "creation_time, which some tools reset on remux"
+    ),
+    (
+        "kind is league_* only when arsenal.media.league.hud can look at 3 keyframes; otherwise screen (an OBS "
+        "recording) or unknown"
+    ),
 ]
 
 
-def keyframes(path, *, stream: int = 0) -> List[float]:
+def keyframes(path, *, stream: int = 0) -> list[float]:
     """File times (s from the file's start: container pts minus the format start_time) of every keyframe of video
     stream `stream`, ascending. One ffprobe pass reads the packet flags and the format start together."""
-    res = ff.run(["-v", "error", "-select_streams", f"v:{stream}", "-show_entries",
-                  "packet=pts_time,flags:format=start_time", "-of", "csv", str(path)], tool="ffprobe")
-    pts: List[float] = []
+    res = ff.run(
+        [
+            "-v",
+            "error",
+            "-select_streams",
+            f"v:{stream}",
+            "-show_entries",
+            "packet=pts_time,flags:format=start_time",
+            "-of",
+            "csv",
+            str(path),
+        ],
+        tool="ffprobe",
+    )
+    pts: list[float] = []
     f0 = 0.0
     for line in res.stdout.splitlines():
         section, _, rest = line.partition(",")
@@ -87,12 +111,13 @@ def keyframes(path, *, stream: int = 0) -> List[float]:
     return sorted(round(t - f0, 6) for t in pts)
 
 
-_scan_keyframes = keyframes        # probe()'s `keyframes` flag shadows the function name inside probe()
+_scan_keyframes = keyframes  # probe()'s `keyframes` flag shadows the function name inside probe()
 
 
 # =================================================================================================
 # sidecars: <state>/sidecars/<id>.json, the truth the catalog indexes
 # =================================================================================================
+
 
 def sidecar_dir() -> Path:
     return ff.state_dir() / "sidecars"
@@ -102,7 +127,7 @@ def sidecar_path(media_id: str) -> Path:
     return sidecar_dir() / f"{media_id}.json"
 
 
-def retry_shared(fn, *, wait_s: Optional[float] = None):
+def retry_shared(fn, *, wait_s: float | None = None):
     """fn(), retried while Windows answers PermissionError (a sharing violation, or a name still being replaced or
     deleted) for up to wait_s (default SHARE_RETRY_S); the last PermissionError is raised."""
     deadline = time.monotonic() + (SHARE_RETRY_S if wait_s is None else wait_s)
@@ -117,7 +142,7 @@ def retry_shared(fn, *, wait_s: Optional[float] = None):
             delay = min(delay * 2, 0.05)
 
 
-def read_sidecar(media_id: str) -> Optional[dict]:
+def read_sidecar(media_id: str) -> dict | None:
     """The sidecar on the file clock, or None when there is none (or it is not JSON: probe() then reads the file
     again). One held open by another process for longer than SHARE_RETRY_S refuses, never reads as missing."""
     raw = _read_raw(media_id)
@@ -136,20 +161,23 @@ def on_file_clock(sc: dict) -> dict:
             sc["keyframes"] = [round(k - f0, 6) for k in sc["keyframes"]]
         if isinstance(sc.get("video"), dict) and sc["video"].get("start_s") is not None:
             sc["video"] = dict(sc["video"], start_s=round(sc["video"]["start_s"] - f0, 6))
-        sc["chapters"] = [dict(c, **{k: round(c[k] - f0, 6) for k in ("t0", "t1") if c.get(k) is not None})
-                          for c in sc.get("chapters") or []]
+        sc["chapters"] = [
+            dict(c, **{k: round(c[k] - f0, 6) for k in ("t0", "t1") if c.get(k) is not None})
+            for c in sc.get("chapters") or []
+        ]
     sc["clock"] = "file"
     return sc
 
 
-def _read_raw(media_id: str) -> Optional[dict]:
+def _read_raw(media_id: str) -> dict | None:
     """The sidecar file exactly as written."""
     path = sidecar_path(media_id)
     try:
         text = retry_shared(lambda: path.read_text(encoding="utf-8"))
     except PermissionError as exc:
-        raise ff.MediaError(f"sidecar {media_id} stayed locked by another process for {SHARE_RETRY_S:g} s "
-                            f"({path})") from exc
+        raise ff.MediaError(
+            f"sidecar {media_id} stayed locked by another process for {SHARE_RETRY_S:g} s ({path})"
+        ) from exc
     except OSError:
         return None
     try:
@@ -188,10 +216,8 @@ def sidecar_lock(media_id: str, wait_s: float = 10.0, stale_s: float = 60.0) -> 
     try:
         yield
     finally:
-        try:
-            retry_shared(lock.unlink)       # a lock left behind would stall every writer until it goes stale
-        except OSError:
-            pass
+        with contextlib.suppress(OSError):
+            retry_shared(lock.unlink)  # a lock left behind would stall every writer until it goes stale
 
 
 def write_sidecar(sidecar: dict) -> Path:
@@ -205,16 +231,15 @@ def write_sidecar(sidecar: dict) -> Path:
             json.dump(sc, fh, indent=1, sort_keys=True)
             fh.write("\n")
         try:
-            retry_shared(lambda: os.replace(tmp, path))     # a reader holding the old file open refuses the replace
+            retry_shared(lambda: os.replace(tmp, path))  # a reader holding the old file open refuses the replace
         except PermissionError as exc:
-            raise ff.MediaError(f"sidecar {sc['id']} stayed open in another process for {SHARE_RETRY_S:g} s; "
-                                f"not written ({path})") from exc
+            raise ff.MediaError(
+                f"sidecar {sc['id']} stayed open in another process for {SHARE_RETRY_S:g} s; not written ({path})"
+            ) from exc
     finally:
         if tmp.exists():
-            try:
+            with contextlib.suppress(OSError):
                 tmp.unlink()
-            except OSError:
-                pass
     return path
 
 
@@ -222,7 +247,8 @@ def write_sidecar(sidecar: dict) -> Path:
 # facts
 # =================================================================================================
 
-def _ratio(text) -> Optional[float]:
+
+def _ratio(text) -> float | None:
     num, _, den = str(text or "").partition("/")
     try:
         n, d = float(num), float(den or 1)
@@ -238,7 +264,7 @@ def _num(value, cast=float):
         return None
 
 
-def track_name(audio_index: int, tags: Optional[dict]) -> Tuple[Optional[str], str]:
+def track_name(audio_index: int, tags: dict | None) -> tuple[str | None, str]:
     """(title, house_name): arsenal.media.audio's rule, so the catalog and the audio lanes name tracks alike (a
     stream's own title unless an encoder wrote a generic one like "simple_opus_recording0", else the house map).
     The fallback below is only for a moment when audio.py cannot be imported."""
@@ -251,7 +277,7 @@ def track_name(audio_index: int, tags: Optional[dict]) -> Tuple[Optional[str], s
     return title, house
 
 
-def _minus(value, f0: float) -> Optional[float]:
+def _minus(value, f0: float) -> float | None:
     """A container time as a file time."""
     v = _num(value)
     return None if v is None else round(v - f0, 6)
@@ -261,44 +287,85 @@ def _video(s: dict, f0: float) -> dict:
     tags = s.get("tags") or {}
     avg, base = _ratio(s.get("avg_frame_rate")), _ratio(s.get("r_frame_rate"))
     fps = avg or base
-    return {"index": s.get("index"), "codec": s.get("codec_name"), "profile": s.get("profile"),
-            "w": s.get("width"), "h": s.get("height"), "fps": round(fps, 6) if fps else None,
-            "fps_rational": s.get("avg_frame_rate") if avg else s.get("r_frame_rate"),
-            "vfr": bool(avg and base and abs(avg - base) > 0.01 * base), "vfr_from": "ffprobe-rates",
-            "has_b_frames": _num(s.get("has_b_frames"), int), "pix_fmt": s.get("pix_fmt"),
-            "color": {"range": s.get("color_range"), "space": s.get("color_space"),
-                      "transfer": s.get("color_transfer"), "primaries": s.get("color_primaries")},
-            "time_base": s.get("time_base"), "start_s": _minus(s.get("start_time"), f0),
-            "duration_s": _num(s.get("duration")), "frames": _num(s.get("nb_frames"), int),
-            "encoder": tags.get("encoder"), "title": tags.get("title"),
-            "keyint_s": None, "keyint_frames": None, "keyint_from": None, "keyframes_n": None}
+    return {
+        "index": s.get("index"),
+        "codec": s.get("codec_name"),
+        "profile": s.get("profile"),
+        "w": s.get("width"),
+        "h": s.get("height"),
+        "fps": round(fps, 6) if fps else None,
+        "fps_rational": s.get("avg_frame_rate") if avg else s.get("r_frame_rate"),
+        "vfr": bool(avg and base and abs(avg - base) > 0.01 * base),
+        "vfr_from": "ffprobe-rates",
+        "has_b_frames": _num(s.get("has_b_frames"), int),
+        "pix_fmt": s.get("pix_fmt"),
+        "color": {
+            "range": s.get("color_range"),
+            "space": s.get("color_space"),
+            "transfer": s.get("color_transfer"),
+            "primaries": s.get("color_primaries"),
+        },
+        "time_base": s.get("time_base"),
+        "start_s": _minus(s.get("start_time"), f0),
+        "duration_s": _num(s.get("duration")),
+        "frames": _num(s.get("nb_frames"), int),
+        "encoder": tags.get("encoder"),
+        "title": tags.get("title"),
+        "keyint_s": None,
+        "keyint_frames": None,
+        "keyint_from": None,
+        "keyframes_n": None,
+    }
 
 
-def _audio(streams: List[dict]) -> List[dict]:
+def _audio(streams: list[dict]) -> list[dict]:
     out = []
     for n, s in enumerate(x for x in streams if x.get("codec_type") == "audio"):
         tags = s.get("tags") or {}
         title, house = track_name(n, tags)
-        out.append({"index": n, "stream": s.get("index"), "codec": s.get("codec_name"),
-                    "channels": s.get("channels"), "layout": s.get("channel_layout"),
-                    "sample_rate": _num(s.get("sample_rate"), int), "title": title,
-                    "house_name": house, "language": tags.get("language"),
-                    "duration_s": _num(s.get("duration")), "bit_rate": _num(s.get("bit_rate"), int)})
+        out.append(
+            {
+                "index": n,
+                "stream": s.get("index"),
+                "codec": s.get("codec_name"),
+                "channels": s.get("channels"),
+                "layout": s.get("channel_layout"),
+                "sample_rate": _num(s.get("sample_rate"), int),
+                "title": title,
+                "house_name": house,
+                "language": tags.get("language"),
+                "duration_s": _num(s.get("duration")),
+                "bit_rate": _num(s.get("bit_rate"), int),
+            }
+        )
     return out
 
 
-def _subtitles(streams: List[dict]) -> List[dict]:
-    return [{"index": n, "stream": s.get("index"), "codec": s.get("codec_name"),
-             "title": (s.get("tags") or {}).get("title"), "language": (s.get("tags") or {}).get("language")}
-            for n, s in enumerate(x for x in streams if x.get("codec_type") == "subtitle")]
+def _subtitles(streams: list[dict]) -> list[dict]:
+    return [
+        {
+            "index": n,
+            "stream": s.get("index"),
+            "codec": s.get("codec_name"),
+            "title": (s.get("tags") or {}).get("title"),
+            "language": (s.get("tags") or {}).get("language"),
+        }
+        for n, s in enumerate(x for x in streams if x.get("codec_type") == "subtitle")
+    ]
 
 
-def _chapters(raw: List[dict], f0: float) -> List[dict]:
-    return [{"t0": _minus(c.get("start_time"), f0), "t1": _minus(c.get("end_time"), f0),
-             "title": (c.get("tags") or {}).get("title")} for c in raw or []]
+def _chapters(raw: list[dict], f0: float) -> list[dict]:
+    return [
+        {
+            "t0": _minus(c.get("start_time"), f0),
+            "t1": _minus(c.get("end_time"), f0),
+            "title": (c.get("tags") or {}).get("title"),
+        }
+        for c in raw or []
+    ]
 
 
-def _creation_epoch(tags: dict) -> Optional[float]:
+def _creation_epoch(tags: dict) -> float | None:
     raw = tags.get("creation_time")
     if not raw:
         return None
@@ -307,11 +374,11 @@ def _creation_epoch(tags: dict) -> Optional[float]:
     except ValueError:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.timestamp() if dt.year >= 2000 else None     # mp4 writers put 1904/1970 in for "unknown"
+        dt = dt.replace(tzinfo=UTC)
+    return dt.timestamp() if dt.year >= 2000 else None  # mp4 writers put 1904/1970 in for "unknown"
 
 
-def _recorded(path: Path, tags: dict, mtime_ns: int, duration: Optional[float]) -> Tuple[str, float, str]:
+def _recorded(path: Path, tags: dict, mtime_ns: int, duration: float | None) -> tuple[str, float, str]:
     """(local ISO wall time, epoch, where it came from): the OBS name, else the container's creation_time, else the
     file's mtime minus its duration (the moment a recorder that closes on stop started)."""
     dt = parse.obs_time(path.name)
@@ -325,42 +392,63 @@ def _recorded(path: Path, tags: dict, mtime_ns: int, duration: Optional[float]) 
     return local.isoformat(), float(epoch), source
 
 
-def _keyint_head(path, seconds: float = KEYINT_HEAD_S) -> Optional[float]:
+def _keyint_head(path, seconds: float = KEYINT_HEAD_S) -> float | None:
     """Median gap between keyframes in the first `seconds` of packets: the keyframe interval without a full scan."""
-    res = ff.run(["-v", "error", "-select_streams", "v:0", "-read_intervals", f"%+{seconds:g}",
-                  "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", str(path)], tool="ffprobe", check=False)
-    kf = sorted(float(p) for p, _, f in (ln.partition(",") for ln in res.stdout.splitlines())
-                if "K" in f and p not in ("", "N/A"))
+    res = ff.run(
+        [
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-read_intervals",
+            f"%+{seconds:g}",
+            "-show_entries",
+            "packet=pts_time,flags",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        tool="ffprobe",
+        check=False,
+    )
+    kf = sorted(
+        float(p)
+        for p, _, f in (ln.partition(",") for ln in res.stdout.splitlines())
+        if "K" in f and p not in ("", "N/A")
+    )
     return _median_gap(kf)
 
 
-def _median_gap(kf: List[float]) -> Optional[float]:
-    gaps = sorted(b - a for a, b in zip(kf, kf[1:]) if b > a)
+def _median_gap(kf: list[float]) -> float | None:
+    gaps = sorted(b - a for a, b in itertools.pairwise(kf) if b > a)
     return round(gaps[len(gaps) // 2], 6) if gaps else None
 
 
-def _set_keyint(video: dict, keyint: Optional[float], source: str, n: Optional[int] = None) -> None:
+def _set_keyint(video: dict, keyint: float | None, source: str, n: int | None = None) -> None:
     video["keyint_s"] = keyint
-    video["keyint_frames"] = int(round(keyint * video["fps"])) if keyint and video.get("fps") else None
+    video["keyint_frames"] = round(keyint * video["fps"]) if keyint and video.get("fps") else None
     video["keyint_from"] = source if keyint else None
     if n is not None:
         video["keyframes_n"] = n
 
 
-def _mediainfo(path) -> Optional[dict]:
+def _mediainfo(path) -> dict | None:
     """pymediainfo, when installed: the writing application and the container's own frame-rate mode (31 ms)."""
     if importlib.util.find_spec("pymediainfo") is None:
         return None
     try:
         from pymediainfo import MediaInfo
+
         info = MediaInfo.parse(str(path))
-    except Exception as exc:          # a mediainfo failure must not cost the probe
+    except Exception as exc:  # a mediainfo failure must not cost the probe
         return {"error": str(exc)[:200]}
     general = next((t for t in info.tracks if t.track_type == "General"), None)
     video = next((t for t in info.tracks if t.track_type == "Video"), None)
-    return {"writing_application": getattr(general, "writing_application", None),
-            "encoded_application": getattr(general, "encoded_application", None),
-            "frame_rate_mode": getattr(video, "frame_rate_mode", None) if video else None}
+    return {
+        "writing_application": getattr(general, "writing_application", None),
+        "encoded_application": getattr(general, "encoded_application", None),
+        "frame_rate_mode": getattr(video, "frame_rate_mode", None) if video else None,
+    }
 
 
 def _facts(path: Path, st: os.stat_result, media_id: str, mediainfo: bool) -> dict:
@@ -368,8 +456,9 @@ def _facts(path: Path, st: os.stat_result, media_id: str, mediainfo: bool) -> di
     fmt = j.get("format") or {}
     tags = fmt.get("tags") or {}
     streams = j.get("streams") or []
-    vstreams = [s for s in streams if s.get("codec_type") == "video"
-                and not (s.get("disposition") or {}).get("attached_pic")]
+    vstreams = [
+        s for s in streams if s.get("codec_type") == "video" and not (s.get("disposition") or {}).get("attached_pic")
+    ]
     duration = _num(fmt.get("duration"))
     f0 = _num(fmt.get("start_time")) or 0.0
     video = _video(vstreams[0], f0) if vstreams else None
@@ -381,18 +470,40 @@ def _facts(path: Path, st: os.stat_result, media_id: str, mediainfo: bool) -> di
             video["vfr"], video["vfr_from"] = mode == "VFR", "mediainfo"
     recorded_at, recorded_epoch, recorded_from = _recorded(path, tags, st.st_mtime_ns, duration)
     encoder = tags.get("encoder") or (mi or {}).get("writing_application")
-    return {"schema": SIDECAR_SCHEMA, "id": media_id, "path": str(path), "name": path.name, "size": st.st_size,
-            "mtime_ns": st.st_mtime_ns, "container": fmt.get("format_name"), "duration_s": duration,
-            "clock": "file", "start_s": _num(fmt.get("start_time")), "bit_rate": _num(fmt.get("bit_rate"), int),
-            "recorded_at": recorded_at, "recorded_epoch": recorded_epoch, "recorded_from": recorded_from,
-            "encoder": encoder, "format_tags": tags, "video": video, "audio": _audio(streams),
-            "subtitles": _subtitles(streams), "chapters": _chapters(j.get("chapters"), f0), "mediainfo": mi,
-            "kind": _cheap_kind(video, encoder), "kind_from": "rules", "links": {}, "spans": [], "artifacts": [],
-            "tags": [], "probed_at": datetime.now().isoformat(timespec="seconds"),
-            "probed_with": {"ffprobe": ff.version_short(), "pymediainfo": mi is not None}}
+    return {
+        "schema": SIDECAR_SCHEMA,
+        "id": media_id,
+        "path": str(path),
+        "name": path.name,
+        "size": st.st_size,
+        "mtime_ns": st.st_mtime_ns,
+        "container": fmt.get("format_name"),
+        "duration_s": duration,
+        "clock": "file",
+        "start_s": _num(fmt.get("start_time")),
+        "bit_rate": _num(fmt.get("bit_rate"), int),
+        "recorded_at": recorded_at,
+        "recorded_epoch": recorded_epoch,
+        "recorded_from": recorded_from,
+        "encoder": encoder,
+        "format_tags": tags,
+        "video": video,
+        "audio": _audio(streams),
+        "subtitles": _subtitles(streams),
+        "chapters": _chapters(j.get("chapters"), f0),
+        "mediainfo": mi,
+        "kind": _cheap_kind(video, encoder),
+        "kind_from": "rules",
+        "links": {},
+        "spans": [],
+        "artifacts": [],
+        "tags": [],
+        "probed_at": datetime.now().isoformat(timespec="seconds"),
+        "probed_with": {"ffprobe": ff.version_short(), "pymediainfo": mi is not None},
+    }
 
 
-def _cheap_kind(video: Optional[dict], encoder: Optional[str]) -> str:
+def _cheap_kind(video: dict | None, encoder: str | None) -> str:
     if video is None:
         return "audio"
     return "screen" if str(encoder or "").startswith("OBS") else "unknown"
@@ -401,6 +512,7 @@ def _cheap_kind(video: Optional[dict], encoder: Optional[str]) -> str:
 # =================================================================================================
 # kind: League footage, by the league lane's HUD layout detector on 3 keyframes
 # =================================================================================================
+
 
 def _hud():
     """arsenal.media.league.hud when the league lane has built it, else None (kind then stays screen/unknown)."""
@@ -416,14 +528,36 @@ def _hud():
 def _keyframe_at(path, t: float, w: int, h: int):
     """The first keyframe at or after t, decoded alone (-skip_frame nokey): one HEVC frame, not a GOP."""
     import numpy as np
-    res = ff.run(["-v", "error", "-skip_frame", "nokey", "-ss", f"{t:.3f}", "-i", str(path), "-map", "0:v:0",
-                  "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], binary=True, check=False)
+
+    res = ff.run(
+        [
+            "-v",
+            "error",
+            "-skip_frame",
+            "nokey",
+            "-ss",
+            f"{t:.3f}",
+            "-i",
+            str(path),
+            "-map",
+            "0:v:0",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ],
+        binary=True,
+        check=False,
+    )
     if len(res.stdout) < w * h * 3:
         return None
-    return np.frombuffer(res.stdout[:w * h * 3], np.uint8).reshape((h, w, 3))
+    return np.frombuffer(res.stdout[: w * h * 3], np.uint8).reshape((h, w, 3))
 
 
-def detect_kind(path, sidecar: dict) -> Tuple[str, str, Optional[list]]:
+def detect_kind(path, sidecar: dict) -> tuple[str, str, list | None]:
     """(kind, kind_from, votes): league_replay / league_live when the HUD detector sees that layout on at least 2 of
     3 keyframes (25/50/75% of the file); otherwise the sidecar's rule-based kind is kept. votes is None when the
     league lane's HUD module is not there to ask (ingest asks again once it is)."""
@@ -452,6 +586,7 @@ def detect_kind(path, sidecar: dict) -> Tuple[str, str, Optional[list]]:
 # probe
 # =================================================================================================
 
+
 def _params(keyframes: bool, mediainfo: bool, refresh: bool) -> dict:
     return {"keyframes": keyframes, "mediainfo": mediainfo, "refresh": refresh, "keyint_head_s": KEYINT_HEAD_S}
 
@@ -467,6 +602,7 @@ def probe(path, *, keyframes: bool = False, mediainfo: bool = True, refresh: boo
     A sidecar is written for every file probed; only files imported into the catalog (catalog.upsert / ingest)
     become catalog rows, and probe() keeps those rows current when it re-reads one."""
     from . import receipt
+
     p = Path(path).resolve()
     if not p.is_file():
         raise ff.MediaError(f"no such file: {p}")
@@ -482,17 +618,18 @@ def probe(path, *, keyframes: bool = False, mediainfo: bool = True, refresh: boo
             sc.update({k: old[k] for k in _KEPT_ON_REFRESH if k in old})
             if current and old.get("keyframes") is not None:
                 sc["keyframes"] = old["keyframes"]
-                _set_keyint(sc["video"], old["video"].get("keyint_s"), old["video"].get("keyint_from"),
-                            len(old["keyframes"]))
+                _set_keyint(
+                    sc["video"], old["video"].get("keyint_s"), old["video"].get("keyint_from"), len(old["keyframes"])
+                )
         if sc.get("kind_from") == "rules":
             sc["kind"], sc["kind_from"], votes = detect_kind(p, sc)
             if votes is not None:
                 sc["kind_votes"] = votes
     else:
         sc = dict(old)
-        if sc.get("path") != str(p):                # the same bytes, seen at a new path (moved or copied)
+        if sc.get("path") != str(p):  # the same bytes, seen at a new path (moved or copied)
             sc["path"], sc["name"], computed = str(p), p.name, True
-        if raw.get("clock") != "file":              # written on the container clock: rewritten on the file clock
+        if raw.get("clock") != "file":  # written on the container clock: rewritten on the file clock
             computed = True
     if keyframes and sc.get("video") and sc.get("keyframes") is None:
         kf = _scan_keyframes(p)
@@ -502,15 +639,16 @@ def probe(path, *, keyframes: bool = False, mediainfo: bool = True, refresh: boo
     if computed:
         with sidecar_lock(media_id):
             fresh = read_sidecar(media_id)
-            if fresh is not None and fresh != old:    # the catalog wrote while we read the file: keep its news
+            if fresh is not None and fresh != old:  # the catalog wrote while we read the file: keep its news
                 sc.update({k: fresh[k] for k in _KEPT_ON_REFRESH if k in fresh})
             write_sidecar(sc)
-            if sc.get("cataloged"):               # under the lock: rows land in the order sidecars were written
+            if sc.get("cataloged"):  # under the lock: rows land in the order sidecars were written
                 from . import catalog
+
                 catalog.reindex(sc)
     src = {"path": sc["path"], "size": sc["size"], "mtime_ns": sc["mtime_ns"], "id": media_id}
     res = receipt.result("probe", src, _params(keyframes, mediainfo, refresh), sc, BLIND, write_receipt=computed)
-    res.setdefault("receipt", None)             # an answer from the sidecar computed nothing new to write down
+    res.setdefault("receipt", None)  # an answer from the sidecar computed nothing new to write down
     res["cached"] = not computed
     res["sidecar_path"] = str(sidecar_path(media_id))
     return res
@@ -520,29 +658,40 @@ def probe(path, *, keyframes: bool = False, mediainfo: bool = True, refresh: boo
 # CLI: py -m arsenal.media probe <video> [--keyframes] [--refresh] [--json]
 # =================================================================================================
 
-def _summary(sc: dict) -> List[str]:
-    lines = [f"{sc['name']}  id {sc['id']}  {sc['size'] / 1e9:.2f} GB  {sc['duration_s'] or 0:.2f} s  "
-             f"{sc.get('container')}  kind {sc.get('kind')}"]
+
+def _summary(sc: dict) -> list[str]:
+    lines = [
+        (
+            f"{sc['name']}  id {sc['id']}  {sc['size'] / 1e9:.2f} GB  {sc['duration_s'] or 0:.2f} s  "
+            f"{sc.get('container')}  kind {sc.get('kind')}"
+        )
+    ]
     lines.append(f"recorded {sc.get('recorded_at')} ({sc.get('recorded_from')})   encoder {sc.get('encoder')}")
     v = sc.get("video")
     if v:
-        lines.append(f"video  {v['codec']} {v['w']}x{v['h']} {v['fps']} fps{' VFR' if v['vfr'] else ''}  "
-                     f"b-frames {v['has_b_frames']}  {v['pix_fmt']}  keyframe every {v['keyint_s']} s "
-                     f"({v['keyint_frames']} frames, {v['keyint_from']})"
-                     + (f", {v['keyframes_n']} keyframes" if v.get("keyframes_n") else ""))
-    for a in sc.get("audio", []):
-        lines.append(f"audio  a:{a['index']} {a['codec']} {a['channels']} ch {a['sample_rate']} Hz  "
-                     f"\"{a['house_name']}\"" + ("" if a["title"] else " (house map: no title in the file)"))
-    for c in sc.get("chapters", []):
-        lines.append(f"chapter {c['t0']:.3f}-{c['t1']:.3f}  {c['title']}")
+        lines.append(
+            f"video  {v['codec']} {v['w']}x{v['h']} {v['fps']} fps{' VFR' if v['vfr'] else ''}  "
+            f"b-frames {v['has_b_frames']}  {v['pix_fmt']}  keyframe every {v['keyint_s']} s "
+            f"({v['keyint_frames']} frames, {v['keyint_from']})"
+            + (f", {v['keyframes_n']} keyframes" if v.get("keyframes_n") else "")
+        )
+    lines.extend(
+        f"audio  a:{a['index']} {a['codec']} {a['channels']} ch {a['sample_rate']} Hz  "
+        f'"{a["house_name"]}"' + ("" if a["title"] else " (house map: no title in the file)")
+        for a in sc.get("audio", [])
+    )
+    lines.extend(f"chapter {c['t0']:.3f}-{c['t1']:.3f}  {c['title']}" for c in sc.get("chapters", []))
     return lines
 
 
-def cli(verb: str, argv: List[str]) -> int:
+def cli(verb: str, argv: list[str]) -> int:
     import argparse
-    ap = argparse.ArgumentParser(prog="py -m arsenal.media probe",
-                                 description="ffprobe a video once and remember it: duration, codec, fps, every "
-                                             "audio track and its name, keyframe interval, OBS encoder, recorded time")
+
+    ap = argparse.ArgumentParser(
+        prog=f"{ff.pyl()} -m arsenal.media probe",
+        description="ffprobe a video once and remember it: duration, codec, fps, every "
+        "audio track and its name, keyframe interval, OBS encoder, recorded time",
+    )
     ap.add_argument("paths", nargs="+")
     ap.add_argument("--keyframes", action="store_true", help="also index every keyframe (~1 s per 33 min)")
     ap.add_argument("--refresh", action="store_true", help="re-read the file even if its sidecar is current")
@@ -556,6 +705,8 @@ def cli(verb: str, argv: List[str]) -> int:
             print(json.dumps({k: v for k, v in sc.items() if k != "keyframes"}, indent=1, default=str))
             continue
         print("\n".join(_summary(sc)))
-        print(f"({'sidecar' if sc['cached'] else 'probed'} in {(time.perf_counter() - t0) * 1000:.0f} ms: "
-              f"{sc['sidecar_path']})")
+        print(
+            f"({'sidecar' if sc['cached'] else 'probed'} in {(time.perf_counter() - t0) * 1000:.0f} ms: "
+            f"{sc['sidecar_path']})"
+        )
     return 0

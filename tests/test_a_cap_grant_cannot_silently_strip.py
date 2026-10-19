@@ -47,6 +47,7 @@ Run::
 
     py -m pytest tests/test_a_cap_grant_cannot_silently_strip.py -q
 """
+
 from __future__ import annotations
 
 import inspect
@@ -60,8 +61,7 @@ sys.path.insert(0, str(ROOT))
 
 
 def _writer_src() -> str:
-    return (ROOT / "core" / "trust" / "grant_writer.py").read_text(encoding="utf-8",
-                                                                   errors="replace")
+    return (ROOT / "core" / "trust" / "grant_writer.py").read_text(encoding="utf-8", errors="replace")
 
 
 # ------------------------------------------------------------------ the defect
@@ -72,14 +72,17 @@ def test_there_is_a_way_to_ADD_a_cap_without_replacing_the_set():
     outer half: a caller using the module directly has the same hazard.
     """
     from core.trust import grant_writer
+
     fn = getattr(grant_writer, "write_grant", None) or getattr(grant_writer, "grant", None)
     assert fn is not None, "no grant-writing entry point found to inspect"
     params = set(inspect.signature(fn).parameters)
     assert params & {"add_caps", "drop_caps", "caps_add", "caps_drop"}, (
-        "the only cap parameter is a full-set REPLACE (%r). `grant <seat> --caps screen.observe` "
+        "the only cap parameter is a full-set REPLACE ({!r}). `grant <seat> --caps screen.observe` "
         "reads as 'also give it screen.observe' and means 'give it ONLY screen.observe' -- which "
-        "on the claude seat is 17 caps down to 1, including write, exec and admin.grant."
-        % (sorted(p for p in params if "cap" in p),))
+        "on the claude seat is 17 caps down to 1, including write, exec and admin.grant.".format(
+            sorted(p for p in params if "cap" in p)
+        )
+    )
 
 
 def test_a_replace_that_drops_held_caps_must_be_said_out_loud():
@@ -96,35 +99,58 @@ def test_a_replace_that_drops_held_caps_must_be_said_out_loud():
     matched prose instead of behaviour. It now inspects the writer's SIGNATURE instead.
     """
     from core.trust import grant_writer
+
     fn = getattr(grant_writer, "write_grant", None) or getattr(grant_writer, "grant", None)
     assert fn is not None, "no grant-writing entry point found"
     params = set(inspect.signature(fn).parameters)
     ack = params & {"replace", "allow_drop", "confirm_replace", "force"}
     if ack:
-        return                                   # an acknowledgement knob exists; good enough
+        return  # an acknowledgement knob exists; good enough
     pytest.fail(
         "grant_writer takes no parameter by which a caller acknowledges a SHRINKING cap set "
-        "(signature: %r). `--permanent` must be typed out loud because an unbounded grant is a "
+        f"(signature: {sorted(params)!r}). `--permanent` must be typed out loud because an unbounded grant is a "
         "decision; stripping exec and admin.grant from a seat is at least as consequential and "
         "currently requires typing nothing. core/trust/grant_writer.py:144 computes eff_caps and "
-        "writes it with no comparison against what the seat already holds." % (sorted(params),))
+        "writes it with no comparison against what the seat already holds."
+    )
 
 
 def test_the_dry_run_shows_what_is_LOST_not_only_what_is_set():
     """A preview that lists the new set answers "what will it be". The reader is asking "what
     will change". For a replace those are different questions and only one of them is dangerous."""
     import subprocess
-    r = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "agent_cli.py"),
-                        "grant", "claude", "--caps", "screen.observe", "--by", "daniel",
-                        "--reason", "pin probe", "--hours", "1", "--dry-run"],
-                       capture_output=True, text=True, encoding="utf-8", errors="replace",
-                       cwd=str(ROOT), timeout=180)
+
+    r = subprocess.run(
+        [
+            sys.executable,
+            "-X",
+            "utf8",
+            str(ROOT / "agent_cli.py"),
+            "grant",
+            "claude",
+            "--caps",
+            "screen.observe",
+            "--by",
+            "daniel",
+            "--reason",
+            "pin probe",
+            "--hours",
+            "1",
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(ROOT),
+        timeout=180,
+    )
     out = (r.stdout + r.stderr).lower()
     if "refused" in out and "dry" not in out:
-        pytest.skip("the dry run refused before rendering a plan: %s" % out[:200])
-    assert ("remov" in out or "losing" in out or "->" in out or "dropped" in out), (
-        "the dry run previews a cap REPLACE without naming a single cap it removes. Output:\n%s"
-        % out[:500])
+        pytest.skip(f"the dry run refused before rendering a plan: {out[:200]}")
+    assert "remov" in out or "losing" in out or "->" in out or "dropped" in out, (
+        f"the dry run previews a cap REPLACE without naming a single cap it removes. Output:\n{out[:500]}"
+    )
 
 
 # ------------------------------------------------------------------ ratchets
@@ -132,6 +158,7 @@ def test_the_self_grant_guard_still_refuses():
     """RATCHET on the guard that DID work. `agent_id == by` must stay a PermissionError -- a
     second party mints your authority. Nothing in this slice may loosen it."""
     from core.trust import grant_writer
+
     fn = getattr(grant_writer, "write_grant", None) or getattr(grant_writer, "grant", None)
     try:
         # hours= is required (T151: a grant must be time-boxed or explicitly permanent). My first
@@ -153,4 +180,5 @@ def test_a_granter_cannot_exceed_its_own_bounds():
     src = _writer_src()
     assert "_bounded_by_granter(granter, eff_caps" in src, (
         "the granter-bounds check no longer runs over the effective caps; a cap-arithmetic change "
-        "must not route around it")
+        "must not route around it"
+    )

@@ -24,6 +24,7 @@ rather than a stub: the scene is complete and says exactly what it could not rea
 
 Hermetic: resolvers are injected. The two live ones get their own pins against real repo data.
 """
+
 import os
 import sys
 
@@ -31,16 +32,24 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.coord import target as T      # noqa: E402
-from core.coord import scene as S       # noqa: E402
+from core.coord import scene as S
+from core.coord import target as T
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOTS = T.Roots(main="E:/AI-Setup")
 
 
 def plane(name, **kw):
-    return {"plane": name, "state": "ok", "summary": "s", "rows": [],
-            "cost": {"class": "o1", "note": "n"}, "fog": "", "receipts": [], **kw}
+    return {
+        "plane": name,
+        "state": "ok",
+        "summary": "s",
+        "rows": [],
+        "cost": {"class": "o1", "note": "n"},
+        "fog": "",
+        "receipts": [],
+        **kw,
+    }
 
 
 # ---------------------------------------------------------------- the envelope
@@ -54,8 +63,19 @@ def test_the_state_set_is_closed_and_separates_empty_from_uncheckable():
 
 def test_a_scene_carries_every_field_the_spec_names():
     sc = S.build("file:core/coord/target.py", subject="claude", roots=ROOTS, resolvers={})
-    for f in ("schema", "subject", "anchor", "level", "generated_at", "planes",
-              "span", "fog", "epistemic", "drill", "effects"):
+    for f in (
+        "schema",
+        "subject",
+        "anchor",
+        "level",
+        "generated_at",
+        "planes",
+        "span",
+        "fog",
+        "epistemic",
+        "drill",
+        "effects",
+    ):
         assert f in sc, f
 
 
@@ -73,8 +93,7 @@ def test_the_anchor_is_the_parsed_target_not_the_raw_string():
 
 
 def test_a_question_anchor_is_named_and_routed_never_resolved_as_a_path():
-    sc = S.build("why does recall miss at the moment of action?", subject="claude",
-                 roots=ROOTS, resolvers={})
+    sc = S.build("why does recall miss at the moment of action?", subject="claude", roots=ROOTS, resolvers={})
     assert sc["anchor"]["kind"] == "question"
     assert "cast" in sc["drill"]
 
@@ -86,8 +105,7 @@ def test_a_refused_anchor_fails_loudly_rather_than_producing_an_empty_scene():
 
 # ---------------------------------------------------------------- the four states
 def test_a_plane_with_rows_is_ok():
-    r = {"git": lambda a, **k: plane("git", rows=[{"ref": "sha:" + "a" * 40, "at": "t",
-                                                   "who": "w", "what": "x"}])}
+    r = {"git": lambda a, **k: plane("git", rows=[{"ref": "sha:" + "a" * 40, "at": "t", "who": "w", "what": "x"}])}
     sc = S.build("file:x.py", subject="c", roots=ROOTS, resolvers=r, exists=lambda k: True)
     assert sc["planes"][0]["state"] == "ok"
 
@@ -96,40 +114,46 @@ def test_a_plane_that_was_asked_and_found_nothing_is_empty_not_uncheckable():
     r = {"git": lambda a, **k: plane("git", state="empty", rows=[])}
     sc = S.build("file:x.py", subject="c", roots=ROOTS, resolvers=r, exists=lambda k: True)
     p = sc["planes"][0]
-    assert p["state"] == "empty" and p["rows"] == []
+    assert p["state"] == "empty"
+    assert p["rows"] == []
 
 
 def test_a_plane_that_could_not_be_asked_is_uncheckable_and_carries_the_reason():
-    r = {"lessons": lambda a, **k: plane("lessons", state="UNCHECKABLE", rows=[],
-                                         fog="39 of 1,526 lessons carry files_affected")}
+    r = {
+        "lessons": lambda a, **k: plane(
+            "lessons", state="UNCHECKABLE", rows=[], fog="39 of 1,526 lessons carry files_affected"
+        )
+    }
     sc = S.build("file:x.py", subject="c", roots=ROOTS, resolvers=r, exists=lambda k: True)
     p = sc["planes"][0]
-    assert p["state"] == "UNCHECKABLE" and p["fog"]
+    assert p["state"] == "UNCHECKABLE"
+    assert p["fog"]
 
 
 def test_an_uncheckable_plane_without_a_reason_is_itself_refused():
     """A plane may say it could not look. It may not say so without saying why -- that is how
     UNCHECKABLE decays back into a silent zero."""
     r = {"lessons": lambda a, **k: plane("lessons", state="UNCHECKABLE", fog="")}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="UNCHECKABLE without a reason"):
         S.build("file:x.py", subject="c", roots=ROOTS, resolvers=r, exists=lambda k: True)
 
 
 def test_a_resolver_that_raises_becomes_an_error_plane_never_a_missing_one():
     def boom(a, **k):
         raise RuntimeError("redis is down")
-    sc = S.build("file:x.py", subject="c", roots=ROOTS, resolvers={"touches": boom},
-                 exists=lambda k: True)
+
+    sc = S.build("file:x.py", subject="c", roots=ROOTS, resolvers={"touches": boom}, exists=lambda k: True)
     # Look the plane up BY NAME. The first version of this pin indexed planes[0] and failed
     # against a correct implementation, because the scene emits planes in its own reading order
     # and the broken one was not first. A pin that encodes incidental ordering tests the order.
-    p = [x for x in sc["planes"] if x["plane"] == "touches"][0]
-    assert p["state"] == "error" and "redis is down" in p["fog"]
+    p = next(x for x in sc["planes"] if x["plane"] == "touches")
+    assert p["state"] == "error"
+    assert "redis is down" in p["fog"]
 
 
 def test_an_unknown_state_is_refused_rather_than_passed_through():
     r = {"git": lambda a, **k: plane("git", state="probably fine")}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="is not one of"):
         S.build("file:x.py", subject="c", roots=ROOTS, resolvers=r, exists=lambda k: True)
 
 
@@ -142,57 +166,58 @@ def test_every_plane_the_scene_knows_about_appears_even_when_it_cannot_answer():
 
 # ---------------------------------------------------------------- rows carry refs, or go to fog
 def test_every_row_carries_a_ref_the_doors_can_resolve():
-    r = {"git": lambda a, **k: plane("git", rows=[
-        {"ref": "sha:" + "b" * 40, "at": "t", "who": "w", "what": "x"}])}
+    r = {"git": lambda a, **k: plane("git", rows=[{"ref": "sha:" + "b" * 40, "at": "t", "who": "w", "what": "x"}])}
     sc = S.build("file:x.py", subject="c", roots=ROOTS, resolvers=r, exists=lambda k: True)
     for row in sc["planes"][0]["rows"]:
-        T.parse(row["ref"], roots=ROOTS, exists=lambda k: True)       # must not raise
+        T.parse(row["ref"], roots=ROOTS, exists=lambda k: True)  # must not raise
 
 
 def test_a_row_whose_ref_cannot_be_minted_goes_to_fog_never_into_rows():
-    r = {"git": lambda a, **k: plane("git", rows=[
-        {"ref": "", "at": "t", "who": "w", "what": "unaddressable"}])}
+    r = {"git": lambda a, **k: plane("git", rows=[{"ref": "", "at": "t", "who": "w", "what": "unaddressable"}])}
     sc = S.build("file:x.py", subject="c", roots=ROOTS, resolvers=r, exists=lambda k: True)
     p = sc["planes"][0]
-    assert p["rows"] == [] and "unaddressable" in p["fog"]
+    assert p["rows"] == []
+    assert "unaddressable" in p["fog"]
 
 
 # ---------------------------------------------------------------- levels
 def test_level_zero_carries_summaries_and_no_rows():
-    r = {"git": lambda a, **k: plane("git", rows=[{"ref": "sha:" + "c" * 40, "at": "t",
-                                                   "who": "w", "what": "x"}])}
+    r = {"git": lambda a, **k: plane("git", rows=[{"ref": "sha:" + "c" * 40, "at": "t", "who": "w", "what": "x"}])}
     sc = S.build("file:x.py", subject="c", roots=ROOTS, resolvers=r, level=0, exists=lambda k: True)
-    assert sc["planes"][0]["summary"] and sc["planes"][0]["rows"] == []
+    assert sc["planes"][0]["summary"]
+    assert sc["planes"][0]["rows"] == []
 
 
 def test_level_two_carries_the_receipts_level_one_omits():
-    r = {"git": lambda a, **k: plane("git", rows=[{"ref": "sha:" + "d" * 40, "at": "t",
-                                                   "who": "w", "what": "x"}],
-                                     receipts=["git log -- x.py"])}
+    r = {
+        "git": lambda a, **k: plane(
+            "git", rows=[{"ref": "sha:" + "d" * 40, "at": "t", "who": "w", "what": "x"}], receipts=["git log -- x.py"]
+        )
+    }
     one = S.build("file:x.py", subject="c", roots=ROOTS, resolvers=r, level=1, exists=lambda k: True)
     two = S.build("file:x.py", subject="c", roots=ROOTS, resolvers=r, level=2, exists=lambda k: True)
-    assert one["planes"][0]["receipts"] == [] and two["planes"][0]["receipts"]
+    assert one["planes"][0]["receipts"] == []
+    assert two["planes"][0]["receipts"]
 
 
 # ---------------------------------------------------------------- the two live planes
 def test_the_git_plane_answers_for_a_real_tracked_file():
     sc = S.build("file:core/coord/target.py", subject="claude", roots=ROOTS, level=1)
-    g = [p for p in sc["planes"] if p["plane"] == "git"][0]
+    g = next(p for p in sc["planes"] if p["plane"] == "git")
     assert g["state"] == "ok", g
     assert g["rows"], "a file committed tonight must have git history"
     assert all(r["ref"].startswith("sha:") for r in g["rows"])
 
 
 def test_the_git_plane_is_empty_not_error_for_a_path_with_no_history():
-    sc = S.build("file:core/coord/this_file_does_not_exist_9f3a.py", subject="claude",
-                 roots=ROOTS, level=1)
-    g = [p for p in sc["planes"] if p["plane"] == "git"][0]
+    sc = S.build("file:core/coord/this_file_does_not_exist_9f3a.py", subject="claude", roots=ROOTS, level=1)
+    g = next(p for p in sc["planes"] if p["plane"] == "git")
     assert g["state"] == "empty"
 
 
 def test_the_touches_plane_reads_the_spine_and_refs_each_event():
     sc = S.build("file:core/coord/target.py", subject="claude", roots=ROOTS, level=1)
-    t = [p for p in sc["planes"] if p["plane"] == "touches"][0]
+    t = next(p for p in sc["planes"] if p["plane"] == "touches")
     assert t["state"] in ("ok", "empty")
     for row in t["rows"]:
         assert row["ref"].startswith("event:")

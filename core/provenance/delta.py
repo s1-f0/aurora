@@ -35,6 +35,7 @@ many files it examined, and how many touch records were DROPPED before it ran. `
 read 214 when this was written; its own Law 2 is already written: "a swallowed failure that is not
 COUNTED is just a lie with better manners."
 """
+
 from __future__ import annotations
 
 import json
@@ -42,16 +43,24 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import (  # noqa: TC003  # runtime-evaluated annotations (annotation_sensitive module)
+    Iterator,
+    Sequence,
+)
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional, Sequence
+from typing import Any
 
 #: Trees whose contents vanish. Checked FIRST, because a worktree on the ramdisk is volatile no
 #: matter how repo-shaped its path looks.
 _VOLATILE_MARKS = (
-    "appdata\\local\\temp", "appdata/local/temp",
-    "\\temp\\", "/temp/", "\\scratchpad", "/scratchpad",
+    "appdata\\local\\temp",
+    "appdata/local/temp",
+    "\\temp\\",
+    "/temp/",
+    "\\scratchpad",
+    "/scratchpad",
 )
-_VOLATILE_DRIVES = ("x:",)          # the ramdisk: logs and scratch only, by standing rule
+_VOLATILE_DRIVES = ("x:",)  # the ramdisk: logs and scratch only, by standing rule
 
 #: The private tree. Read to report on; never copied, never committed.
 _PRIVATE_MARKS = ("desktop\\!documents", "desktop/!documents")
@@ -66,8 +75,9 @@ _DEBRIS_MARKS = ("season_dryrun", "season_fan_calibration", "probe_", "t187_", "
 def _repo_root() -> str:
     try:
         from core import paths
+
         return str(paths.repo_root())
-    except Exception:                                                     # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -112,21 +122,22 @@ class Attribution:
     whereas git author cannot -- every seat here commits under the same name.
     """
 
-    seat: Optional[str] = None
-    session: Optional[str] = None
+    seat: str | None = None
+    session: str | None = None
     source: str = "unattributed"
-    at: Optional[float] = None
+    at: float | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"seat": self.seat, "session": self.session, "source": self.source, "at": self.at}
 
 
-def _touch_records_for(key: str) -> List[Dict[str, Any]]:
+def _touch_records_for(key: str) -> list[dict[str, Any]]:
     """Touch records naming this target, or [] when the spine cannot answer. Never raises."""
     try:
         from core.events.event_query import get_event_query
+
         return list(get_event_query().events_for_ref(key) or [])
-    except Exception:                                                     # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return []
 
 
@@ -144,17 +155,17 @@ def attribute(path: str, *, since_ts: float = 0.0) -> Attribution:
             sess = rec.get("session_id") or None
             if not (seat or sess):
                 continue
-            return Attribution(seat=seat, session=sess, source="touch",
-                               at=rec.get("ts") or rec.get("at"))
+            return Attribution(seat=seat, session=sess, source="touch", at=rec.get("ts") or rec.get("at"))
     return Attribution()
 
 
-def touch_drops() -> Optional[int]:
+def touch_drops() -> int | None:
     """How many touches were SWALLOWED before this ran. None when unreadable -- never a cheerful 0."""
     try:
         from core.events import touch
+
         return int(touch.drops())
-    except Exception:                                                     # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -169,9 +180,14 @@ class Change:
     tree: str
     attribution: Attribution = field(default_factory=Attribution)
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {"path": self.path, "mtime": self.mtime, "size": self.size, "tree": self.tree,
-                "attribution": self.attribution.to_dict()}
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "mtime": self.mtime,
+            "size": self.size,
+            "tree": self.tree,
+            "attribution": self.attribution.to_dict(),
+        }
 
 
 @dataclass
@@ -180,13 +196,13 @@ class DiskDelta:
     a tool can tell -- and without it "nothing changed" and "nothing was looked at" render the
     same."""
 
-    changes: List[Change] = field(default_factory=list)
-    roots_scanned: List[str] = field(default_factory=list)
-    roots_skipped: List[str] = field(default_factory=list)
+    changes: list[Change] = field(default_factory=list)
+    roots_scanned: list[str] = field(default_factory=list)
+    roots_skipped: list[str] = field(default_factory=list)
     files_examined: int = 0
     window_hours: float = 0.0
-    drops: Optional[int] = None
-    degraded: List[str] = field(default_factory=list)
+    drops: int | None = None
+    degraded: list[str] = field(default_factory=list)
 
     def __iter__(self) -> Iterator[Change]:
         return iter(self.changes)
@@ -194,21 +210,23 @@ class DiskDelta:
     def __len__(self) -> int:
         return len(self.changes)
 
-    def by_tree(self, tree: str) -> List[Change]:
+    def by_tree(self, tree: str) -> list[Change]:
         return [c for c in self.changes if c.tree == tree]
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {"window_hours": self.window_hours,
-                "files_examined": self.files_examined,
-                "roots_scanned": self.roots_scanned,
-                "roots_skipped": self.roots_skipped,
-                "touch_drops": self.drops,
-                "degraded": self.degraded,
-                "counts": {t: len(self.by_tree(t)) for t in ("repo", "private", "volatile", "other")},
-                "changes": [c.to_dict() for c in self.changes]}
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "window_hours": self.window_hours,
+            "files_examined": self.files_examined,
+            "roots_scanned": self.roots_scanned,
+            "roots_skipped": self.roots_skipped,
+            "touch_drops": self.drops,
+            "degraded": self.degraded,
+            "counts": {t: len(self.by_tree(t)) for t in ("repo", "private", "volatile", "other")},
+            "changes": [c.to_dict() for c in self.changes],
+        }
 
 
-def default_scopes() -> List[str]:
+def default_scopes() -> list[str]:
     """The trees worth sweeping: the house's own registered roots MINUS the test debris, plus the
     private and volatile trees T052 never looks at.
 
@@ -218,7 +236,7 @@ def default_scopes() -> List[str]:
     """
     # NORMALISED, because `E:\AI-Setup` and `E:/AI-Setup` are one tree with two spellings and a
     # string compare treats them as two. The first run scanned both and emitted 59 duplicate rows.
-    out: List[str] = []
+    out: list[str] = []
     seen = set()
 
     def _add(p: str) -> None:
@@ -233,10 +251,11 @@ def default_scopes() -> List[str]:
     _add(_repo_root())
     try:
         from core.events import touch
+
         for w in list(touch.default_roots().worktrees):
             if not is_debris(w):
                 _add(w)
-    except Exception:                                                     # noqa: BLE001
+    except Exception:  # noqa: BLE001
         pass
     home = os.path.expanduser("~")
     _add(os.path.join(home, "Desktop", "!Documents"))
@@ -246,30 +265,46 @@ def default_scopes() -> List[str]:
 
 def _find_recent(scope: str, limit: int, timeout: float) -> tuple:
     """Ask the indexed `find` verb for this scope, newest first. Returns (hits, degraded_reason)."""
-    argv = [sys.executable, "-X", "utf8", os.path.join(_repo_root(), "agent_cli.py"),
-            "find", "*", "--scope", scope, "--preset", "recent", "--files",
-            "--format", "json", "--limit", str(int(limit))]
+    argv = [
+        sys.executable,
+        "-X",
+        "utf8",
+        os.path.join(_repo_root(), "agent_cli.py"),
+        "find",
+        "*",
+        "--scope",
+        scope,
+        "--preset",
+        "recent",
+        "--files",
+        "--format",
+        "json",
+        "--limit",
+        str(int(limit)),
+    ]
     try:
-        res = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
-                             errors="replace", cwd=_repo_root(), timeout=timeout)
-    except Exception as exc:                                              # noqa: BLE001
-        return ([], "%s: %s" % (type(exc).__name__, exc))
+        res = subprocess.run(
+            argv, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=_repo_root(), timeout=timeout
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ([], f"{type(exc).__name__}: {exc}")
     if res.returncode != 0:
-        return ([], (res.stderr or "").strip()[:160] or "exit %s" % res.returncode)
+        return ([], (res.stderr or "").strip()[:160] or f"exit {res.returncode}")
     try:
         return (json.loads(res.stdout).get("hits", []) or [], None)
-    except Exception as exc:                                              # noqa: BLE001
-        return ([], "unparseable find output (%s)" % type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001
+        return ([], f"unparseable find output ({type(exc).__name__})")
 
 
-def _mtime_of(hit: Dict[str, Any]) -> Optional[float]:
+def _mtime_of(hit: dict[str, Any]) -> float | None:
     raw = hit.get("date_modified") or hit.get("date-modified") or ""
     if not raw:
         return None
     try:
         from datetime import datetime
+
         return datetime.fromisoformat(str(raw)[:19]).timestamp()
-    except Exception:                                                     # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -278,14 +313,23 @@ def _mtime_of(hit: Dict[str, Any]) -> Optional[float]:
 #: a list nobody finishes. Measured while building this: a single pytest run emitted enough .pyc
 #: churn to make two sweeps a second apart disagree -- the instrument was perturbing its own
 #: measurement.
-_NOISE_MARKS = ("__pycache__", ".pyc", ".pyo", "\\.git\\", "/.git/", "node_modules",
-                "\\.pytest_cache", "/.pytest_cache",
-                # Claude Code's internal diff workspace holds a BARE git store, so its object
-                # files sit under \objects\ with no \.git\ in the path and slipped the filter
-                # above: 968 of the first run's 973 volatile rows were these. Measured, not feared.
-                "bash-edit-diff",
-                # background task logs: machine output about machine work
-                "\\tasks\\", "/tasks/")
+_NOISE_MARKS = (
+    "__pycache__",
+    ".pyc",
+    ".pyo",
+    "\\.git\\",
+    "/.git/",
+    "node_modules",
+    "\\.pytest_cache",
+    "/.pytest_cache",
+    # Claude Code's internal diff workspace holds a BARE git store, so its object
+    # files sit under \objects\ with no \.git\ in the path and slipped the filter
+    # above: 968 of the first run's 973 volatile rows were these. Measured, not feared.
+    "bash-edit-diff",
+    # background task logs: machine output about machine work
+    "\\tasks\\",
+    "/tasks/",
+)
 
 
 def is_noise(path: str) -> bool:
@@ -293,10 +337,16 @@ def is_noise(path: str) -> bool:
     return any(m.replace("/", "\\") in p for m in _NOISE_MARKS)
 
 
-def since(hours: float = 12.0, *, roots: Optional[Sequence[str]] = None,
-          limit_per_root: int = 2000, attribute_changes: bool = True,
-          timeout: float = 60.0, now: Optional[float] = None,
-          include_noise: bool = False) -> DiskDelta:
+def since(
+    hours: float = 12.0,
+    *,
+    roots: Sequence[str] | None = None,
+    limit_per_root: int = 2000,
+    attribute_changes: bool = True,
+    timeout: float = 60.0,
+    now: float | None = None,
+    include_noise: bool = False,
+) -> DiskDelta:
     """What moved on disk in the last ``hours``, by tree, with attribution where it exists.
 
     ``now`` ANCHORS THE WINDOW. Without it the window slides with the wall clock, so two calls a
@@ -313,14 +363,14 @@ def since(hours: float = 12.0, *, roots: Optional[Sequence[str]] = None,
 
     for scope in scopes:
         if is_debris(scope):
-            out.roots_skipped.append("%s  (test debris)" % scope)
+            out.roots_skipped.append(f"{scope}  (test debris)")
             continue
         if not os.path.isdir(scope):
-            out.roots_skipped.append("%s  (absent)" % scope)
+            out.roots_skipped.append(f"{scope}  (absent)")
             continue
         hits, degraded = _find_recent(scope, limit_per_root, timeout)
         if degraded:
-            out.degraded.append("%s: %s" % (scope, degraded))
+            out.degraded.append(f"{scope}: {degraded}")
         out.roots_scanned.append(scope)
         for h in hits:
             out.files_examined += 1
@@ -332,13 +382,13 @@ def since(hours: float = 12.0, *, roots: Optional[Sequence[str]] = None,
                 continue
             try:
                 size = int(h.get("size") or 0)
-            except Exception:                                             # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 size = 0
             out.changes.append(Change(path=p, mtime=mt, size=size, tree=classify_tree(p)))
 
     # One file reached through two overlapping roots is still one change.
     _seen_paths = set()
-    _deduped: List[Change] = []
+    _deduped: list[Change] = []
     for c in out.changes:
         canon = os.path.normcase(c.path)
         if canon in _seen_paths:
@@ -348,9 +398,10 @@ def since(hours: float = 12.0, *, roots: Optional[Sequence[str]] = None,
     out.changes = _deduped
     out.changes.sort(key=lambda c: (-c.mtime, c.path))
     if attribute_changes:
-        out.changes = [Change(path=c.path, mtime=c.mtime, size=c.size, tree=c.tree,
-                              attribution=attribute(c.path, since_ts=cutoff))
-                       for c in out.changes]
+        out.changes = [
+            Change(path=c.path, mtime=c.mtime, size=c.size, tree=c.tree, attribution=attribute(c.path, since_ts=cutoff))
+            for c in out.changes
+        ]
     return out
 
 
@@ -359,31 +410,36 @@ def since(hours: float = 12.0, *, roots: Optional[Sequence[str]] = None,
 
 def render(d: DiskDelta, *, cap: int = 12) -> str:
     """Operator-facing. VOLATILE first, because it is the only class that disappears."""
-    lines = ["[delta --disk] last %.1fh | %d change(s) over %d file(s) examined | %d root(s), "
-             "%d skipped" % (d.window_hours, len(d.changes), d.files_examined,
-                             len(d.roots_scanned), len(d.roots_skipped))]
+    lines = [
+        (
+            f"[delta --disk] last {d.window_hours:.1f}h | {len(d.changes)} change(s) over {d.files_examined} "
+            f"file(s) examined | {len(d.roots_scanned)} root(s), {len(d.roots_skipped)} skipped"
+        )
+    ]
     if d.drops is None:
         lines.append("  attribution: touch drop count UNREADABLE -- treat every seat below as a floor")
     elif d.drops:
-        lines.append("  attribution: %d touch record(s) were DROPPED before this ran; unattributed "
-                     "rows may simply be lost, not unowned" % d.drops)
-    for reason in d.degraded[:3]:
-        lines.append("  DEGRADED %s" % reason)
+        lines.append(
+            f"  attribution: {d.drops} touch record(s) were DROPPED before this ran; unattributed "
+            "rows may simply be lost, not unowned"
+        )
+    lines.extend(f"  DEGRADED {reason}" for reason in d.degraded[:3])
 
-    for tree, banner in (("volatile", "VOLATILE -- gone at the next reboot or temp sweep"),
-                         ("private", "private (read-only here; never committed)"),
-                         ("repo", "repo"),
-                         ("other", "other")):
+    for tree, banner in (
+        ("volatile", "VOLATILE -- gone at the next reboot or temp sweep"),
+        ("private", "private (read-only here; never committed)"),
+        ("repo", "repo"),
+        ("other", "other"),
+    ):
         rows = d.by_tree(tree)
         if not rows:
             continue
-        lines.append("  %s: %d" % (banner, len(rows)))
+        lines.append(f"  {banner}: {len(rows)}")
         for c in rows[:cap]:
             who = c.attribution.seat or "UNATTRIBUTED"
-            src = "" if c.attribution.source == "touch" else "  (%s)" % c.attribution.source
-            lines.append("    %s  %-44s %s%s"
-                         % (time.strftime("%m-%d %H:%M", time.localtime(c.mtime)),
-                            os.path.basename(c.path)[:44], who, src))
+            src = "" if c.attribution.source == "touch" else f"  ({c.attribution.source})"
+            stamp = time.strftime("%m-%d %H:%M", time.localtime(c.mtime))
+            lines.append(f"    {stamp}  {os.path.basename(c.path)[:44]:<44} {who}{src}")
         if len(rows) > cap:
-            lines.append("    ...+%d more" % (len(rows) - cap))
+            lines.append(f"    ...+{len(rows) - cap} more")
     return "\n".join(lines)

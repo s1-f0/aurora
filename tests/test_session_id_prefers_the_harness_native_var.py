@@ -44,6 +44,7 @@ Run::
 
     py -m pytest tests/test_session_id_prefers_the_harness_native_var.py -q
 """
+
 from __future__ import annotations
 
 import sys
@@ -54,7 +55,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from core.coord import session_id as S  # noqa: E402
+from core.coord import session_id as S  # noqa: E402  # after the sys.path bootstrap
 
 #: Rill's real environment, as he reported it from his own process.
 RILL_REAL = "session-45421d78"
@@ -76,11 +77,13 @@ def test_a_dsh_seat_resolves_to_its_own_session_not_the_shell_it_inherited(monke
 
     sid, src = S.ambient_session_id()
     assert sid == RILL_REAL, (
-        "a DSH seat resolved to %r -- the session id it INHERITED from the Claude Code shell "
-        "that launched it -- instead of %r, the session it actually is. That pins consume to a "
+        f"a DSH seat resolved to {sid!r} -- the session id it INHERITED from the Claude Code shell "
+        f"that launched it -- instead of {RILL_REAL!r}, the session it actually is. That pins consume to a "
         "tombstoned roster row and the seat cannot read its mail. DSH_SESSION_ID is absent from "
-        "ENV_VARS." % (sid, RILL_REAL))
-    assert src and src != S.UNKNOWN
+        "ENV_VARS."
+    )
+    assert src
+    assert src != S.UNKNOWN
 
 
 def test_a_claude_seat_is_completely_unchanged(monkeypatch):
@@ -113,9 +116,9 @@ def test_the_source_names_WHICH_VAR_won(monkeypatch):
     _, src = S.ambient_session_id()
     assert src == S.ENV, "the source contract moved; agent_cli.py:7364 compares it by equality"
     assert S.ambient_session_var() == "DSH_SESSION_ID", (
-        "ambient_session_var() says %r -- a seat carrying an inherited id alongside its own "
+        f"ambient_session_var() says {S.ambient_session_var()!r} -- a seat carrying an inherited id alongside its own "
         "cannot tell a correct resolution from the bug this file exists for without it"
-        % (S.ambient_session_var(),))
+    )
 
 
 def test_dsh_is_declared_in_the_resolver_not_patched_at_a_call_site():
@@ -124,8 +127,10 @@ def test_dsh_is_declared_in_the_resolver_not_patched_at_a_call_site():
     exists (sixteen sites were migrated onto it on 2026-10-05)."""
     assert "DSH_SESSION_ID" in S.ENV_VARS, (
         "DSH_SESSION_ID is not in core.coord.session_id.ENV_VARS, so any seat that resolves it "
-        "correctly is doing so by special-casing at its own call site")
+        "correctly is doing so by special-casing at its own call site"
+    )
     assert S.ENV_VARS.index("DSH_SESSION_ID") < S.ENV_VARS.index("CLAUDE_CODE_SESSION_ID"), (
         "DSH_SESSION_ID must outrank CLAUDE_CODE_SESSION_ID: a process carrying BOTH is a DSH "
-        "seat whose Claude id is the shell it was launched from. Order is the fix.")
+        "seat whose Claude id is the shell it was launched from. Order is the fix."
+    )
     assert S.ENV_VARS.index("AKASHIC_SESSION_ID") == 0, "the explicit override stays first"

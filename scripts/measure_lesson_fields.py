@@ -32,32 +32,43 @@ Read-only.
 
     py scripts/measure_lesson_fields.py [--json] [--top 24]
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 from collections import Counter
-from typing import Any, Dict, List
+from typing import Any
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
 TEXT_FIELDS = ("recommendation", "actual", "what_tried")
-ALIASES = {"recommendation": ("recommendation", "recommend"),
-           "actual": ("actual", "actual_outcome"),
-           "what_tried": ("what_tried", "tried")}
+ALIASES = {
+    "recommendation": ("recommendation", "recommend"),
+    "actual": ("actual", "actual_outcome"),
+    "what_tried": ("what_tried", "tried"),
+}
 
 # Fields worth a reader-check: the census found several perfectly filled and never read.
-READER_CHECK = ("narrative_chapter", "narrative_track", "related_to", "files_affected",
-                "domain", "anti_pattern", "root_cause", "confidence", "enforced_by")
+READER_CHECK = (
+    "narrative_chapter",
+    "narrative_track",
+    "related_to",
+    "files_affected",
+    "domain",
+    "anti_pattern",
+    "root_cause",
+    "confidence",
+    "enforced_by",
+)
 
 
-def _get(rec: Dict[str, Any], canonical: str) -> str:
+def _get(rec: dict[str, Any], canonical: str) -> str:
     d = rec.get("detail") if isinstance(rec.get("detail"), dict) else {}
     for k in ALIASES.get(canonical, (canonical,)):
         v = rec.get(k) or d.get(k)
@@ -66,7 +77,7 @@ def _get(rec: Dict[str, Any], canonical: str) -> str:
     return ""
 
 
-def _fields_of(rec: Dict[str, Any]) -> Dict[str, Any]:
+def _fields_of(rec: dict[str, Any]) -> dict[str, Any]:
     d = rec.get("detail") if isinstance(rec.get("detail"), dict) else {}
     out = dict(rec)
     out.pop("detail", None)
@@ -74,14 +85,15 @@ def _fields_of(rec: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _readers(field: str) -> List[str]:
+def _readers(field: str) -> list[str]:
     """Which files under core/ mention this field at all. A writer counts as a mention, so
     one hit usually means 'written and never read' -- the shape worth seeing."""
     try:
-        r = subprocess.run(["git", "grep", "-l", field, "--", "core/"],
-                           capture_output=True, text=True, cwd=_REPO, timeout=60)
-        return [l.strip() for l in r.stdout.splitlines() if l.strip()]
-    except Exception:                                                     # noqa: BLE001
+        r = subprocess.run(
+            ["git", "grep", "-l", field, "--", "core/"], capture_output=True, text=True, cwd=_REPO, timeout=60
+        )
+        return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    except Exception:  # noqa: BLE001  # fail-soft: falls back to a default value
         return []
 
 
@@ -117,7 +129,7 @@ def main(argv=None) -> int:
             if vals[f]:
                 carried[f] += 1
         total_chars += sum(len(v) for v in vals.values())
-        for f in TEXT_FIELDS:                       # the projector's own loop
+        for f in TEXT_FIELDS:  # the projector's own loop
             if vals[f]:
                 chosen[f] += 1
                 seen_chars += len(vals[f])
@@ -127,7 +139,7 @@ def main(argv=None) -> int:
     match_chars = sum(len(str(i.get("match_text") or i.get("text") or "")) for i in items)
     shown_chars = sum(len(str(i.get("text") or "")) for i in items)
 
-    rep: Dict[str, Any] = {
+    rep: dict[str, Any] = {
         "lessons": n,
         "display_slot_winner": dict(chosen),
         "rows_carrying": dict(carried),
@@ -148,36 +160,38 @@ def main(argv=None) -> int:
         print(json.dumps(rep, indent=2))
         return 0
 
-    print("lesson plane -- %d lessons\n" % n)
+    print(f"lesson plane -- {n:d} lessons\n")
     print("THE DISPLAY SLOT (the projector keeps the FIRST non-empty of three):")
     for f in TEXT_FIELDS:
-        print("   %-16s carried by %4d rows, wins the slot on %4d" % (f, carried[f], chosen[f]))
+        print(f"   {f!s:<16} carried by {carried[f]:4d} rows, wins the slot on {chosen[f]:4d}")
     if not chosen.get("what_tried"):
         print("   -> what_tried wins on ZERO rows: one of the other two always precedes it.")
     print()
     print("THE MATCH SURFACE:")
-    print("   characters across the three text fields   %9d" % total_chars)
-    print("   reachable if only ONE field is matched    %9d  (%.1f%% invisible)"
-          % (seen_chars, 100.0 * (total_chars - seen_chars) / max(1, total_chars)))
-    print("   matchable at HEAD (match_text)            %9d" % match_chars)
-    print("   displayed at HEAD (text, provenance-tagged) %7d" % shown_chars)
+    print(f"   characters across the three text fields   {total_chars:9d}")
+    print(
+        f"   reachable if only ONE field is matched    {seen_chars:9d}  "
+        f"({100.0 * (total_chars - seen_chars) / max(1, total_chars):.1f}% invisible)"
+    )
+    print(f"   matchable at HEAD (match_text)            {match_chars:9d}")
+    print(f"   displayed at HEAD (text, provenance-tagged) {shown_chars:7d}")
     print()
-    print("FILL RATES, top %d:" % a.top)
+    print(f"FILL RATES, top {a.top:d}:")
     for k, v in present.most_common(a.top):
-        print("   %-26s %5d  %6.2f%%" % (k, v, 100.0 * v / n))
+        print(f"   {k!s:<26} {v:5d}  {100.0 * v / n:6.2f}%")
     print()
     print("READERS under core/ (a writer counts as a mention -- ONE hit usually means")
     print("written-and-never-read, which is the shape worth seeing):")
     for f in READER_CHECK:
         rs = rep["readers"][f]
         note = "  <-- no reader but its writer" if len(rs) == 1 else ""
-        print("   %-20s %d file(s)%s" % (f, len(rs), note))
+        print(f"   {f!s:<20} {len(rs)} file(s){note}")
         if len(rs) == 1:
-            print("        %s" % rs[0])
+            print(f"        {rs[0]}")
     print()
     print("NOT COVERED BY THIS SCRIPT, and therefore still unverified by a kept command:")
     for s in rep["unverified_elsewhere"]:
-        print("   - %s" % s)
+        print(f"   - {s}")
     return 0
 
 

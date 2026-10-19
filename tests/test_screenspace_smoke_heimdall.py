@@ -2,18 +2,19 @@
 
 
 def test_package_imports_and_surface():
-    from core.screenspace import capture, shadow, peek, delta, refs, read_text
+    from core.screenspace import capture, delta, peek, read_text, refs, shadow
     from core.screenspace.capture import screen
     from core.screenspace.engine import (
-        ObservationStream,
-        ScreenResult,
-        ScreenDelta,
         Ref,
+        ScreenDelta,
+        ScreenResult,
         TextResult,
-        peek as _peek,
     )
 
-    assert callable(peek) and callable(delta) and callable(refs) and callable(read_text)
+    assert callable(peek)
+    assert callable(delta)
+    assert callable(refs)
+    assert callable(read_text)
     assert callable(screen)
     assert hasattr(capture, "screen")
     assert callable(shadow.pulse)
@@ -23,12 +24,13 @@ def test_package_imports_and_surface():
 
 
 def test_verbs_return_structured_not_bare():
-    from core.screenspace import peek, delta, refs, read_text
+    from core.screenspace import delta, peek, read_text, refs
 
     r = peek(level="L0")
     assert r.level == "L0"
     assert r.source == "screen"
-    assert isinstance(r.gen, int) and r.gen >= 0
+    assert isinstance(r.gen, int)
+    assert r.gen >= 0
 
     d = delta(since_gen=0)
     assert d.current_gen >= 0

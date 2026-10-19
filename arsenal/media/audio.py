@@ -40,6 +40,7 @@ Measured 2026-10-12 on this machine (house ffmpeg N-124319); the synthetic oracl
     -> -14.1 / -1.6 dBTP after the re-render fixed a -1.4 dBTP AAC overshoot;
   - 2026-10-11 17-51-11.mp4 (33 min, one Opus track): loudness 5.0 s, demux copy 0.25 s (warm file cache).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -48,8 +49,8 @@ import math
 import re
 import subprocess
 import time
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from . import ff, receipt
 
@@ -59,7 +60,8 @@ HOUSE_TRACKS = {0: "Mix", 1: "Voice", 2: "Game", 3: "Comms", 4: "Music", 5: "Pia
 #: Names encoders and muxers write when nobody named the track; they are not titles.
 _GENERIC_TITLE = re.compile(
     r"(?i)^\s*(|simple_\w*recording\d*|adv_\w*|soundhandler|videohandler|(obs |core media |gpac iso |apple )?"
-    r"(sound|audio)( media)? handler|(sound|audio) ?track ?\d*|track ?\d+|stereo|mono)\s*$")
+    r"(sound|audio)( media)? handler|(sound|audio) ?track ?\d*|track ?\d+|stereo|mono)\s*$"
+)
 
 #: codec -> (extension, extra muxer args) for a stream copy Chromium's <audio> element and decodeAudioData play.
 #: Opus goes to Ogg, not WebM: Ogg's granule position trims the encoder's end padding, so the file decodes to exactly
@@ -84,18 +86,30 @@ CODECS = {
     "wav": (["-c:a", "pcm_s16le"], ".wav"),
     "wav24": (["-c:a", "pcm_s24le"], ".wav"),
 }
-_EXT_CODEC = {".m4a": "aac", ".mp4": "aac", ".mov": "aac", ".aac": "aac", ".ogg": "opus", ".opus": "opus",
-              ".webm": "opus", ".flac": "flac", ".wav": "wav", ".mka": "flac", ".mkv": "flac"}
+_EXT_CODEC = {
+    ".m4a": "aac",
+    ".mp4": "aac",
+    ".mov": "aac",
+    ".aac": "aac",
+    ".ogg": "opus",
+    ".opus": "opus",
+    ".webm": "opus",
+    ".flac": "flac",
+    ".wav": "wav",
+    ".mka": "flac",
+    ".mkv": "flac",
+}
 
-TrackSpec = Union[str, int, Sequence[Union[int, str]], None]
-Span = Optional[Tuple[float, float]]
+TrackSpec = str | int | Sequence[int | str] | None
+Span = tuple[float, float] | None
 
 
 # =================================================================================================
 # tracks
 # =================================================================================================
 
-def track_name(a_index: int, tags: Optional[dict]) -> Tuple[Optional[str], str, str]:
+
+def track_name(a_index: int, tags: dict | None) -> tuple[str | None, str, str]:
     """(title, house_name, name_source) for audio track a_index: the stream's own title when it is a real name,
     else the house map, else 'Track N+1'. The catalog's sidecar uses the same rule."""
     tags = {str(k).lower(): v for k, v in (tags or {}).items()}
@@ -106,7 +120,7 @@ def track_name(a_index: int, tags: Optional[dict]) -> Tuple[Optional[str], str, 
     return None, HOUSE_TRACKS.get(a_index, f"Track {a_index + 1}"), "map"
 
 
-def _duration_tag(tags: dict) -> Optional[float]:
+def _duration_tag(tags: dict) -> float | None:
     raw = next((v for k, v in (tags or {}).items() if k.upper() == "DURATION"), None)
     if not raw:
         return None
@@ -122,15 +136,18 @@ def _stream_tags(j: dict, s: dict) -> dict:
     FLAC and M4A keep a title only at the file level."""
     tags = dict(s.get("tags") or {})
     fmt = j.get("format") or {}
-    if (int(fmt.get("nb_streams") or 0) == 1 and s.get("codec_type") == "audio"
-            and not any(k.lower() in ("title", "name") for k in tags)):
+    if (
+        int(fmt.get("nb_streams") or 0) == 1
+        and s.get("codec_type") == "audio"
+        and not any(k.lower() in ("title", "name") for k in tags)
+    ):
         title = next((v for k, v in (fmt.get("tags") or {}).items() if k.lower() == "title"), None)
         if title:
             tags["title"] = title
     return tags
 
 
-def tracks(src) -> List[dict]:
+def tracks(src) -> list[dict]:
     """Every audio track of src, in a:N order. A cheap fact lookup (one ffprobe call), not a receipt. start_s is
     where the track starts in the file (README, "The house clock": its start_time minus the format start_time)."""
     j = ff.probe_json(src, entries=("-show_streams", "-show_format"), extra=("-select_streams", "a"))
@@ -142,23 +159,34 @@ def tracks(src) -> List[dict]:
         title, house, source = track_name(n, tags)
         dur = s.get("duration")
         dur = float(dur) if dur not in (None, "N/A") else (_duration_tag(tags) or fmt_dur)
-        out.append({"index": n, "stream_index": int(s["index"]), "codec": s.get("codec_name"),
-                    "channels": int(s.get("channels") or 0), "layout": s.get("channel_layout"),
-                    "sample_rate": int(s.get("sample_rate") or 0), "title": title, "house_name": house,
-                    "name_source": source, "start_s": round(float(s.get("start_time") or f0) - f0, 6),
-                    "duration_s": dur,
-                    "language": tags.get("language"), "file_duration_s": fmt_dur})
+        out.append(
+            {
+                "index": n,
+                "stream_index": int(s["index"]),
+                "codec": s.get("codec_name"),
+                "channels": int(s.get("channels") or 0),
+                "layout": s.get("channel_layout"),
+                "sample_rate": int(s.get("sample_rate") or 0),
+                "title": title,
+                "house_name": house,
+                "name_source": source,
+                "start_s": round(float(s.get("start_time") or f0) - f0, 6),
+                "duration_s": dur,
+                "language": tags.get("language"),
+                "file_duration_s": fmt_dur,
+            }
+        )
     return out
 
 
-_list = tracks          # for functions whose `tracks` parameter shadows the lister
+_list = tracks  # for functions whose `tracks` parameter shadows the lister
 
 
-def _describe(trs: List[dict]) -> str:
+def _describe(trs: list[dict]) -> str:
     return ", ".join(f"{t['index']} {t['house_name']}" for t in trs) or "none"
 
 
-def _resolve_one(x, trs: List[dict], src) -> int:
+def _resolve_one(x, trs: list[dict], src) -> int:
     if isinstance(x, str) and not x.strip().lstrip("-").isdigit():
         hits = [t["index"] for t in trs if t["house_name"].lower() == x.strip().lower()]
         if not hits:
@@ -170,7 +198,7 @@ def _resolve_one(x, trs: List[dict], src) -> int:
     return i
 
 
-def pick(spec: TrackSpec, trs: List[dict], src="") -> List[int]:
+def pick(spec: TrackSpec, trs: list[dict], src="") -> list[int]:
     """'all' | None | 2 | '0,2' | 'Voice,Game' | [0, 'Game'] -> audio indices, refusing a track the file lacks."""
     if not trs:
         raise ff.MediaError(f"{Path(str(src)).name or 'source'} has no audio track")
@@ -188,7 +216,7 @@ def pick(spec: TrackSpec, trs: List[dict], src="") -> List[int]:
     return out
 
 
-def _muted(spec, trs: List[dict], src) -> set:
+def _muted(spec, trs: list[dict], src) -> set:
     """mute= as a set of audio indices: an index, a name, '1,2' or a list of either. None, '' and [] mute nothing
     (pick() reads None and '' as every track, so they never reach it)."""
     if spec is None or (isinstance(spec, str) and not spec.strip()):
@@ -203,7 +231,7 @@ def _muted(spec, trs: List[dict], src) -> set:
     return set(pick(spec, trs, src))
 
 
-def _gain_map(gains_db, trs: List[dict], src) -> Dict[int, float]:
+def _gain_map(gains_db, trs: list[dict], src) -> dict[int, float]:
     if not gains_db:
         return {}
     if isinstance(gains_db, (list, tuple)):
@@ -211,12 +239,13 @@ def _gain_map(gains_db, trs: List[dict], src) -> Dict[int, float]:
     try:
         items = dict(gains_db).items()
     except (TypeError, ValueError):
-        raise ff.MediaError(f"gains_db={gains_db!r}: give {{track: dB}} or one dB per track "
-                            f"(gain_db= on a span gains all of it)") from None
+        raise ff.MediaError(
+            f"gains_db={gains_db!r}: give {{track: dB}} or one dB per track (gain_db= on a span gains all of it)"
+        ) from None
     return {_resolve_one(k, trs, src): float(v) for k, v in items}
 
 
-def _span_args(span: Span) -> List[str]:
+def _span_args(span: Span) -> list[str]:
     if not span:
         return []
     t0, t1 = float(span[0]), float(span[1])
@@ -229,12 +258,12 @@ def _span_args(span: Span) -> List[str]:
 _END_TOL_S = 1e-3
 
 
-def audio_end(trs: List[dict]) -> float:
+def audio_end(trs: list[dict]) -> float:
     """Where the last audio track ends on the source clock."""
     return max(t["start_s"] + t["duration_s"] for t in trs)
 
 
-def check_span(span: Span, trs: List[dict], src="") -> None:
+def check_span(span: Span, trs: list[dict], src="") -> None:
     """Refuse a span the file cannot fill: one that starts at or after the audio ends, or ends past the end of the
     file (+1 ms). Unchecked, a span past the end measured I -70 LUFS / TP 0.0 dBTP (ebur128 got no frames) and mixed
     to zero samples while timeline_s claimed the requested length."""
@@ -254,15 +283,16 @@ def check_span(span: Span, trs: List[dict], src="") -> None:
         raise ff.MediaError(f"bad span [{t0:g}, {t1:g}): {name} ends at {f_end:.3f} s; need end <= duration")
 
 
-def _codec_for(out, codec: Optional[str]) -> str:
+def _codec_for(out, codec: str | None) -> str:
     if codec:
         if codec not in CODECS:
             raise ff.MediaError(f"unknown codec {codec!r}: one of {', '.join(CODECS)}")
         return codec
     ext = Path(str(out)).suffix.lower()
     if ext not in _EXT_CODEC:
-        raise ff.MediaError(f"cannot pick an audio codec for {ext or 'no extension'}; pass codec= one of "
-                            f"{', '.join(CODECS)}")
+        raise ff.MediaError(
+            f"cannot pick an audio codec for {ext or 'no extension'}; pass codec= one of {', '.join(CODECS)}"
+        )
     return _EXT_CODEC[ext]
 
 
@@ -274,7 +304,7 @@ def _safe(name: str) -> str:
 _CMDLINE_MAX = 32000
 
 
-def _filter_args(graph: str) -> List[str]:
+def _filter_args(graph: str) -> list[str]:
     """-filter_complex inline, or read from a file (ffmpeg's -/option syntax) when the graph would crowd the Windows
     command line. The file is named by the graph's hash, so a repeat reuses it instead of piling up."""
     if len(graph) < 8000:
@@ -291,8 +321,10 @@ def _filter_args(graph: str) -> List[str]:
 def _check_cmdline(args: Sequence[str], what: str) -> None:
     n = len(subprocess.list2cmdline(ff.argv_for(args)))
     if n > _CMDLINE_MAX:
-        raise ff.MediaError(f"{what} needs a {n}-character command line (Windows stops at 32767): mix the spans in "
-                            f"batches (each batch to a WAV, placed with its own `at`), then mix the batch files")
+        raise ff.MediaError(
+            f"{what} needs a {n}-character command line (Windows stops at 32767): mix the spans in "
+            f"batches (each batch to a WAV, placed with its own `at`), then mix the batch files"
+        )
 
 
 # =================================================================================================
@@ -302,14 +334,14 @@ def _check_cmdline(args: Sequence[str], what: str) -> None:
 _PARSED = re.compile(r"\[Parsed_(\w+?)_(\d+) @ [^\]]*\]\s*(.*)")
 
 
-def _num(m) -> Optional[float]:
+def _num(m) -> float | None:
     if not m:
         return None
     v = float(m.group(1))
     return None if math.isinf(v) else v
 
 
-def parse_ebur128(stderr: str) -> Dict[int, dict]:
+def parse_ebur128(stderr: str) -> dict[int, dict]:
     """{parsed filter index: {I, LRA, TP, threshold}} from every ebur128 summary in one ffmpeg log. Integrated
     loudness is printed to 0.1 LU; TP is the true peak (dBTP), None for digital silence."""
     out = {}
@@ -328,11 +360,11 @@ class _Graph:
     """A filtergraph built chain by chain, remembering each filter's parse index so log lines map back to tracks."""
 
     def __init__(self):
-        self.chains: List[str] = []
+        self.chains: list[str] = []
         self._n = 0
-        self.owner: Dict[int, Tuple[str, object]] = {}
+        self.owner: dict[int, tuple[str, object]] = {}
 
-    def add(self, head: str, filters: Sequence[Tuple[str, str]], tail: str, owner=None) -> None:
+    def add(self, head: str, filters: Sequence[tuple[str, str]], tail: str, owner=None) -> None:
         parts = []
         for name, args in filters:
             if owner is not None:
@@ -345,12 +377,13 @@ class _Graph:
         return ";".join(self.chains)
 
 
-def _ebur128_filters() -> List[Tuple[str, str]]:
+def _ebur128_filters() -> list[tuple[str, str]]:
     return [("ebur128", "peak=true:framelog=quiet")]
 
 
-def _measure(src, idx: List[int], span: Span, *, silence: Optional[Tuple[float, float]] = None,
-             end_s: Optional[float] = None) -> dict:
+def _measure(
+    src, idx: list[int], span: Span, *, silence: tuple[float, float] | None = None, end_s: float | None = None
+) -> dict:
     """One decode pass: ebur128 (and optionally silencedetect) on each chosen track -> {a_index: {...}}. A silence
     still open when the stream ends closes at the span end, else at end_s."""
     g = _Graph()
@@ -358,31 +391,33 @@ def _measure(src, idx: List[int], span: Span, *, silence: Optional[Tuple[float, 
     for i in idx:
         filters = _ebur128_filters()
         if silence:
-            filters = filters + [("silencedetect", f"noise={silence[0]}dB:d={silence[1]}")]
+            filters = [*filters, ("silencedetect", f"noise={silence[0]}dB:d={silence[1]}")]
         g.add(f"[0:a:{i}]", filters, f"[m{i}]", owner=i)
         outs += ["-map", f"[m{i}]"]
     res = ff.run(["-nostats", *_span_args(span), "-i", str(src), *_filter_args(g.text()), *outs, "-f", "null", "-"])
     summaries = parse_ebur128(res.stderr)
-    out: Dict[int, dict] = {i: {"I": None, "LRA": None, "TP": None, "threshold": None, "silences": []} for i in idx}
+    out: dict[int, dict] = {i: {"I": None, "LRA": None, "TP": None, "threshold": None, "silences": []} for i in idx}
     for k, v in summaries.items():
         name, owner = g.owner.get(k, (None, None))
         if name == "ebur128":
             out[owner].update(v)
     if silence:
-        found = _silence_spans(res.stderr, g, idx, t0=float(span[0]) if span else 0.0,
-                               end_s=float(span[1]) if span else end_s)
+        found = _silence_spans(
+            res.stderr, g, idx, t0=float(span[0]) if span else 0.0, end_s=float(span[1]) if span else end_s
+        )
         for i in idx:
             out[i]["silences"] = found[i]
     out["_argv"] = res.args
     return out
 
 
-def _silence_spans(stderr: str, g: _Graph, owners: Iterable, *, t0: float = 0.0,
-                   end_s: Optional[float] = None) -> Dict[object, List[list]]:
+def _silence_spans(
+    stderr: str, g: _Graph, owners: Iterable, *, t0: float = 0.0, end_s: float | None = None
+) -> dict[object, list[list]]:
     """silencedetect log lines -> {owner: [[start, end], ...]}, shifted by t0 onto the source clock; a silence still
     open when the stream ends closes at end_s."""
-    out: Dict[object, List[list]] = {o: [] for o in owners}
-    open_at: Dict[object, float] = {}
+    out: dict[object, list[list]] = {o: [] for o in owners}
+    open_at: dict[object, float] = {}
     for line in stderr.splitlines():
         m = _PARSED.search(line)
         if not m or m.group(1) != "silencedetect":
@@ -406,33 +441,52 @@ def loudness(src, *, tracks: TrackSpec = "all", span: Span = None) -> dict:
     check_span(span, trs, src)
     t = time.perf_counter()
     m = _measure(src, idx, span)
-    rows = [{"index": i, "house_name": trs[i]["house_name"], "channels": trs[i]["channels"],
-             **{k: m[i][k] for k in ("I", "LRA", "TP", "threshold")}} for i in idx]
+    rows = [
+        {
+            "index": i,
+            "house_name": trs[i]["house_name"],
+            "channels": trs[i]["channels"],
+            **{k: m[i][k] for k in ("I", "LRA", "TP", "threshold")},
+        }
+        for i in idx
+    ]
     params = {"tracks": tracks, "span": list(span) if span else None, "meter": "ebur128 peak=true"}
-    return receipt.result("loudness", src, params, {"tracks": rows, "seconds": round(time.perf_counter() - t, 3),
-                                                    "argv": m["_argv"]},
-                          blind=["I is printed by ebur128 to 0.1 LU",
-                                 "a mono track is measured as mono (BS.1770 counts it once: 3 LU under the same "
-                                 "signal on both channels of a stereo track)",
-                                 "TP is the true peak of the decoded track, not of a later re-encode"])
+    return receipt.result(
+        "loudness",
+        src,
+        params,
+        {"tracks": rows, "seconds": round(time.perf_counter() - t, 3), "argv": m["_argv"]},
+        blind=[
+            "I is printed by ebur128 to 0.1 LU",
+            (
+                "a mono track is measured as mono (BS.1770 counts it once: 3 LU under the same "
+                "signal on both channels of a stereo track)"
+            ),
+            "TP is the true peak of the decoded track, not of a later re-encode",
+        ],
+    )
 
 
-def silences(src, *, track: Union[int, str] = 0, noise_db: float = -40.0, min_s: float = 0.5,
-             span: Span = None) -> dict:
+def silences(src, *, track: int | str = 0, noise_db: float = -40.0, min_s: float = 0.5, span: Span = None) -> dict:
     """Stretches of track quieter than noise_db for at least min_s, as [t0, t1] on the source clock."""
     trs = tracks(src)
     i = pick([track], trs, src)[0]
     check_span(span, trs, src)
     m = _measure(src, [i], span, silence=(noise_db, min_s), end_s=trs[i]["start_s"] + trs[i]["duration_s"])
     params = {"track": track, "noise_db": noise_db, "min_s": min_s, "span": list(span) if span else None}
-    return receipt.result("silences", src, params, {"index": i, "house_name": trs[i]["house_name"],
-                                                    "silences": m[i]["silences"], "I": m[i]["I"]},
-                          blind=["silence is a level threshold: quiet speech under noise_db counts as silence"])
+    return receipt.result(
+        "silences",
+        src,
+        params,
+        {"index": i, "house_name": trs[i]["house_name"], "silences": m[i]["silences"], "I": m[i]["I"]},
+        blind=["silence is a level threshold: quiet speech under noise_db counts as silence"],
+    )
 
 
 # =================================================================================================
 # demux, split
 # =================================================================================================
+
 
 def _default_dir(verb: str, src) -> Path:
     return ff.state_dir() / verb / receipt.quick_id(src)
@@ -463,23 +517,56 @@ def demux(src, out_dir=None, *, tracks: TrackSpec = "all", codec: str = "copy") 
             ext, extra, enc = ".flac", [], ["-c:a", "flac"]
             how = "flac" if codec == "flac" else f"flac (no browser container for {t['codec']} copy)"
         path = out / f"{stem}.a{i}.{_safe(t['house_name'])}{ext}"
-        args += ["-map", f"0:a:{i}", *enc, "-map_chapters", "-1", "-map_metadata", "-1",
-                 "-metadata", f"title={t['house_name']}", "-metadata:s:a:0", f"title={t['house_name']}",
-                 *extra, str(path)]
-        rows.append({"index": i, "house_name": t["house_name"], "codec": t["codec"], "how": how, "path": str(path),
-                     "start_s": t["start_s"], "duration_s": t["duration_s"]})
+        args += [
+            "-map",
+            f"0:a:{i}",
+            *enc,
+            "-map_chapters",
+            "-1",
+            "-map_metadata",
+            "-1",
+            "-metadata",
+            f"title={t['house_name']}",
+            "-metadata:s:a:0",
+            f"title={t['house_name']}",
+            *extra,
+            str(path),
+        ]
+        rows.append(
+            {
+                "index": i,
+                "house_name": t["house_name"],
+                "codec": t["codec"],
+                "how": how,
+                "path": str(path),
+                "start_s": t["start_s"],
+                "duration_s": t["duration_s"],
+            }
+        )
     t0 = time.perf_counter()
     res = ff.run(args)
     params = {"tracks": tracks, "codec": codec, "out_dir": str(out)}
-    return receipt.result("demux", src, params,
-                          {"files": [r["path"] for r in rows], "tracks": rows,
-                           "seconds": round(time.perf_counter() - t0, 3), "argv": res.args},
-                          blind=["start_s is the track's start in the source file (a file time): a track that starts "
-                                 "late in the source plays from 0 in its own file, so the editor offsets it by start_s",
-                                 "a copy keeps the source's packets: an Ogg/WebM file has no video to sync against"])
+    return receipt.result(
+        "demux",
+        src,
+        params,
+        {
+            "files": [r["path"] for r in rows],
+            "tracks": rows,
+            "seconds": round(time.perf_counter() - t0, 3),
+            "argv": res.args,
+        },
+        blind=[
+            (
+                "start_s is the track's start in the source file (a file time): a track that starts "
+                "late in the source plays from 0 in its own file, so the editor offsets it by start_s"
+            ),
+            "a copy keeps the source's packets: an Ogg/WebM file has no video to sync against",
+        ],
+    )
 
 
-def split_channels(src, track: Union[int, str] = 0, out_dir=None) -> dict:
+def split_channels(src, track: int | str = 0, out_dir=None) -> dict:
     """One mono WAV per channel of a track (e.g. an OBS track carrying the mic left and the game right)."""
     trs = tracks(src)
     i = pick([track], trs, src)[0]
@@ -498,16 +585,21 @@ def split_channels(src, track: Union[int, str] = 0, out_dir=None) -> dict:
         args += ["-map", f"[c{k}]", "-c:a", "pcm_s16le" if t["codec"] != "pcm_s24le" else "pcm_s24le", str(path)]
         files.append(str(path))
     res = ff.run(args)
-    return receipt.result("split", src, {"track": track, "out_dir": str(out)},
-                          {"index": i, "layout": layout, "files": files, "argv": res.args},
-                          blind=["channel names follow ffmpeg's layout order (FL, FR, ...)"])
+    return receipt.result(
+        "split",
+        src,
+        {"track": track, "out_dir": str(out)},
+        {"index": i, "layout": layout, "files": files, "argv": res.args},
+        blind=["channel names follow ffmpeg's layout order (FL, FR, ...)"],
+    )
 
 
 # =================================================================================================
 # mix
 # =================================================================================================
 
-def _norm_spans(src, spans, *, tracks: TrackSpec, gains_db, mute, span: Span, info) -> List[dict]:
+
+def _norm_spans(src, spans, *, tracks: TrackSpec, gains_db, mute, span: Span, info) -> list[dict]:
     """Spans as dicts with every field filled: src, start, end, at (timeline seconds), dur, tracks, gains."""
     if spans is None:
         if src is None:
@@ -542,46 +634,56 @@ def _norm_spans(src, spans, *, tracks: TrackSpec, gains_db, mute, span: Span, in
         gains.update(_gain_map(s.get("gains_db"), trs, path))
         muted = _muted(s.get("mute", mute), trs, path)
         live = [i for i in idx if i not in muted]
-        out.append({"src": str(path), "start": start, "end": end if end is None else float(end), "dur": dur,
-                    "at": at, "tracks": live, "muted": sorted(muted & set(idx)),
-                    "gains_db": {i: gains.get(i, 0.0) + float(s.get("gain_db", 0.0)) for i in live},
-                    "fade_in_s": float(s.get("fade_in_s", s.get("fade_s", 0.0)) or 0.0),
-                    "fade_out_s": float(s.get("fade_out_s", s.get("fade_s", 0.0)) or 0.0)})
+        out.append(
+            {
+                "src": str(path),
+                "start": start,
+                "end": end if end is None else float(end),
+                "dur": dur,
+                "at": at,
+                "tracks": live,
+                "muted": sorted(muted & set(idx)),
+                "gains_db": {i: gains.get(i, 0.0) + float(s.get("gain_db", 0.0)) for i in live},
+                "fade_in_s": float(s.get("fade_in_s", s.get("fade_s", 0.0)) or 0.0),
+                "fade_out_s": float(s.get("fade_out_s", s.get("fade_s", 0.0)) or 0.0),
+            }
+        )
         cursor = at + dur
     return out
 
 
-def mix_graph(spans: List[dict], *, sample_rate: int = 48000, label: str = "mix") -> Tuple[List[str], str]:
+def mix_graph(spans: list[dict], *, sample_rate: int = 48000, label: str = "mix") -> tuple[list[str], str]:
     """(input args, filtergraph) mixing normalized spans into one stereo float bus [label]. Each span is one input,
     trimmed at the input (sample-exact on 1/sr timebases), each track resampled to stereo at sample_rate, gained,
     summed (amix normalize=0: a plain sum, no hidden 1/N), padded with silence to its full length when its audio
     ends early, faded, and delayed to its timeline position in samples."""
     if not spans:
         raise ff.MediaError("mix_graph got no spans")
-    inputs: List[str] = []
-    chains: List[str] = []
+    inputs: list[str] = []
+    chains: list[str] = []
     buses = []
     for k, s in enumerate(spans):
-        inputs += (["-ss", f"{s['start']:.6f}"] if s["start"] else [])
-        inputs += (["-t", f"{s['dur']:.6f}"] if s["end"] is not None else [])
+        inputs += ["-ss", f"{s['start']:.6f}"] if s["start"] else []
+        inputs += ["-t", f"{s['dur']:.6f}"] if s["end"] is not None else []
         inputs += ["-i", s["src"]]
-        live = s["tracks"] or s["muted"][:1]          # every track muted: keep one at zero so the span keeps its length
+        live = s["tracks"] or s["muted"][:1]  # every track muted: keep one at zero so the span keeps its length
         if not live:
             raise ff.MediaError(f"span {k} has no audio track to mix")
         legs = []
         for i in live:
             vol = f"volume={s['gains_db'][i]:.4f}dB" if s["tracks"] else "volume=0"
-            chains.append(f"[{k}:a:{i}]aresample={sample_rate},aformat=sample_fmts=fltp:channel_layouts=stereo,"
-                          f"{vol}[s{k}t{i}]")
+            chains.append(
+                f"[{k}:a:{i}]aresample={sample_rate},aformat=sample_fmts=fltp:channel_layouts=stereo,{vol}[s{k}t{i}]"
+            )
             legs.append(f"[s{k}t{i}]")
         post = []
-        if s["end"] is not None:      # audio that ends before the span does (a short track) still fills its place
-            post.append(f"apad=whole_len={int(round(s['dur'] * sample_rate))}")
+        if s["end"] is not None:  # audio that ends before the span does (a short track) still fills its place
+            post.append(f"apad=whole_len={round(s['dur'] * sample_rate)}")
         if s["fade_in_s"] > 0:
             post.append(f"afade=t=in:st=0:d={s['fade_in_s']:.6f}")
         if s["fade_out_s"] > 0:
             post.append(f"afade=t=out:st={max(0.0, s['dur'] - s['fade_out_s']):.6f}:d={s['fade_out_s']:.6f}")
-        delay = int(round(s["at"] * sample_rate))
+        delay = round(s["at"] * sample_rate)
         if delay:
             post.append(f"adelay=delays={delay}S:all=1")
         if len(legs) > 1:
@@ -591,8 +693,9 @@ def mix_graph(spans: List[dict], *, sample_rate: int = 48000, label: str = "mix"
             chains.append(f"{legs[0]}{','.join(post) if post else 'anull'}[b{k}]")
         buses.append(f"[b{k}]")
     if len(buses) > 1:
-        chains.append(f"{''.join(buses)}amix=inputs={len(buses)}:normalize=0:duration=longest:dropout_transition=0"
-                      f"[{label}]")
+        chains.append(
+            f"{''.join(buses)}amix=inputs={len(buses)}:normalize=0:duration=longest:dropout_transition=0[{label}]"
+        )
     else:
         chains.append(f"{buses[0]}anull[{label}]")
     return inputs, ";".join(chains)
@@ -606,8 +709,13 @@ _I_OK_LU = 0.5
 
 #: The ranges loudnorm accepts for pass 2's measured_* options. Pass 1 prints input_i -inf and target_offset inf for
 #: digital silence (or audio wholly under the -70 LUFS gate), which pass 2 rejects outright (measured on anullsrc).
-_LN_MEASURED = {"input_i": (-99.0, 0.0), "input_tp": (-99.0, 99.0), "input_lra": (0.0, 99.0),
-                "input_thresh": (-99.0, 0.0), "target_offset": (-99.0, 99.0)}
+_LN_MEASURED = {
+    "input_i": (-99.0, 0.0),
+    "input_tp": (-99.0, 99.0),
+    "input_lra": (0.0, 99.0),
+    "input_thresh": (-99.0, 0.0),
+    "target_offset": (-99.0, 99.0),
+}
 
 
 def _loudnorm_json(stderr: str) -> dict:
@@ -617,7 +725,7 @@ def _loudnorm_json(stderr: str) -> dict:
     return json.loads(m[-1])
 
 
-def loudnorm_unmeasurable(m1: dict) -> Optional[str]:
+def loudnorm_unmeasurable(m1: dict) -> str | None:
     """Why a loudnorm pass-1 measurement cannot drive pass 2 (None when it can). Any two-pass caller can use it."""
     for key, (lo, hi) in _LN_MEASURED.items():
         try:
@@ -626,16 +734,29 @@ def loudnorm_unmeasurable(m1: dict) -> Optional[str]:
             return f"loudnorm pass 1 printed {key}={m1.get(key)!r}; rendered without loudness normalization"
         if not lo <= v <= hi:
             if key == "input_i" and v < lo:
-                return ("the audio is digital silence (or wholly under the -70 LUFS gate); rendered without loudness "
-                        "normalization")
-            return (f"loudnorm pass 1 measured {key}={m1.get(key)} (pass 2 takes {lo:g}..{hi:g}); rendered without "
-                    f"loudness normalization")
+                return (
+                    "the audio is digital silence (or wholly under the -70 LUFS gate); rendered without loudness "
+                    "normalization"
+                )
+            return (
+                f"loudnorm pass 1 measured {key}={m1.get(key)} (pass 2 takes {lo:g}..{hi:g}); rendered without "
+                f"loudness normalization"
+            )
     return None
 
 
-def normalize_render(inputs: List[str], graph: str, label: str, out, enc_args: List[str], *,
-                     target: Optional[dict], sample_rate: int = 48000, tries: int = 2,
-                     gpu: Optional[str] = None) -> dict:
+def normalize_render(
+    inputs: list[str],
+    graph: str,
+    label: str,
+    out,
+    enc_args: list[str],
+    *,
+    target: dict | None,
+    sample_rate: int = 48000,
+    tries: int = 2,
+    gpu: str | None = None,
+) -> dict:
     """Render [label] of graph to out with enc_args; with target {I, TP, LRA}, a measured two-pass loudnorm whose
     output is read back with ebur128 and, if it misses (|I - target| > 0.2 LU or TP over target, e.g. AAC overshoot),
     rendered once more with the miss subtracted. Shared by mix, loudnorm_2pass and export.
@@ -647,19 +768,38 @@ def normalize_render(inputs: List[str], graph: str, label: str, out, enc_args: L
     out.parent.mkdir(parents=True, exist_ok=True)
     attempts = []
 
-    def run(args: List[str], gpu_label: Optional[str] = None):
+    def run(args: list[str], gpu_label: str | None = None):
         _check_cmdline(args, f"mixing {inputs.count('-i')} inputs")
         return ff.run(args, gpu=gpu_label)
 
     def plain():
-        return run(["-y", "-nostats", *inputs, *_filter_args(f"{graph};[{label}]aresample={sample_rate}[aout]"),
-                    "-map", "[aout]", *enc_args, str(out)], gpu)
+        return run(
+            [
+                "-y",
+                "-nostats",
+                *inputs,
+                *_filter_args(f"{graph};[{label}]aresample={sample_rate}[aout]"),
+                "-map",
+                "[aout]",
+                *enc_args,
+                str(out),
+            ],
+            gpu,
+        )
 
     if not target:
-        return {"argv": plain().args, "attempts": attempts, "pass1": None, "measured": None, "normalized": False,
-                "notes": [], "problems": []}
-    meas_graph = (f"{graph};[{label}]loudnorm=I={target['I']}:TP={target['TP']}:LRA={target['LRA']}"
-                  f":print_format=json[lm]")
+        return {
+            "argv": plain().args,
+            "attempts": attempts,
+            "pass1": None,
+            "measured": None,
+            "normalized": False,
+            "notes": [],
+            "problems": [],
+        }
+    meas_graph = (
+        f"{graph};[{label}]loudnorm=I={target['I']}:TP={target['TP']}:LRA={target['LRA']}:print_format=json[lm]"
+    )
     p1 = run(["-nostats", *inputs, *_filter_args(meas_graph), "-map", "[lm]", "-f", "null", "-"])
     m1 = _loudnorm_json(p1.stderr)
     pass1 = {k: m1.get(k) for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}
@@ -667,21 +807,49 @@ def normalize_render(inputs: List[str], graph: str, label: str, out, enc_args: L
     if why:
         argv = plain().args
         got = _measure(out, [0], None)[0]
-        return {"argv": argv, "attempts": attempts, "pass1": pass1, "measured": {k: got[k] for k in ("I", "LRA", "TP")},
-                "normalized": False, "notes": [why], "problems": []}
+        return {
+            "argv": argv,
+            "attempts": attempts,
+            "pass1": pass1,
+            "measured": {k: got[k] for k in ("I", "LRA", "TP")},
+            "normalized": False,
+            "notes": [why],
+            "problems": [],
+        }
     aim_i, aim_tp = float(target["I"]), float(target["TP"])
     argv = None
-    for n in range(max(1, tries)):
-        ln = (f"loudnorm=I={aim_i:.2f}:TP={aim_tp:.2f}:LRA={target['LRA']}:measured_I={m1['input_i']}"
-              f":measured_TP={m1['input_tp']}:measured_LRA={m1['input_lra']}:measured_thresh={m1['input_thresh']}"
-              f":offset={m1['target_offset']}:linear=true:print_format=json")
-        res = run(["-y", "-nostats", *inputs, *_filter_args(f"{graph};[{label}]{ln},aresample={sample_rate}[aout]"),
-                   "-map", "[aout]", *enc_args, str(out)], gpu)
+    for _ in range(max(1, tries)):
+        ln = (
+            f"loudnorm=I={aim_i:.2f}:TP={aim_tp:.2f}:LRA={target['LRA']}:measured_I={m1['input_i']}"
+            f":measured_TP={m1['input_tp']}:measured_LRA={m1['input_lra']}:measured_thresh={m1['input_thresh']}"
+            f":offset={m1['target_offset']}:linear=true:print_format=json"
+        )
+        res = run(
+            [
+                "-y",
+                "-nostats",
+                *inputs,
+                *_filter_args(f"{graph};[{label}]{ln},aresample={sample_rate}[aout]"),
+                "-map",
+                "[aout]",
+                *enc_args,
+                str(out),
+            ],
+            gpu,
+        )
         argv = res.args
         mode = _loudnorm_json(res.stderr).get("normalization_type")
         got = _measure(out, [0], None)[0]
-        attempts.append({"aim_I": round(aim_i, 2), "aim_TP": round(aim_tp, 2), "mode": mode,
-                         "I": got["I"], "TP": got["TP"], "LRA": got["LRA"]})
+        attempts.append(
+            {
+                "aim_I": round(aim_i, 2),
+                "aim_TP": round(aim_tp, 2),
+                "mode": mode,
+                "I": got["I"],
+                "TP": got["TP"],
+                "LRA": got["LRA"],
+            }
+        )
         miss_i = (got["I"] - float(target["I"])) if got["I"] is not None else 0.0
         over_tp = (got["TP"] - float(target["TP"])) if got["TP"] is not None else -1.0
         if abs(miss_i) <= _I_RETRY_LU and over_tp <= 0.0:
@@ -692,12 +860,21 @@ def normalize_render(inputs: List[str], graph: str, label: str, out, enc_args: L
     final = attempts[-1]
     problems = []
     if final["I"] is None or abs(final["I"] - float(target["I"])) > _I_OK_LU + 1e-9:
-        problems.append(f"integrated loudness {final['I']} LUFS is not {target['I']} within {_I_OK_LU} LU after "
-                        f"{len(attempts)} render(s) ({final['mode']} mode)")
+        problems.append(
+            f"integrated loudness {final['I']} LUFS is not {target['I']} within {_I_OK_LU} LU after "
+            f"{len(attempts)} render(s) ({final['mode']} mode)"
+        )
     if final["TP"] is not None and final["TP"] > float(target["TP"]) + 1e-9:
         problems.append(f"true peak {final['TP']} dBTP is over {target['TP']}")
-    return {"argv": argv, "attempts": attempts, "pass1": pass1, "measured": {k: final[k] for k in ("I", "LRA", "TP")},
-            "normalized": True, "notes": [], "problems": problems}
+    return {
+        "argv": argv,
+        "attempts": attempts,
+        "pass1": pass1,
+        "measured": {k: final[k] for k in ("I", "LRA", "TP")},
+        "normalized": True,
+        "notes": [],
+        "problems": problems,
+    }
 
 
 def _mute_param(mute) -> object:
@@ -710,10 +887,22 @@ def _mute_param(mute) -> object:
         return repr(mute)
 
 
-def mix(src, out, *, gains_db: Optional[dict] = None, mute: TrackSpec = (), tracks: TrackSpec = "all",
-        span: Span = None, spans: Optional[Sequence[dict]] = None, codec: Optional[str] = None,
-        loudnorm: Optional[float] = None, tp: float = -1.0, lra: float = 11.0, sample_rate: int = 48000,
-        measure: bool = True) -> dict:
+def mix(
+    src,
+    out,
+    *,
+    gains_db: dict | None = None,
+    mute: TrackSpec = (),
+    tracks: TrackSpec = "all",
+    span: Span = None,
+    spans: Sequence[dict] | None = None,
+    codec: str | None = None,
+    loudnorm: float | None = None,
+    tp: float = -1.0,
+    lra: float = 11.0,
+    sample_rate: int = 48000,
+    measure: bool = True,
+) -> dict:
     """Mix audio tracks to one stereo file with per-track gains (dB) and mutes.
 
     One source: mix(src, out, gains_db={0: 0, 1: -6}, mute=[2], span=(10, 20)); mute takes an index, a name,
@@ -722,7 +911,7 @@ def mix(src, out, *, gains_db: Optional[dict] = None, mute: TrackSpec = (), trac
     uses src. Overlapping spans sum. A span must lie inside its file (a span past the end is refused). codec None
     follows out's extension (.m4a aac, .ogg opus, .flac, .wav). loudnorm=-14 runs the measured two-pass loudnorm on
     the mix (TP and LRA targets tp, lra); ok/problems say whether the read-back met it, notes why it was skipped."""
-    cache: Dict[str, List[dict]] = {}
+    cache: dict[str, list[dict]] = {}
 
     def info(p):
         key = str(p)
@@ -737,34 +926,69 @@ def mix(src, out, *, gains_db: Optional[dict] = None, mute: TrackSpec = (), trac
     t0 = time.perf_counter()
     done = normalize_render(inputs, graph, "mix", out, CODECS[codec][0], target=target, sample_rate=sample_rate)
     seconds = round(time.perf_counter() - t0, 3)
-    if done["measured"] is not None:
-        measured = done["measured"]                     # loudnorm already read the output back
-    else:
+    measured = done["measured"]  # loudnorm already read the output back
+    if measured is None:
         measured = _measure(out, [0], None)[0] if measure else None
     length = max(s["at"] + s["dur"] for s in plan)
-    params = {"gains_db": {str(k): v for k, v in (gains_db or {}).items()} if isinstance(gains_db, dict) else gains_db,
-              "mute": _mute_param(mute), "tracks": tracks, "span": list(span) if span else None,
-              "spans": None if spans is None else len(spans), "codec": codec, "loudnorm": loudnorm, "tp": tp,
-              "lra": lra, "sample_rate": sample_rate, "measure": measure}
+    params = {
+        "gains_db": {str(k): v for k, v in (gains_db or {}).items()} if isinstance(gains_db, dict) else gains_db,
+        "mute": _mute_param(mute),
+        "tracks": tracks,
+        "span": list(span) if span else None,
+        "spans": None if spans is None else len(spans),
+        "codec": codec,
+        "loudnorm": loudnorm,
+        "tp": tp,
+        "lra": lra,
+        "sample_rate": sample_rate,
+        "measure": measure,
+    }
     srcs = sorted({s["src"] for s in plan})
-    payload = {"out": str(Path(out)), "codec": codec, "timeline_s": round(length, 6),
-               "spans": [{**s, "gains_db": {str(k): v for k, v in s["gains_db"].items()}} for s in plan],
-               "graph": graph, "argv": done["argv"], "loudnorm": done["pass1"], "attempts": done["attempts"],
-               "normalized": done["normalized"] if target else None, "ok": not done["problems"],
-               "problems": done["problems"], "notes": done["notes"],
-               "measured": {k: measured[k] for k in ("I", "LRA", "TP")} if measured else None, "seconds": seconds}
-    return receipt.result("mix", srcs[0] if len(srcs) == 1 else srcs, params, payload,
-                          blind=["a mono track is upmixed to stereo at -3 dB per channel (swresample's default), "
-                                 "which keeps its loudness: the same LUFS as the mono source, measured",
-                                 "amix sums without limiting: gains that push the sum over 0 dBFS clip in the encoder; "
-                                 "read measured.TP",
-                                 "spans on an MKV/WebM source start on its 1 ms timestamp grid",
-                                 "digital silence cannot be loudness-normalized: it renders plainly and notes say so"])
+    payload = {
+        "out": str(Path(out)),
+        "codec": codec,
+        "timeline_s": round(length, 6),
+        "spans": [{**s, "gains_db": {str(k): v for k, v in s["gains_db"].items()}} for s in plan],
+        "graph": graph,
+        "argv": done["argv"],
+        "loudnorm": done["pass1"],
+        "attempts": done["attempts"],
+        "normalized": done["normalized"] if target else None,
+        "ok": not done["problems"],
+        "problems": done["problems"],
+        "notes": done["notes"],
+        "measured": {k: measured[k] for k in ("I", "LRA", "TP")} if measured else None,
+        "seconds": seconds,
+    }
+    return receipt.result(
+        "mix",
+        srcs[0] if len(srcs) == 1 else srcs,
+        params,
+        payload,
+        blind=[
+            (
+                "a mono track is upmixed to stereo at -3 dB per channel (swresample's default), "
+                "which keeps its loudness: the same LUFS as the mono source, measured"
+            ),
+            "amix sums without limiting: gains that push the sum over 0 dBFS clip in the encoder; read measured.TP",
+            "spans on an MKV/WebM source start on its 1 ms timestamp grid",
+            "digital silence cannot be loudness-normalized: it renders plainly and notes say so",
+        ],
+    )
 
 
-def loudnorm_2pass(src, out, *, target_i: float = -14.0, tp: float = -1.0, lra: float = 11.0,
-                   track: Union[int, str, None] = None, span: Span = None, codec: Optional[str] = None,
-                   sample_rate: int = 48000) -> dict:
+def loudnorm_2pass(
+    src,
+    out,
+    *,
+    target_i: float = -14.0,
+    tp: float = -1.0,
+    lra: float = 11.0,
+    track: int | str | None = None,
+    span: Span = None,
+    codec: str | None = None,
+    sample_rate: int = 48000,
+) -> dict:
     """Measured two-pass loudnorm of one track (None = a:0, OBS's mix) to target_i LUFS with true peak <= tp,
     read back with ebur128; a miss is corrected by one more render. One-pass loudnorm lands about 1 LU off.
     ok is False (and problems says why) when the final read-back is still more than 0.5 LU off or over tp;
@@ -772,31 +996,74 @@ def loudnorm_2pass(src, out, *, target_i: float = -14.0, tp: float = -1.0, lra: 
     trs = tracks(src)
     i = pick([0 if track is None else track], trs, src)[0]
     check_span(span, trs, src)
-    plan = [{"src": str(src), "start": float(span[0]) if span else 0.0, "end": float(span[1]) if span else None,
-             "dur": (float(span[1]) - float(span[0])) if span else trs[i]["duration_s"], "at": 0.0, "tracks": [i],
-             "muted": [], "gains_db": {i: 0.0}, "fade_in_s": 0.0, "fade_out_s": 0.0}]
+    plan = [
+        {
+            "src": str(src),
+            "start": float(span[0]) if span else 0.0,
+            "end": float(span[1]) if span else None,
+            "dur": (float(span[1]) - float(span[0])) if span else trs[i]["duration_s"],
+            "at": 0.0,
+            "tracks": [i],
+            "muted": [],
+            "gains_db": {i: 0.0},
+            "fade_in_s": 0.0,
+            "fade_out_s": 0.0,
+        }
+    ]
     codec = _codec_for(out, codec)
     inputs, graph = mix_graph(plan, sample_rate=sample_rate)
     t0 = time.perf_counter()
-    done = normalize_render(inputs, graph, "mix", out, CODECS[codec][0],
-                            target={"I": target_i, "TP": tp, "LRA": lra}, sample_rate=sample_rate)
-    params = {"target_i": target_i, "tp": tp, "lra": lra, "track": track, "span": list(span) if span else None,
-              "codec": codec, "sample_rate": sample_rate}
-    return receipt.result("loudnorm", src, params,
-                          {"out": str(Path(out)), "index": i, "before": done["pass1"], "after": done["measured"],
-                           "mode": done["attempts"][-1]["mode"] if done["attempts"] else None,
-                           "normalized": done["normalized"], "ok": not done["problems"], "problems": done["problems"],
-                           "notes": done["notes"], "attempts": done["attempts"], "argv": done["argv"],
-                           "seconds": round(time.perf_counter() - t0, 3)},
-                          blind=["dynamic mode (when linear gain would breach tp) compresses: LRA can shrink",
-                                 "sparse content (a short sound over a quiet floor) puts loudnorm in dynamic mode, "
-                                 "where the corrective render may not converge (1.9 LU too loud, measured): read ok",
-                                 "the output is stereo; the source's video is not carried (export does that)"])
+    done = normalize_render(
+        inputs,
+        graph,
+        "mix",
+        out,
+        CODECS[codec][0],
+        target={"I": target_i, "TP": tp, "LRA": lra},
+        sample_rate=sample_rate,
+    )
+    params = {
+        "target_i": target_i,
+        "tp": tp,
+        "lra": lra,
+        "track": track,
+        "span": list(span) if span else None,
+        "codec": codec,
+        "sample_rate": sample_rate,
+    }
+    return receipt.result(
+        "loudnorm",
+        src,
+        params,
+        {
+            "out": str(Path(out)),
+            "index": i,
+            "before": done["pass1"],
+            "after": done["measured"],
+            "mode": done["attempts"][-1]["mode"] if done["attempts"] else None,
+            "normalized": done["normalized"],
+            "ok": not done["problems"],
+            "problems": done["problems"],
+            "notes": done["notes"],
+            "attempts": done["attempts"],
+            "argv": done["argv"],
+            "seconds": round(time.perf_counter() - t0, 3),
+        },
+        blind=[
+            "dynamic mode (when linear gain would breach tp) compresses: LRA can shrink",
+            (
+                "sparse content (a short sound over a quiet floor) puts loudnorm in dynamic mode, "
+                "where the corrective render may not converge (1.9 LU too loud, measured): read ok"
+            ),
+            "the output is stereo; the source's video is not carried (export does that)",
+        ],
+    )
 
 
 # =================================================================================================
 # qc
 # =================================================================================================
+
 
 def _fps(s: dict) -> float:
     for key in ("avg_frame_rate", "r_frame_rate"):
@@ -820,29 +1087,56 @@ def streams(path) -> dict:
         kind = s.get("codec_type")
         dur = s.get("duration")
         dur = float(dur) if dur not in (None, "N/A") else _duration_tag(tags)
-        row = {"index": int(s["index"]), "type": kind, "codec": s.get("codec_name"), "duration_s": dur,
-               "packets": int(s["nb_read_packets"]) if str(s.get("nb_read_packets", "")).isdigit() else None}
+        row = {
+            "index": int(s["index"]),
+            "type": kind,
+            "codec": s.get("codec_name"),
+            "duration_s": dur,
+            "packets": int(s["nb_read_packets"]) if str(s.get("nb_read_packets", "")).isdigit() else None,
+        }
         if kind == "video":
-            row.update(w=s.get("width"), h=s.get("height"), fps=round(_fps(s), 6), pix_fmt=s.get("pix_fmt"),
-                       alpha_mode=next((v for k, v in tags.items() if k.lower() == "alpha_mode"), None))
+            row.update(
+                w=s.get("width"),
+                h=s.get("height"),
+                fps=round(_fps(s), 6),
+                pix_fmt=s.get("pix_fmt"),
+                alpha_mode=next((v for k, v in tags.items() if k.lower() == "alpha_mode"), None),
+            )
         elif kind == "audio":
             title, house, _ = track_name(a_n, tags)
-            row.update(a_index=a_n, channels=s.get("channels"), sample_rate=int(s.get("sample_rate") or 0),
-                       title=title, house_name=house)
+            row.update(
+                a_index=a_n,
+                channels=s.get("channels"),
+                sample_rate=int(s.get("sample_rate") or 0),
+                title=title,
+                house_name=house,
+            )
             a_n += 1
         rows.append(row)
     fmt = j.get("format") or {}
-    return {"streams": rows, "duration_s": float(fmt.get("duration") or 0.0), "format": fmt.get("format_name"),
-            "size": int(fmt.get("size") or 0)}
+    return {
+        "streams": rows,
+        "duration_s": float(fmt.get("duration") or 0.0),
+        "format": fmt.get("format_name"),
+        "size": int(fmt.get("size") or 0),
+    }
 
 
-def _video_checks(g: _Graph, outs: List[str], black: Tuple[float, float], freeze: Tuple[float, float]) -> None:
-    g.add("[0:v:0]", [("scale", "320:-2"), ("blackdetect", f"d={black[1]}:pix_th={black[0]}"),
-                      ("freezedetect", f"n={freeze[0]}dB:d={freeze[1]}")], "[vq]", owner="video")
+def _video_checks(g: _Graph, outs: list[str], black: tuple[float, float], freeze: tuple[float, float]) -> None:
+    g.add(
+        "[0:v:0]",
+        [
+            ("scale", "320:-2"),
+            ("blackdetect", f"d={black[1]}:pix_th={black[0]}"),
+            ("freezedetect", f"n={freeze[0]}dB:d={freeze[1]}"),
+        ],
+        "[vq]",
+        owner="video",
+    )
     outs += ["-map", "[vq]"]
 
 
-def _parse_video(stderr: str, g: _Graph, end_s: float) -> Tuple[List[list], List[list]]:
+def _parse_video(stderr: str, g: _Graph, end_s: float) -> tuple[list[list], list[list]]:
     black, freeze, fopen = [], [], None
     for line in stderr.splitlines():
         m = _PARSED.search(line)
@@ -861,12 +1155,12 @@ def _parse_video(stderr: str, g: _Graph, end_s: float) -> Tuple[List[list], List
             elif e and fopen is not None:
                 freeze.append([fopen, float(e.group(1))])
                 fopen = None
-    if fopen is not None:                     # frozen into the end of the file
+    if fopen is not None:  # frozen into the end of the file
         freeze.append([fopen, end_s])
     return black, freeze
 
 
-def _expect_problems(expect: dict, inv: dict, loud: List[dict], black, freeze, silence) -> List[str]:
+def _expect_problems(expect: dict, inv: dict, loud: list[dict], black, freeze, silence) -> list[str]:
     probs = []
     vids = [s for s in inv["streams"] if s["type"] == "video"]
     auds = [s for s in inv["streams"] if s["type"] == "audio"]
@@ -884,9 +1178,11 @@ def _expect_problems(expect: dict, inv: dict, loud: List[dict], black, freeze, s
         tol = int(expect.get("frames_tol", 1))
         if got is None or abs(got - int(expect["frames"])) > tol:
             probs.append(f"video has {got} frames, expected {expect['frames']} within {tol}")
-    for key in ("w", "h"):
-        if key in expect and vids and int(vids[0][key] or 0) != int(expect[key]):
-            probs.append(f"video {key} {vids[0][key]}, expected {expect[key]}")
+    probs.extend(
+        f"video {key} {vids[0][key]}, expected {expect[key]}"
+        for key in ("w", "h")
+        if key in expect and vids and int(vids[0][key] or 0) != int(expect[key])
+    )
     if "fps" in expect and vids and abs(fps - float(expect["fps"])) > 0.01:
         probs.append(f"video fps {fps:.3f}, expected {expect['fps']}")
     if "titles" in expect:
@@ -910,9 +1206,17 @@ def _expect_problems(expect: dict, inv: dict, loud: List[dict], black, freeze, s
     return probs
 
 
-def qc(path, *, expect: Optional[dict] = None, video: bool = True, audio: bool = True, hw: Optional[str] = "d3d11va",
-       black: Tuple[float, float] = (0.10, 0.5), freeze: Tuple[float, float] = (-60.0, 2.0),
-       silence: Tuple[float, float] = (-50.0, 1.0)) -> dict:
+def qc(
+    path,
+    *,
+    expect: dict | None = None,
+    video: bool = True,
+    audio: bool = True,
+    hw: str | None = ff.DEFAULT_HW,
+    black: tuple[float, float] = (0.10, 0.5),
+    freeze: tuple[float, float] = (-60.0, 2.0),
+    silence: tuple[float, float] = (-50.0, 1.0),
+) -> dict:
     """Check a finished file in one decode pass: per-track I/LRA/TP, black, frozen and silent stretches, the stream
     inventory (exact packet counts) and duration. expect (all optional): video_streams, audio_streams, duration_s
     (+ duration_tol_s, default one frame), frames (+ frames_tol, default 1), w, h, fps, titles, I (+ I_tol, default
@@ -927,9 +1231,12 @@ def qc(path, *, expect: Optional[dict] = None, video: bool = True, audio: bool =
         _video_checks(g, outs, black, freeze)
     if audio:
         for s in auds:
-            g.add(f"[0:a:{s['a_index']}]", _ebur128_filters() + [("silencedetect",
-                                                                 f"noise={silence[0]}dB:d={silence[1]}")],
-                  f"[q{s['a_index']}]", owner=s["a_index"])
+            g.add(
+                f"[0:a:{s['a_index']}]",
+                [*_ebur128_filters(), ("silencedetect", f"noise={silence[0]}dB:d={silence[1]}")],
+                f"[q{s['a_index']}]",
+                owner=s["a_index"],
+            )
             outs += ["-map", f"[q{s['a_index']}]"]
     loud, black_s, freeze_s, silence_s, argv = [], [], [], {}, None
     if g.chains:
@@ -941,37 +1248,71 @@ def qc(path, *, expect: Optional[dict] = None, video: bool = True, audio: bool =
         if audio:
             silence_s = _silence_spans(res.stderr, g, [s["a_index"] for s in auds], end_s=inv["duration_s"])
         if audio:
-            loud = [{"index": s["a_index"], "house_name": s["house_name"],
-                     **{k: (by_track.get(s["a_index"]) or {}).get(k) for k in ("I", "LRA", "TP")}} for s in auds]
+            loud = [
+                {
+                    "index": s["a_index"],
+                    "house_name": s["house_name"],
+                    **{k: (by_track.get(s["a_index"]) or {}).get(k) for k in ("I", "LRA", "TP")},
+                }
+                for s in auds
+            ]
         if video and vids:
             black_s, freeze_s = _parse_video(res.stderr, g, inv["duration_s"])
     problems = _expect_problems(expect, inv, loud, black_s, freeze_s, silence_s)
     first = loud[0] if loud else {}
-    params = {"expect": expect, "video": video, "audio": audio, "hw": hw, "black": list(black),
-              "freeze": list(freeze), "silence": list(silence)}
-    payload = {"ok": not problems, "problems": problems, "I": first.get("I"), "TP": first.get("TP"),
-               "LRA": first.get("LRA"), "loudness": loud, "black": black_s, "freeze": freeze_s,
-               "silence": silence_s, "duration_s": inv["duration_s"], "streams": inv["streams"],
-               "format": inv["format"], "argv": argv, "seconds": round(time.perf_counter() - t0, 3)}
-    return receipt.result("qc", path, params, payload,
-                          blind=["black and freeze are judged on a 320 px wide copy of the first video stream",
-                                 "alpha is not decoded here (export checks it per preset)",
-                                 "I/TP of the first audio track are the headline; every track is in loudness"])
+    params = {
+        "expect": expect,
+        "video": video,
+        "audio": audio,
+        "hw": hw,
+        "black": list(black),
+        "freeze": list(freeze),
+        "silence": list(silence),
+    }
+    payload = {
+        "ok": not problems,
+        "problems": problems,
+        "I": first.get("I"),
+        "TP": first.get("TP"),
+        "LRA": first.get("LRA"),
+        "loudness": loud,
+        "black": black_s,
+        "freeze": freeze_s,
+        "silence": silence_s,
+        "duration_s": inv["duration_s"],
+        "streams": inv["streams"],
+        "format": inv["format"],
+        "argv": argv,
+        "seconds": round(time.perf_counter() - t0, 3),
+    }
+    return receipt.result(
+        "qc",
+        path,
+        params,
+        payload,
+        blind=[
+            "black and freeze are judged on a 320 px wide copy of the first video stream",
+            "alpha is not decoded here (export checks it per preset)",
+            "I/TP of the first audio track are the headline; every track is in loudness",
+        ],
+    )
 
 
 # =================================================================================================
 # CLI: py -m arsenal.media audio|mix|qc ...
 # =================================================================================================
 
-def _parse_span(s: Optional[str]) -> Span:
+
+def _parse_span(s: str | None) -> Span:
     if not s:
         return None
     from .frames import parse_time
+
     lo, _, hi = s.partition("-") if s.count("-") == 1 else s.partition("..")
     return parse_time(lo), parse_time(hi)
 
 
-def _parse_gains(s: Optional[str]) -> Optional[dict]:
+def _parse_gains(s: str | None) -> dict | None:
     if not s:
         return None
     out = {}
@@ -985,11 +1326,14 @@ def _print(res: dict, keys: Sequence[str]) -> None:
     print(json.dumps({k: res.get(k) for k in keys if k in res}, indent=2, default=str))
 
 
-def cli(verb: str, argv: List[str]) -> int:
+def cli(verb: str, argv: list[str]) -> int:
     import argparse
+
     if verb == "mix":
-        ap = argparse.ArgumentParser(prog="py -m arsenal.media mix",
-                                     description="mix audio tracks with per-track gain/mute (dB), optional loudnorm")
+        ap = argparse.ArgumentParser(
+            prog=f"{ff.pyl()} -m arsenal.media mix",
+            description="mix audio tracks with per-track gain/mute (dB), optional loudnorm",
+        )
         ap.add_argument("src", nargs="?", help="source file (or give --spans)")
         ap.add_argument("out")
         ap.add_argument("--gains", help="per-track dB, e.g. 0:0,1:-6 or Voice:-3")
@@ -1003,24 +1347,53 @@ def cli(verb: str, argv: List[str]) -> int:
         a = ap.parse_args(argv)
         spans = json.loads(Path(a.spans).read_text(encoding="utf-8")) if a.spans else None
         mute = [m for m in (a.mute or "").split(",") if m.strip()]
-        res = mix(a.src, a.out, gains_db=_parse_gains(a.gains), mute=mute, tracks=a.tracks, span=_parse_span(a.span),
-                  spans=spans, codec=a.codec, loudnorm=a.loudnorm, tp=a.tp)
+        res = mix(
+            a.src,
+            a.out,
+            gains_db=_parse_gains(a.gains),
+            mute=mute,
+            tracks=a.tracks,
+            span=_parse_span(a.span),
+            spans=spans,
+            codec=a.codec,
+            loudnorm=a.loudnorm,
+            tp=a.tp,
+        )
         _print(res, ("out", "timeline_s", "measured", "ok", "problems", "notes", "attempts", "seconds", "receipt"))
         return 0 if res["ok"] else 1
     if verb == "qc":
-        ap = argparse.ArgumentParser(prog="py -m arsenal.media qc",
-                                     description="check an export: loudness, true peak, black/freeze/silence, streams")
+        ap = argparse.ArgumentParser(
+            prog=f"{ff.pyl()} -m arsenal.media qc",
+            description="check an export: loudness, true peak, black/freeze/silence, streams",
+        )
         ap.add_argument("path")
         ap.add_argument("--expect", help='JSON, e.g. {"audio_streams": 3, "duration_s": 10, "I": -14, "TP_max": -1.5}')
         ap.add_argument("--no-video", action="store_true", help="skip the black/freeze decode")
         a = ap.parse_args(argv)
         res = qc(a.path, expect=json.loads(a.expect) if a.expect else None, video=not a.no_video)
-        _print(res, ("ok", "problems", "I", "TP", "LRA", "duration_s", "black", "freeze", "silence", "loudness",
-                     "seconds", "receipt"))
+        _print(
+            res,
+            (
+                "ok",
+                "problems",
+                "I",
+                "TP",
+                "LRA",
+                "duration_s",
+                "black",
+                "freeze",
+                "silence",
+                "loudness",
+                "seconds",
+                "receipt",
+            ),
+        )
         return 0 if res["ok"] else 1
-    ap = argparse.ArgumentParser(prog="py -m arsenal.media audio",
-                                 description="audio tracks of a video: names, loudness (LUFS, true peak), silences, "
-                                             "demux each track to its own file, split channels, two-pass loudnorm")
+    ap = argparse.ArgumentParser(
+        prog=f"{ff.pyl()} -m arsenal.media audio",
+        description="audio tracks of a video: names, loudness (LUFS, true peak), silences, "
+        "demux each track to its own file, split channels, two-pass loudnorm",
+    )
     ap.add_argument("src")
     ap.add_argument("--loudness", action="store_true", help="I/LRA/TP per track (one decode pass)")
     ap.add_argument("--silences", action="store_true", help="silent stretches of --track")

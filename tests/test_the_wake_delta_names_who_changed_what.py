@@ -75,10 +75,10 @@ Run::
 
     py -m pytest tests/test_the_wake_delta_names_who_changed_what.py -q
 """
+
 from __future__ import annotations
 
 import inspect
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -90,24 +90,36 @@ sys.path.insert(0, str(ROOT))
 
 CLI = str(ROOT / "agent_cli.py")
 
-try:                                        # deliberately NOT importorskip: the module's absence
-    from core.provenance import delta       # is the first RED pin, and a skipped pin reads green
-    _IMPORT_ERROR = None                    # forever. (Written as importorskip on the first pass,
-except Exception as exc:                    # which skipped the WHOLE file silently -- the third
-    delta = None                            # time today this class bit, and the second time it
-    _IMPORT_ERROR = exc                     # bit me after I had written the warning against it.)
+# Deliberately NOT importorskip: the module's absence is the first RED pin, and a skipped pin reads
+# green forever. (Written as importorskip on the first pass, which skipped the WHOLE file silently --
+# the third time today this class bit, and the second time it bit me after I had written the
+# warning against it.)
+try:
+    from core.provenance import delta
+
+    _IMPORT_ERROR = None
+except Exception as exc:
+    delta = None
+    _IMPORT_ERROR = exc
 
 
 @pytest.fixture(autouse=True)
 def _require_the_module():
     if delta is None:
-        pytest.fail("core/provenance/delta.py does not import: %r" % (_IMPORT_ERROR,))
+        pytest.fail(f"core/provenance/delta.py does not import: {_IMPORT_ERROR!r}")
 
 
 def _run(*args, timeout=120):
-    return subprocess.run([sys.executable, "-X", "utf8", CLI, *args],
-                          capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          cwd=str(ROOT), timeout=timeout, stdin=subprocess.DEVNULL)
+    return subprocess.run(
+        [sys.executable, "-X", "utf8", CLI, *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(ROOT),
+        timeout=timeout,
+        stdin=subprocess.DEVNULL,
+    )
 
 
 # ------------------------------------------------------------------ the organ and its door
@@ -115,6 +127,7 @@ def test_the_module_exists():
     """FAIL, never skip, while the organ is unbuilt -- a pre-registered pin that skips when its
     subject is missing is indistinguishable from a passing one in CI output."""
     import importlib
+
     m = importlib.import_module("core.provenance.delta")
     for fn in ("since", "classify_tree", "attribute"):
         assert hasattr(m, fn), f"core.provenance.delta has no {fn}()"
@@ -130,15 +143,15 @@ def test_the_door_is_a_plane_on_the_EXISTING_delta_verb():
     assert "--disk" in out, (
         "`delta` has no --disk plane. The filesystem gap is the same continuity question T052 "
         "answers for git/ledger/notes/promoted, and splitting it under a new verb mints a second "
-        "writer for one transition -- the rival assembler touch.py warns about.")
+        "writer for one transition -- the rival assembler touch.py warns about."
+    )
 
 
 def test_it_does_not_re_render_what_T052_already_reports():
     """The reconciliation reports the GAP, not the overlap. Re-listing committed git history would
     duplicate the delta door and double the reader's cost for nothing."""
     src = inspect.getsource(delta)
-    assert "render_full" not in src, (
-        "the disk plane calls T052's renderer -- that is the rival-assembler shape")
+    assert "render_full" not in src, "the disk plane calls T052's renderer -- that is the rival-assembler shape"
 
 
 # ------------------------------------------------------------------ it must use the index
@@ -150,12 +163,12 @@ def test_the_sweep_uses_the_everything_index_not_a_tree_walk():
     A delta that walks the filesystem is a delta nobody will run at wake, and an organ nobody runs
     is the `capability_without_a_door` shape wearing a performance costume."""
     src = inspect.getsource(delta)
-    assert ("everything" in src.lower() or "resolve_es" in src), (
-        "the delta does not reach for the Everything index")
+    assert "everything" in src.lower() or "resolve_es" in src, "the delta does not reach for the Everything index"
     for walker in ("os.walk(", "Path.rglob(", ".rglob(", "glob.glob("):
         assert walker not in src, (
             f"the delta uses {walker} -- a tree walk. The index exists precisely so a wake-time "
-            f"question does not cost 172,070 stat() calls.")
+            f"question does not cost 172,070 stat() calls."
+        )
 
 
 def test_it_asks_find_for_a_date_order_rather_than_sorting_afterwards():
@@ -163,8 +176,9 @@ def test_it_asks_find_for_a_date_order_rather_than_sorting_afterwards():
     in Python would re-create the defect ddc0e734 removed -- and would also discard the index's
     ordering, which is the only part that is free."""
     src = inspect.getsource(delta)
-    assert ("date-modified" in src or "recent" in src), (
-        "the delta never names a date order, so it is relying on whatever order it happens to get")
+    assert "date-modified" in src or "recent" in src, (
+        "the delta never names a date order, so it is relying on whatever order it happens to get"
+    )
 
 
 # ------------------------------------------------------------------ the three trees
@@ -172,11 +186,17 @@ def test_every_change_is_classified_by_tree():
     """REPO / PRIVATE / VOLATILE are not cosmetic labels -- they are three different fates.
     Repo work is durable and reviewable. Private work is durable and MUST NEVER be committed.
     Volatile work disappears on a reboot or a temp sweep, and is the only class that is an alarm.
+
+    Path-agnostic: the repo case is THIS checkout (it was E:\\AI-Setup, true on one host only). The
+    other trees are pinned in both spellings, because es.exe answers with Windows paths even when
+    read off Windows while a native walk yields POSIX ones.
     """
     for p, expect in (
-        (r"E:\AI-Setup\core\tools\everything.py", "repo"),
+        (str(ROOT / "core" / "tools" / "everything.py"), "repo"),
         (r"C:\Users\L5\Desktop\!Documents\Tax Documents\CATCH-UP-TRACKER.md", "private"),
+        ("/home/l5/Desktop/!Documents/Tax Documents/CATCH-UP-TRACKER.md", "private"),
         (r"C:\Users\L5\AppData\Local\Temp\claude\E--\x\scratchpad\ccna_v2_raw.txt", "volatile"),
+        ("/tmp/claude-1000/x/scratchpad/ccna_v2_raw.txt", "volatile"),
         (r"X:\wt-baseline-682c5cf8\scripts\x.py", "volatile"),
     ):
         got = delta.classify_tree(p)
@@ -199,7 +219,8 @@ def test_the_private_tree_never_leaks_into_a_repo_bound_artifact():
     assert "private" in src.lower(), "the delta cannot distinguish the private tree at all"
     sig = inspect.signature(delta.since)
     assert "roots" in sig.parameters or "scopes" in sig.parameters, (
-        "since() takes no explicit roots, so a caller cannot bound what it reads")
+        "since() takes no explicit roots, so a caller cannot bound what it reads"
+    )
 
 
 # ------------------------------------------------------------------ attribution, honestly
@@ -211,12 +232,21 @@ def test_attribution_is_typed_and_unknown_is_a_value():
     `touch.py` already holds this discipline for its own records -- an unattributed touch is
     emitted but 'must not be indistinguishable from an attributed one' -- and the delta inherits
     it rather than inventing a weaker one."""
-    out = delta.attribute(r"E:\AI-Setup\does-not-exist-anywhere-xyz.py", since_ts=0)
-    assert hasattr(out, "seat") and hasattr(out, "source"), (
-        "attribute() must return a typed result carrying the seat AND where that claim came from")
-    assert out.seat is None and out.source in ("unattributed", None), (
-        "a file nothing touched came back attributed to %r via %r -- a guess wearing a "
-        "measurement's clothes" % (out.seat, out.source))
+    out = delta.attribute(str(ROOT / "does-not-exist-anywhere-xyz.py"), since_ts=0)
+    assert hasattr(out, "seat"), (
+        "attribute() must return a typed result carrying the seat AND where that claim came from"
+    )
+    assert hasattr(out, "source"), (
+        "attribute() must return a typed result carrying the seat AND where that claim came from"
+    )
+    assert out.seat is None, (
+        f"a file nothing touched came back attributed to {out.seat!r} via {out.source!r} -- a guess wearing a "
+        "measurement's clothes"
+    )
+    assert out.source in ("unattributed", None), (
+        f"a file nothing touched came back attributed to {out.seat!r} via {out.source!r} -- a guess wearing a "
+        "measurement's clothes"
+    )
 
 
 def test_attribution_names_its_source_so_a_reader_can_weigh_it():
@@ -224,8 +254,9 @@ def test_attribution_names_its_source_so_a_reader_can_weigh_it():
     (W254), so 'git says claude' and 'the touch stream says claude#428ba6c4' are not the same
     claim. The source must travel with the answer."""
     src = inspect.getsource(delta.attribute)
-    assert "touch" in src.lower(), "attribution never consults the touch stream, the only plane "\
-                                   "that carries (session_id, agent_id) per action"
+    assert "touch" in src.lower(), (
+        "attribution never consults the touch stream, the only plane that carries (session_id, agent_id) per action"
+    )
 
 
 def test_the_report_surfaces_the_touch_streams_drop_count():
@@ -235,7 +266,8 @@ def test_the_report_surfaces_the_touch_streams_drop_count():
     src = inspect.getsource(delta)
     assert "drops" in src, (
         "the delta never reads touch.drops(), so it cannot tell a reader how much of the "
-        "attribution stream was lost before it ran")
+        "attribution stream was lost before it ran"
+    )
 
 
 # ------------------------------------------------------------------ the roots are dirty
@@ -245,12 +277,12 @@ def test_the_sweep_does_not_scan_46_dry_run_shadows():
     fail -- it quietly reports test garbage as the house's activity, which is worse."""
     sig = inspect.signature(delta.since)
     assert "roots" in sig.parameters or "scopes" in sig.parameters, (
-        "since() cannot be told which roots to read, so it will inherit all 63")
+        "since() cannot be told which roots to read, so it will inherit all 63"
+    )
     src = inspect.getsource(delta)
-    assert ("dryrun" in src.lower() or "season_dryrun" in src.lower()
-            or "default_roots" not in src), (
-        "the delta takes default_roots() wholesale, which is 46 parts test debris to 17 parts "
-        "real work")
+    assert "dryrun" in src.lower() or "season_dryrun" in src.lower() or "default_roots" not in src, (
+        "the delta takes default_roots() wholesale, which is 46 parts test debris to 17 parts real work"
+    )
 
 
 def test_the_report_states_what_it_examined_and_what_it_skipped():
@@ -262,8 +294,7 @@ def test_the_report_states_what_it_examined_and_what_it_skipped():
         if token in src:
             break
     else:
-        pytest.fail("the delta reports no denominator -- a reader cannot tell an empty result "
-                    "from an empty scan")
+        pytest.fail("the delta reports no denominator -- a reader cannot tell an empty result from an empty scan")
 
 
 # ------------------------------------------------------------------ metadata only
@@ -272,12 +303,12 @@ def test_the_delta_never_reads_file_CONTENTS():
     URL's query.' The delta runs over the PRIVATE tree -- tax documents, a resume, a divorce-era
     note -- so metadata-only is not a style choice here, it is the reason it is safe to point at
     that directory at all."""
-    src = inspect.getsource(delta)
     body = inspect.getsource(delta)
     for reader in ("read_text(", "open(", ".read()"):
         assert reader not in body, (
             f"the delta calls {reader} -- it must work from name, size and mtime only. It is "
-            f"pointed at a folder containing tax returns and identity documents.")
+            f"pointed at a folder containing tax returns and identity documents."
+        )
 
 
 # ------------------------------------------------------------------ determinism
@@ -300,6 +331,8 @@ def test_an_anchored_window_is_re_derivable():
     a = delta.since(hours=24, roots=[str(ROOT)], now=anchor, attribute_changes=False)
     b = delta.since(hours=24, roots=[str(ROOT)], now=anchor, attribute_changes=False)
     assert [c.path for c in a] == [c.path for c in b], (
-        "the same anchored window returned different results -- the report cannot be re-derived")
+        "the same anchored window returned different results -- the report cannot be re-derived"
+    )
     assert all(not delta.is_noise(c.path) for c in a), (
-        "derived artifacts (.pyc, __pycache__) are in a human-facing change list")
+        "derived artifacts (.pyc, __pycache__) are in a human-facing change list"
+    )

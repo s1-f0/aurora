@@ -11,6 +11,7 @@ The one weak joint is where the recording starts on the wall clock. OBS names fi
 sub-second on NTFS) is used when it sits inside that second, and calibrate=True pins the offset with one HUD clock
 tick (league.clock) when a clock reader is available. Nothing in OBS or the game is changed.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,13 +22,16 @@ import time
 import urllib.request
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
 from .. import ff, receipt
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 BASE = "https://127.0.0.1:2999/liveclientdata"
 GAME_DIR_ENV = "LEAGUE_GAME_DIR"
-DEFAULT_GAME_DIR = Path("C:/Riot Games/League of Legends/Game")   # Riot's default install location
+DEFAULT_GAME_DIR = Path("C:/Riot Games/League of Legends/Game")  # Riot's default install location
 OBS_NAME_FORMAT = "%Y-%m-%d %H-%M-%S"
 
 
@@ -62,8 +66,14 @@ def label(ev: dict) -> str:
     return n
 
 
-def poll(out=None, interval: float = 0.5, *, stop_after: Optional[int] = None,
-         get: Optional[Callable[[str], dict]] = None, idle_sleep: float = 3.0) -> Optional[str]:
+def poll(
+    out=None,
+    interval: float = 0.5,
+    *,
+    stop_after: int | None = None,
+    get: Callable[[str], dict] | None = None,
+    idle_sleep: float = 3.0,
+) -> str | None:
     """Log gameTime every `interval` s and each new event, one JSON line each, until Ctrl+C (or `stop_after` polls).
     Waits quietly while no game runs; a new game opens a new file. Returns the last log path."""
     ctx = None if get else _ssl_context()
@@ -77,7 +87,7 @@ def poll(out=None, interval: float = 0.5, *, stop_after: Optional[int] = None,
             try:
                 stats = fetch("gamestats")
                 evs = fetch("eventdata").get("Events", [])
-            except Exception:                              # no game (connection refused) or the game just ended
+            except Exception:  # no game (connection refused) or the game just ended
                 if fh:
                     fh.close()
                     fh, seen = None, -1
@@ -86,7 +96,7 @@ def poll(out=None, interval: float = 0.5, *, stop_after: Optional[int] = None,
             wall = time.time()
             if fh is None:
                 path = folder / f"{datetime.now().strftime(OBS_NAME_FORMAT)} league.jsonl"
-                fh = open(path, "a", encoding="utf-8", newline="\n")
+                fh = open(path, "a", encoding="utf-8", newline="\n")  # noqa: SIM115  # kept across polls, closed in finally
             fh.write(json.dumps({"wall": wall, "gameTime": stats.get("gameTime")}) + "\n")
             for ev in evs:
                 if ev.get("EventID", -1) > seen:
@@ -103,7 +113,7 @@ def poll(out=None, interval: float = 0.5, *, stop_after: Optional[int] = None,
     return str(path) if path else None
 
 
-def read_log(poll_log) -> Tuple[List[Tuple[float, float]], List[dict]]:
+def read_log(poll_log) -> tuple[list[tuple[float, float]], list[dict]]:
     """((wall, gameTime) pairs, events) from a poll log; tolerates a torn last line."""
     pairs, events = [], []
     for line in Path(poll_log).read_text(encoding="utf-8").splitlines():
@@ -120,13 +130,15 @@ def read_log(poll_log) -> Tuple[List[Tuple[float, float]], List[dict]]:
     return pairs, events
 
 
-def recording_start(recording) -> Tuple[float, str, float]:
+def recording_start(recording) -> tuple[float, str, float]:
     """(wall-clock start of the recording, how it was found, its uncertainty in s)."""
     p = Path(recording)
     try:
         named = datetime.strptime(p.stem[:19], OBS_NAME_FORMAT).timestamp()
     except ValueError:
-        raise ff.MediaError(f"{p.name} does not start with an OBS time stamp ({OBS_NAME_FORMAT}); pass file_start")
+        raise ff.MediaError(
+            f"{p.name} does not start with an OBS time stamp ({OBS_NAME_FORMAT}); pass file_start"
+        ) from None
     try:
         created = os.stat(p).st_ctime if os.name == "nt" else None
     except OSError:
@@ -136,10 +148,10 @@ def recording_start(recording) -> Tuple[float, str, float]:
     return named + 0.5, "OBS file name (second only)", 0.5
 
 
-def _segments(pairs: List[Tuple[float, float]], start: float, jump_s: float = 0.25) -> List[List[Tuple[float, float]]]:
+def _segments(pairs: list[tuple[float, float]], start: float, jump_s: float = 0.25) -> list[list[tuple[float, float]]]:
     """(file_t, game_t) runs where the game clock advanced with the wall clock (a pause or reconnect breaks one)."""
     pts = sorted((w - start, g) for w, g in pairs)
-    runs: List[List[Tuple[float, float]]] = []
+    runs: list[list[tuple[float, float]]] = []
     for ft, gt in pts:
         if runs and abs((gt - runs[-1][-1][1]) - (ft - runs[-1][-1][0])) <= jump_s:
             runs[-1].append((ft, gt))
@@ -148,11 +160,13 @@ def _segments(pairs: List[Tuple[float, float]], start: float, jump_s: float = 0.
     return runs
 
 
-def clockmap(poll_log, recording, *, file_start: Optional[float] = None, offset_s: float = 0.0,
-             calibrate: bool = False, out=None) -> dict:
+def clockmap(
+    poll_log, recording, *, file_start: float | None = None, offset_s: float = 0.0, calibrate: bool = False, out=None
+) -> dict:
     """studio.clockmap.v1 for `recording` from a poll log: one 1x pass per stretch where gameTime ran with the wall
     clock, plus the logged events as markers (file_t, game_t, label)."""
     from . import clock
+
     pairs, evs = read_log(poll_log)
     if not pairs:
         raise ff.MediaError(f"{poll_log} holds no gameTime samples")
@@ -167,9 +181,18 @@ def clockmap(poll_log, recording, *, file_start: Optional[float] = None, offset_
             continue
         off = statistics.median(g - f for f, g in run)
         resid = max(abs(g - f - off) for f, g in run)
-        passes.append({"id": "", "file": [round(run[0][0], 4), round(run[-1][0], 4)], "speed": 1.0,
-                       "offset": round(off, 4), "tol_s": round(unc + resid, 4),
-                       "game": [round(run[0][1], 3), round(run[-1][1], 3)], "fit": "poll", "n_reads": len(run)})
+        passes.append(
+            {
+                "id": "",
+                "file": [round(run[0][0], 4), round(run[-1][0], 4)],
+                "speed": 1.0,
+                "offset": round(off, 4),
+                "tol_s": round(unc + resid, 4),
+                "game": [round(run[0][1], 3), round(run[-1][1], 3)],
+                "fit": "poll",
+                "n_reads": len(run),
+            }
+        )
     calibrated = None
     if calibrate and passes and Path(recording).is_file():
         p = max(passes, key=lambda q: q["file"][1] - q["file"][0])
@@ -197,15 +220,33 @@ def clockmap(poll_log, recording, *, file_start: Optional[float] = None, offset_
                 break
         markers.append({"game_t": round(gt, 3), "file_t": ft, "label": label(ev), "event": ev.get("EventName")})
     rec = Path(recording)
-    params = {"poll_log": str(poll_log), "file_start": file_start, "offset_s": offset_s, "calibrate": calibrate,
-              "out": str(out) if out else None}
-    payload = {"schema": clock.SCHEMA, "file": rec.resolve().as_posix(), "what": "live game: Live Client Data gameTime "
-               "logged beside the recording", "how_built": f"poll log {Path(poll_log).name}; file start from {how}",
-               "hud": "live", "reader": "live-client-data", "passes": passes, "events": [], "markers": markers,
-               "start": {"wall": start, "from": how, "uncertainty_s": unc}, "calibrated": calibrated}
-    blind = ["where the recording starts on the wall clock is known to the file's creation time or the name's second "
-             "unless calibrate=True pins it with a HUD clock tick",
-             "Live Client Data exists only in live games; replays and spectating need the OCR clockmap"]
+    params = {
+        "poll_log": str(poll_log),
+        "file_start": file_start,
+        "offset_s": offset_s,
+        "calibrate": calibrate,
+        "out": str(out) if out else None,
+    }
+    payload = {
+        "schema": clock.SCHEMA,
+        "file": rec.resolve().as_posix(),
+        "what": "live game: Live Client Data gameTime logged beside the recording",
+        "how_built": f"poll log {Path(poll_log).name}; file start from {how}",
+        "hud": "live",
+        "reader": "live-client-data",
+        "passes": passes,
+        "events": [],
+        "markers": markers,
+        "start": {"wall": start, "from": how, "uncertainty_s": unc},
+        "calibrated": calibrated,
+    }
+    blind = [
+        (
+            "where the recording starts on the wall clock is known to the file's creation time or the name's second "
+            "unless calibrate=True pins it with a HUD clock tick"
+        ),
+        "Live Client Data exists only in live games; replays and spectating need the OCR clockmap",
+    ]
     src = receipt.source(rec) if rec.is_file() else {"path": str(rec)}
     res = receipt.result("clockmap", src, params, payload, blind, engine={"reader": "live-client-data"})
     if out:
@@ -213,12 +254,15 @@ def clockmap(poll_log, recording, *, file_start: Optional[float] = None, offset_
     return res
 
 
-def cli(verb: str, argv: List[str]) -> int:
+def cli(verb: str, argv: list[str]) -> int:
     """py -m arsenal.media.league.live poll [--out DIR] | clockmap LOG RECORDING [--out F] [--calibrate]"""
     import argparse
-    ap = argparse.ArgumentParser(prog="py -m arsenal.media.league.live",
-                                 description="League Live Client Data beside an OBS recording: log gameTime and kill "
-                                             "events while you play, then an exact clockmap (no OCR)")
+
+    ap = argparse.ArgumentParser(
+        prog=f"{ff.pyl()} -m arsenal.media.league.live",
+        description="League Live Client Data beside an OBS recording: log gameTime and kill "
+        "events while you play, then an exact clockmap (no OCR)",
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("poll", help="log gameTime every --interval s and each new event until Ctrl+C")
     p.add_argument("--out", help="folder for the .jsonl logs (default <state>/league/live)")
@@ -235,15 +279,17 @@ def cli(verb: str, argv: List[str]) -> int:
         print(f"waiting for a game; logs go to {a.out or ff.state_dir() / 'league' / 'live'} (Ctrl+C stops)")
         print(f"last log: {poll(a.out, a.interval)}")
         return 0
-    res = clockmap(a.log, a.recording, file_start=a.file_start, offset_s=a.offset, calibrate=a.calibrate,
-                   out=a.out)
+    res = clockmap(a.log, a.recording, file_start=a.file_start, offset_s=a.offset, calibrate=a.calibrate, out=a.out)
     for q in res["passes"]:
-        print(f"  {q['id']:<12} file {q['file'][0]:.3f}-{q['file'][1]:.3f}  offset {q['offset']:+.4f} "
-              f"+-{q['tol_s']:.3f} ({q['fit']})")
+        print(
+            f"  {q['id']:<12} file {q['file'][0]:.3f}-{q['file'][1]:.3f}  offset {q['offset']:+.4f} "
+            f"+-{q['tol_s']:.3f} ({q['fit']})"
+        )
     print(f"{len(res['markers'])} markers; start from {res['start']['from']}; receipt {res.get('receipt')}")
     return 0
 
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(cli("live", sys.argv[1:]))

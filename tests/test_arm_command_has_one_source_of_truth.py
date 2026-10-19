@@ -40,29 +40,32 @@ SO THE FIX IS ONE SOURCE OF TRUTH, not a new mechanism: one function that builds
 command, used by both surfaces, and which can only ever emit a command that stamps a wakeable
 origin. These pins are about agreement and correctness, not about where the gate lives.
 """
+
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.comm import wake_seat as WS  # noqa: E402
+from core.comm import wake_seat as WS
 
 SESSION = "deadbeef-0000-1111-2222-333344445555"
 AGENT = "claude"
 
 
 def _canonical():
-    assert hasattr(WS, "arm_command"), \
-        "there is no single source of truth for the arm command; boot and the stop hook each " \
+    assert hasattr(WS, "arm_command"), (
+        "there is no single source of truth for the arm command; boot and the stop hook each "
         "build their own, and they disagree"
+    )
     return WS.arm_command(AGENT, SESSION)
 
 
 # ---------------------------------------------------------------- P1-P3: it must actually arm
 def test_there_is_one_canonical_arm_command():
     cmd = _canonical()
-    assert isinstance(cmd, str) and cmd.strip(), "arm_command returned nothing usable"
+    assert isinstance(cmd, str), "arm_command returned nothing usable"
+    assert cmd.strip(), "arm_command returned nothing usable"
 
 
 def test_the_command_stamps_a_WAKEABLE_origin():
@@ -71,13 +74,14 @@ def test_the_command_stamps_a_WAKEABLE_origin():
     cmd = _canonical()
     assert "bifrost-standby" in cmd, (
         "the advertised command is not the one that stamps origin=harness; "
-        f"got {cmd!r}. scripts/bifrost_wake.py invoked bare stamps 'unknown'.")
+        f"got {cmd!r}. scripts/bifrost_wake.py invoked bare stamps 'unknown'."
+    )
 
 
 def test_the_command_carries_the_session_so_the_seat_is_per_session():
-    assert SESSION in _canonical(), \
-        "wake seats are per-session (T029 Wave 2); a command without --session can arm the " \
-        "wrong seat or none"
+    assert SESSION in _canonical(), (
+        "wake seats are per-session (T029 Wave 2); a command without --session can arm the wrong seat or none"
+    )
 
 
 def test_the_armed_listener_consumes_the_RIGHT_LANE():
@@ -104,17 +108,18 @@ def test_the_armed_listener_consumes_the_RIGHT_LANE():
     import importlib
 
     from core.comm import bifrost_api
+
     importlib.reload(bifrost_api)
 
     assert bifrost_api.wake_lane() == "work", (
         "a seat that runs the canonical arm command with nothing exported would watch lane "
-        "%r -- the listener and the drain must address the same thing (T198)."
-        % bifrost_api.wake_lane())
+        f"{bifrost_api.wake_lane()!r} -- the listener and the drain must address the same thing (T198)."
+    )
 
     os.environ["BIFROST_CONSUME_LANE"] = "legacy"
     assert bifrost_api.wake_lane() == "legacy", (
-        "the default must be a FLOOR, not an override: a seat that deliberately splits the "
-        "planes has to be able to.")
+        "the default must be a FLOOR, not an override: a seat that deliberately splits the planes has to be able to."
+    )
     os.environ.pop("BIFROST_CONSUME_LANE", None)
 
 
@@ -123,8 +128,7 @@ def _norm(s):
     """Compare the command's SHAPE, not its whitespace or absolute paths."""
     s = re.sub(r"\s+", " ", str(s or "")).strip()
     s = re.sub(r"[A-Za-z]:[\\/][^\s]*agent_cli\.py", "agent_cli.py", s)
-    s = s.replace("\\", "/")
-    return s
+    return s.replace("\\", "/")
 
 
 def test_boot_advertises_the_canonical_command(monkeypatch):
@@ -133,18 +137,21 @@ def test_boot_advertises_the_canonical_command(monkeypatch):
     only condition it exists to check -- the house has a lesson for exactly that shape ("does this
     stay green after the first real user?"). Ambient state is never the fixture."""
     from agent.harness import context
+
     monkeypatch.setattr(WS, "any_armed", lambda *_a, **_k: "unarmed")
     line = context._reach_line(AGENT)
     assert "NO WATCHER ARMED" in line, f"the forced-unarmed state did not take: {line!r}"
     assert "bifrost-standby" in line, (
         "boot still advertises a command that stamps origin 'unknown', which the stop hook "
-        f"rejects. boot said: {line!r}")
+        f"rejects. boot said: {line!r}"
+    )
 
 
 def test_the_stop_hook_and_boot_do_not_disagree(monkeypatch):
     """Whatever each surface prints, they must not hand a reader two different instructions for
     the same job. This is the pin that would have caught the live defect."""
     from agent.harness import context
+
     monkeypatch.setattr(WS, "any_armed", lambda *_a, **_k: "unarmed")
     boot = _norm(context._reach_line(AGENT))
     if "bifrost-standby" not in boot:
@@ -164,14 +171,14 @@ def test_the_stop_hook_and_boot_do_not_disagree(monkeypatch):
             _skip = False
             continue
         if t == "--session":
-            _skip = True                      # the id after it is per-session, not structural
+            _skip = True  # the id after it is per-session, not structural
         if "=" in t or t.endswith(".py"):
             continue
         _toks.append(t)
     for tok in _toks:
         assert tok in boot, (
-            "boot's arm advice is missing %r from the canonical command -- "
-            "boot=%r canon=%r" % (tok, boot, canon))
+            f"boot's arm advice is missing {tok!r} from the canonical command -- boot={boot!r} canon={canon!r}"
+        )
 
 
 # ---------------------------------------------------------------- P7: it must be the real thing
@@ -182,14 +189,14 @@ def test_the_canonical_command_names_a_file_that_exists():
     assert m, f"no agent_cli.py in the command: {cmd!r}"
     path = m.group(1)
     if path == "agent_cli.py":
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "agent_cli.py")
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent_cli.py")
     assert os.path.isfile(path), f"the advertised command points at a missing file: {path}"
 
 
 def test_an_origin_of_unknown_is_not_wakeable_which_is_why_this_matters():
     """RATCHET on the fact that makes the whole file necessary. If 'unknown' ever becomes
     wakeable, these pins are arguing about nothing and should be revisited deliberately."""
-    assert "unknown" not in WS.WAKEABLE_ORIGINS, \
+    assert "unknown" not in WS.WAKEABLE_ORIGINS, (
         "an unstamped origin became wakeable; re-read this file's premise before changing it"
+    )
     assert WS.ORIGIN_HARNESS in WS.WAKEABLE_ORIGINS

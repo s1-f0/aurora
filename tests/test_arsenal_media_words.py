@@ -5,6 +5,7 @@ milliseconds. Two load a real model when it is already in the Hugging Face cache
 tone, and small on the game-audio excerpt (span vs whole run). The hallucination oracle needs large-v3-turbo for about
 45 s and runs only with ARSENAL_MEDIA_SLOW=1.
 """
+
 from __future__ import annotations
 
 import difflib
@@ -39,18 +40,84 @@ def clips(tmp_path_factory):
     except ff.MediaError:
         pytest.skip("no ffmpeg/ffprobe on this machine")
     d = tmp_path_factory.mktemp("words")
-    tone = d / "tone.mp4"      # 12 s of video with two audio tracks: a 440 Hz tone, then silence
-    ff.run(["-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=10:d=12", "-f", "lavfi",
-            "-i", "sine=frequency=440:duration=12", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
-            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
-            "-shortest", "-y", str(tone)])
+    tone = d / "tone.mp4"  # 12 s of video with two audio tracks: a 440 Hz tone, then silence
+    ff.run(
+        [
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=160x120:r=10:d=12",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=12",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=48000:cl=stereo",
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-map",
+            "2:a",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-c:a",
+            "aac",
+            "-shortest",
+            "-y",
+            str(tone),
+        ]
+    )
     silent_video = d / "video_only.mp4"
-    ff.run(["-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=10:d=2", "-c:v", "libx264",
-            "-preset", "ultrafast", "-y", str(silent_video)])
-    short = d / "short audio.mp4"   # 12 s of video, 4 s of audio: the track ends while the picture runs on
-    ff.run(["-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=10:d=12", "-f", "lavfi",
-            "-i", "sine=frequency=440:duration=4", "-map", "0:v", "-map", "1:a", "-c:v", "libx264",
-            "-preset", "ultrafast", "-c:a", "aac", "-y", str(short)])
+    ff.run(
+        [
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=160x120:r=10:d=2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-y",
+            str(silent_video),
+        ]
+    )
+    short = d / "short audio.mp4"  # 12 s of video, 4 s of audio: the track ends while the picture runs on
+    ff.run(
+        [
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=160x120:r=10:d=12",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=4",
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-c:a",
+            "aac",
+            "-y",
+            str(short),
+        ]
+    )
     return {"tone": tone, "video_only": silent_video, "short_audio": short}
 
 
@@ -70,9 +137,19 @@ def w(start, end, word, p=0.9):
 
 # ------------------------------------------------------------------------------------------------- pure
 
+
 def test_repeat_runs_catch_the_hallucination_signature():
-    ws = [w(0, 0.2, "Oh."), w(0.3, 0.5, "oh,"), w(0.6, 0.8, "OH"), w(1, 1.2, "if"), w(1.3, 1.4, "if"),
-          w(2, 2.2, "I"), w(2.3, 2.4, "I"), w(2.5, 2.6, "I"), w(2.7, 2.8, "I")]
+    ws = [
+        w(0, 0.2, "Oh."),
+        w(0.3, 0.5, "oh,"),
+        w(0.6, 0.8, "OH"),
+        w(1, 1.2, "if"),
+        w(1.3, 1.4, "if"),
+        w(2, 2.2, "I"),
+        w(2.3, 2.4, "I"),
+        w(2.5, 2.6, "I"),
+        w(2.7, 2.8, "I"),
+    ]
     runs = words.repeat_runs(ws)
     assert [(r["word"], r["count"], r["start"]) for r in runs] == [("oh", 3, 0), ("i", 4, 2)]
     assert words.repeat_runs([w(0, 1, "fine"), w(1, 2, "words")]) == []
@@ -108,29 +185,39 @@ def test_parse_span():
 
 # ------------------------------------------------------------------------------------------- the cut and the shift
 
+
 def test_words_cuts_the_span_and_shifts_times_onto_the_source_clock(clips, monkeypatch, tmp_path):
     seen = {}
 
     def fake_transcribe(audio, stem, model_size="small", *, vad=False):
         with wave.open(audio) as wf:
-            seen.update(rate=wf.getframerate(), channels=wf.getnchannels(),
-                        seconds=wf.getnframes() / wf.getframerate())
+            seen.update(rate=wf.getframerate(), channels=wf.getnchannels(), seconds=wf.getnframes() / wf.getframerate())
         seen["vad"] = vad
         rel = [w(0.5, 0.9, "Hello"), w(1.0, 1.3, "world."), w(3.2, 3.5, "Again.", 0.3)]
         Path(stem + ".words.json").write_text(json.dumps({"model": "fake", "words": rel}), encoding="utf-8")
-        return {"model": f"fake {model_size}" + (", vad" if vad else ""), "duration_s": seen["seconds"],
-                "words": len(rel), "unsure": 1, "cadence": ""}
+        return {
+            "model": f"fake {model_size}" + (", vad" if vad else ""),
+            "duration_s": seen["seconds"],
+            "words": len(rel),
+            "unsure": 1,
+            "cadence": "",
+        }
 
     monkeypatch.setattr(stt, "transcribe", fake_transcribe)
     res = words.words(clips["tone"], track=1, span=(5.0, 9.0), out_stem=tmp_path / "out" / "tone")
     assert seen == {"rate": 16000, "channels": 1, "seconds": pytest.approx(4.0, abs=0.01), "vad": True}
     doc = json.loads(Path(res["words_json"]).read_text(encoding="utf-8"))
     assert [(x["start"], x["end"]) for x in doc["words"]] == [(5.5, 5.9), (6.0, 6.3), (8.2, 8.5)]
-    assert doc["track"] == 1 and doc["span"] == [5.0, 9.0] and doc["vad"] is True
+    assert doc["track"] == 1
+    assert doc["span"] == [5.0, 9.0]
+    assert doc["vad"] is True
     assert res["api"] == "arsenal.media.words/v0"
-    assert res["words"] == 3 and res["unsure"] == 1 and res["repeat_runs"] == []
+    assert res["words"] == 3
+    assert res["unsure"] == 1
+    assert res["repeat_runs"] == []
     assert {"track", "span", "model", "vad", "out_stem", "chunk_s", "sample_rate", "beam_size"} <= set(res["params"])
-    assert res["blind"] and res["source"]["id"]
+    assert res["blind"]
+    assert res["source"]["id"]
     assert Path(res["cadence_txt"]).read_text(encoding="utf-8").startswith("[0:05] Hello world.")
     assert Path(res["receipt"]).is_file()
     assert not list((tmp_path / "out").glob("words-*")), "the work folder is cleaned up"
@@ -146,12 +233,13 @@ def test_long_spans_go_through_in_chunks(clips, monkeypatch, tmp_path):
 
     monkeypatch.setattr(stt, "transcribe", fake_transcribe)
     res = words.words(clips["tone"], span=(0.0, 12.0), chunk_s=30, out_stem=tmp_path / "c")
-    assert len(calls) == 1 and res["chunks"] == 1
+    assert len(calls) == 1
+    assert res["chunks"] == 1
     monkeypatch.setattr(words, "_chunks", lambda t0, t1, chunk_s: [(0.0, 5.0), (5.0, 12.0)])
     res = words.words(clips["tone"], span=(0.0, 12.0), out_stem=tmp_path / "d")
     starts = [x["start"] for x in json.loads(Path(res["words_json"]).read_text(encoding="utf-8"))["words"]]
     assert starts == [0.1, 5.1]
-    assert res["repeat_runs"] == []          # two "tick"s, under the run length
+    assert res["repeat_runs"] == []  # two "tick"s, under the run length
 
 
 def test_cli_prints_the_cadence_and_flags_repeats(clips, monkeypatch, tmp_path, capsys):
@@ -193,12 +281,16 @@ def test_a_span_the_audio_does_not_reach_is_refused_or_reported(clips, monkeypat
     with pytest.raises(ff.MediaError, match="no audio"):
         words.words(clips["short_audio"], span=(8, 11), out_stem=tmp_path / "none")
     res = words.words(clips["short_audio"], span=(2, 10), out_stem=tmp_path / "part")
-    assert res["audio_s"] == pytest.approx(2.0, abs=0.05) and res["audio_ends_s"] == pytest.approx(4.0, abs=0.05)
-    assert res["x_realtime"] is not None and any("ends at" in b for b in res["blind"])
+    assert res["audio_s"] == pytest.approx(2.0, abs=0.05)
+    assert res["audio_ends_s"] == pytest.approx(4.0, abs=0.05)
+    assert res["x_realtime"] is not None
+    assert any("ends at" in b for b in res["blind"])
     text = Path(res["cadence_txt"]).read_text(encoding="utf-8")
-    assert "no audio after 4.0s" in text and "no speech to the end" not in text
+    assert "no audio after 4.0s" in text
+    assert "no speech to the end" not in text
     full = words.words(clips["short_audio"], span=(0, 4), out_stem=tmp_path / "full")
-    assert full["audio_ends_s"] is None and full["audio_s"] == pytest.approx(4.0, abs=0.05)
+    assert full["audio_ends_s"] is None
+    assert full["audio_s"] == pytest.approx(4.0, abs=0.05)
 
 
 def test_missing_faster_whisper_is_refused_before_the_cut(clips, monkeypatch):
@@ -215,20 +307,25 @@ def test_default_stem_is_safe_for_any_model_name(clips, monkeypatch, tmp_path):
     assert stem.name == "a b.a0.600.2-720.4.small"
     assert stem.parent == ff.state_dir() / "words"
     assert words._default_stem("a.mp4", 1, 600.4, 720.2, "small", True).name == "a.a1.600.4-720.2.small"
-    assert words._default_stem("a.mp4", 0, 600, 720, "Systran/faster-whisper-small", False).name == \
-        "a.a0.600-720.faster-whisper-small.novad"
+    assert (
+        words._default_stem("a.mp4", 0, 600, 720, "Systran/faster-whisper-small", False).name
+        == "a.a0.600-720.faster-whisper-small.novad"
+    )
     monkeypatch.setattr(stt, "transcribe", _fake_hello)
     from arsenal.media.__main__ import main
+
     assert main(["words", str(clips["tone"]), "--span", "0:01-0:03", "--model", r"C:\models\small"]) == 0
     assert (ff.state_dir() / "words" / "tone.a0.1-3.small.words.json").is_file()
 
 
 # ------------------------------------------------------------------------------------------------- real models
 
+
 @pytest.mark.skipif(not _cached("base"), reason="faster-whisper base is not in the Hugging Face cache")
 def test_a_tone_gives_no_words_with_vad(clips, tmp_path):
     res = words.words(clips["tone"], model="base", out_stem=tmp_path / "tone")
-    assert res["words"] == 0 and res["repeat_runs"] == []
+    assert res["words"] == 0
+    assert res["repeat_runs"] == []
     assert res["model"].endswith(", vad")
 
 
@@ -241,16 +338,18 @@ def _agreement(full, part):
     return out
 
 
-@pytest.mark.skipif(not (EXCERPT.is_file() and _cached("small")), reason="the game-audio excerpt or the small model "
-                                                                         "is missing")
+@pytest.mark.skipif(
+    not (EXCERPT.is_file() and _cached("small")), reason="the game-audio excerpt or the small model is missing"
+)
 def test_span_times_agree_with_a_whole_run(tmp_path):
     """The spec asks for agreement within 50 ms; this allows a quarter of the words past it, because what differs is
     Whisper's alignment with less context around the span, not the shift (the fake-transcriber test above holds the
     shift exact). Measured 2026-10-12, small + VAD, span 80-100 s of the excerpt: 16 words matched, median 20 ms, 14
     within 50 ms; the other two are "about" at 60 ms and "I" at 2.06 s, an alignment slip onto a neighbouring word."""
     full = json.loads(Path(words.words(EXCERPT, out_stem=tmp_path / "full")["words_json"]).read_text("utf-8"))
-    part = json.loads(Path(words.words(EXCERPT, span=(80, 100), out_stem=tmp_path / "part")["words_json"])
-                      .read_text("utf-8"))
+    part = json.loads(
+        Path(words.words(EXCERPT, span=(80, 100), out_stem=tmp_path / "part")["words_json"]).read_text("utf-8")
+    )
     inside = [x for x in full["words"] if 80 <= x["start"] < 100]
     d = _agreement(inside, part["words"])
     assert len(d) >= 8, (len(d), len(inside), len(part["words"]))
@@ -259,8 +358,10 @@ def test_span_times_agree_with_a_whole_run(tmp_path):
     assert all(80 <= x["start"] <= 100 for x in part["words"])
 
 
-@pytest.mark.skipif(not (SLOW and EXCERPT.is_file() and _cached("large-v3-turbo")),
-                    reason="set ARSENAL_MEDIA_SLOW=1 (needs the excerpt and large-v3-turbo in the cache; ~45 s)")
+@pytest.mark.skipif(
+    not (SLOW and EXCERPT.is_file() and _cached("large-v3-turbo")),
+    reason="set ARSENAL_MEDIA_SLOW=1 (needs the excerpt and large-v3-turbo in the cache; ~45 s)",
+)
 def test_hallucination_oracle_vad_on_vs_off(tmp_path):
     """The regression oracle: 120 s of game audio from 17-51-11. VAD on: no run of 3+ repeated words. VAD off: the
     runs come back ("oh oh oh" at 72 s in 3 of 3 runs on 2026-10-12). Without VAD the decoder's temperature fallback
@@ -285,8 +386,13 @@ def _srt_cues(path: Path):
             m = stamp.search(line)
             if m:
                 g = [int(x) for x in m.groups()]
-                cues.append((g[0] * 3600 + g[1] * 60 + g[2] + g[3] / 1000,
-                             g[4] * 3600 + g[5] * 60 + g[6] + g[7] / 1000, " ".join(lines[i + 1:])))
+                cues.append(
+                    (
+                        g[0] * 3600 + g[1] * 60 + g[2] + g[3] / 1000,
+                        g[4] * 3600 + g[5] * 60 + g[6] + g[7] / 1000,
+                        " ".join(lines[i + 1 :]),
+                    )
+                )
                 break
     return cues
 
@@ -311,8 +417,8 @@ def _edits(ref, hyp):
 
 
 def test_edits_count_word_errors():
-    assert _edits("a b c d".split(), "a x c d e".split()) == (1, 0, 1)
-    assert _edits("a b c".split(), "a c".split()) == (0, 1, 0)
+    assert _edits(["a", "b", "c", "d"], ["a", "x", "c", "d", "e"]) == (1, 0, 1)
+    assert _edits(["a", "b", "c"], ["a", "c"]) == (0, 1, 0)
     assert _edits([], ["a"]) == (0, 0, 1)
 
 
@@ -320,15 +426,18 @@ def _tokens(text: str):
     return [t for t in (words._norm(x) for x in text.split()) if t]
 
 
-VOICE = Path(os.environ.get("ARSENAL_MEDIA_VOICE_ORACLE")
-             or Path(__file__).resolve().parents[1] / "state" / "arsenal" / "media-oracles" / "voice")
+VOICE = Path(
+    os.environ.get("ARSENAL_MEDIA_VOICE_ORACLE")
+    or Path(__file__).resolve().parents[1] / "state" / "arsenal" / "media-oracles" / "voice"
+)
 VOICE_SPAN_S = 90.0
 
 
-@pytest.mark.skipif(not (SLOW and (VOICE / "vo_track.wav").is_file() and (VOICE / "vo.srt").is_file()
-                         and _cached("small")),
-                    reason="set ARSENAL_MEDIA_SLOW=1 (needs the studio animatic's vo_track.wav + vo.srt in "
-                           "media-oracles/voice or ARSENAL_MEDIA_VOICE_ORACLE, and small in the cache; ~25 s)")
+@pytest.mark.skipif(
+    not (SLOW and (VOICE / "vo_track.wav").is_file() and (VOICE / "vo.srt").is_file() and _cached("small")),
+    reason="set ARSENAL_MEDIA_SLOW=1 (needs the studio animatic's vo_track.wav + vo.srt in "
+    "media-oracles/voice or ARSENAL_MEDIA_VOICE_ORACLE, and small in the cache; ~25 s)",
+)
 def test_scratch_voice_wer_with_and_without_vad(tmp_path):
     """The spec's gate for flipping stt's default: VAD must cost nothing on clean narration. The studio animatic's
     scratch voice against its locked script (vo.srt), small. Measured 2026-10-12 on the whole 463 s (1056 words):
@@ -343,12 +452,15 @@ def test_scratch_voice_wer_with_and_without_vad(tmp_path):
     ref = [t for _s, e, text in cues if e <= t1 for t in _tokens(text)]
     edits = {}
     for vad in (True, False):
-        res = words.words(VOICE / "vo_track.wav", span=(0.0, t1), model="small", vad=vad,
-                          out_stem=tmp_path / f"vo_{vad}")
+        res = words.words(
+            VOICE / "vo_track.wav", span=(0.0, t1), model="small", vad=vad, out_stem=tmp_path / f"vo_{vad}"
+        )
         hyp = [t for x in json.loads(Path(res["words_json"]).read_text("utf-8"))["words"] for t in _tokens(x["word"])]
         edits[vad] = _edits(ref, hyp)
     wer = {vad: sum(e) / len(ref) for vad, e in edits.items()}
-    print(f"scratch voice 0-{t1:.1f} s, {len(ref)} words: WER {wer[True]:.3f} with VAD {edits[True]}, "
-          f"{wer[False]:.3f} without {edits[False]} (substituted, deleted, inserted)")
+    print(
+        f"scratch voice 0-{t1:.1f} s, {len(ref)} words: WER {wer[True]:.3f} with VAD {edits[True]}, "
+        f"{wer[False]:.3f} without {edits[False]} (substituted, deleted, inserted)"
+    )
     assert edits[True][1] <= edits[False][1] + 2, edits
     assert max(wer.values()) <= 0.2, wer

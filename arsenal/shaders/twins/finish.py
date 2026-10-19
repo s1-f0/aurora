@@ -18,10 +18,10 @@ change there reaches this file the way it reaches the shader.
 
 Apache-2.0, Akashic Aurora. Written fresh from the mathematics; no corpus code.
 """
+
 from __future__ import annotations
 
 import math
-from typing import List
 
 import numpy as np
 
@@ -41,21 +41,25 @@ def _mix(a, b, t):
 # Sibling twins, imported when first used: a twin of a module this one composes with is that module's own file.
 def _core():
     from arsenal.shaders.twins import core
+
     return core
 
 
 def _noise():
     from arsenal.shaders.twins import noise
+
     return noise
 
 
 def _colour():
     from arsenal.shaders.twins import colour
+
     return colour
 
 
 def _tone():
     from arsenal.shaders.twins import tone
+
     return tone
 
 
@@ -167,8 +171,8 @@ def mouseDragOrigin(mouse):
 
 
 # --------------------------------------------------------------------------------------------- input/audio.glsl
-FFT_SIZE = 2048            # the analyser's transform: bin k is k * sampleRate / FFT_SIZE hertz
-MAX_TAPS = 64              # audBand's loop bound
+FFT_SIZE = 2048  # the analyser's transform: bin k is k * sampleRate / FFT_SIZE hertz
+MAX_TAPS = 64  # audBand's loop bound
 LOG2_10 = 3.321928094887362
 
 
@@ -206,7 +210,7 @@ def audByteToAmp(v):
     return 2.0 ** (audByteToDb(v) * (LOG2_10 / 20.0)) if v > 0.0 else 0.0
 
 
-def audBandBins(hzLo, hzHi, sampleRate, width) -> List[int]:
+def audBandBins(hzLo, hzHi, sampleRate, width) -> list[int]:
     """The bins audBand's loop reads, in order: every bin of the band, or 64 spread evenly across a wider one.
     (Twin-only: the GLSL computes the same plan inside its loop.)"""
     last = float(width - 1)
@@ -223,7 +227,7 @@ def audBand(a, hzLo, hzHi, sampleRate):
     """Mean linear magnitude over the bins of [hzLo, hzHi] (at most 64 taps)."""
     tex = np.asarray(a)
     if tex.shape[1] < 1:
-        return 0.0                                     # nothing bound: silence
+        return 0.0  # nothing bound: silence
     plan = audBandBins(hzLo, hzHi, sampleRate, tex.shape[1])
     return sum(audByteToAmp(float(tex[0, k]) / 255.0) for k in plan) / len(plan)
 

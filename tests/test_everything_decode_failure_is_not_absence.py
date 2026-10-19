@@ -41,24 +41,25 @@ caller comparing a returned path against a real one needs to know the string may
 So the pins require both: keep the results, AND declare that some names were repaired. Silent
 repair would trade a loud wrong answer for a quiet one.
 """
+
 import os
-import subprocess as _subprocess
 import sys
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.tools import everything as E  # noqa: E402
-
+from core.tools import everything as E
 
 # ---------------------------------------------------------------- the fixture
 #: Real es.exe output with one undecodable byte in the middle name -- 0x89 is the byte that
 #: actually broke this on the live machine.
-DIRTY = (b"C:\\Program Files\\Image-Line\\FL Studio 2025\\Data\\Demo projects\\NewStuff.flp\r\n"
-         b"C:\\Music\\bad\x89name.flp\r\n"
-         b"E:\\AI-Setup\\scratch\\third.flp\r\n")
-CLEAN = (b"C:\\one.flp\r\nC:\\two.flp\r\n")
+DIRTY = (
+    b"C:\\Program Files\\Image-Line\\FL Studio 2025\\Data\\Demo projects\\NewStuff.flp\r\n"
+    b"C:\\Music\\bad\x89name.flp\r\n"
+    b"E:\\AI-Setup\\scratch\\third.flp\r\n"
+)
+CLEAN = b"C:\\one.flp\r\nC:\\two.flp\r\n"
 
 
 class _Proc:
@@ -78,6 +79,7 @@ def es(monkeypatch, tmp_path):
 def _run_returning(monkeypatch, payload: bytes):
     """Emulate subprocess faithfully: under text=True with a strict codec the reader thread dies
     and the caller is handed an EMPTY stdout with returncode 0 -- which is the whole defect."""
+
     def fake_run(argv, **kw):
         if kw.get("text") or kw.get("universal_newlines") or kw.get("encoding"):
             errs = kw.get("errors")
@@ -86,9 +88,10 @@ def _run_returning(monkeypatch, payload: bytes):
                 try:
                     payload.decode(enc)
                 except UnicodeDecodeError:
-                    return _Proc("", rc=0)        # the thread died; caller sees nothing
+                    return _Proc("", rc=0)  # the thread died; caller sees nothing
             return _Proc(payload.decode(enc, errors=errs or "strict"), rc=0)
-        return _Proc(payload, rc=0)               # bytes mode: nothing can fail to decode
+        return _Proc(payload, rc=0)  # bytes mode: nothing can fail to decode
+
     monkeypatch.setattr(E.subprocess, "run", fake_run)
 
 
@@ -99,7 +102,8 @@ def test_an_undecodable_byte_does_not_produce_a_confident_empty_result(es, monke
     res = E.search(".flp", max_results=10)
     assert not (res.ok and not res.paths), (
         "an undecodable byte produced ok=True with zero paths, which renders as "
-        "'Everything answered, nothing found' -- a false negative in the words of a true one")
+        "'Everything answered, nothing found' -- a false negative in the words of a true one"
+    )
 
 
 def test_the_lines_that_decode_are_still_returned(es, monkeypatch):
@@ -108,8 +112,7 @@ def test_the_lines_that_decode_are_still_returned(es, monkeypatch):
     _run_returning(monkeypatch, DIRTY)
     res = E.search(".flp", max_results=10)
     assert len(res.paths) >= 2, f"one bad byte discarded the other results: {res.paths}"
-    assert any("NewStuff.flp" in p for p in res.paths), \
-        "the first, perfectly decodable path was lost with the bad one"
+    assert any("NewStuff.flp" in p for p in res.paths), "the first, perfectly decodable path was lost with the bad one"
 
 
 def test_the_repaired_name_is_itself_returned_not_quietly_dropped(es, monkeypatch):
@@ -128,8 +131,9 @@ def test_the_repaired_name_is_itself_returned_not_quietly_dropped(es, monkeypatc
     _run_returning(monkeypatch, DIRTY)
     res = E.search(".flp", max_results=10)
     assert len(res.paths) == 3, f"a path was dropped: {res.paths}"
-    assert any("name.flp" in p for p in res.paths), \
+    assert any("name.flp" in p for p in res.paths), (
         "the repaired name was filtered out of the results; 'Nothing was dropped' is then a lie"
+    )
     assert res.undecodable == 1, f"the repair count is wrong: {res.undecodable}"
 
 
@@ -137,8 +141,9 @@ def test_the_rendered_line_never_claims_nothing_was_found(es, monkeypatch):
     """The renderer is part of the contract: the defect was a SENTENCE, not a field."""
     _run_returning(monkeypatch, DIRTY)
     out = E.format_result(E.search(".flp", max_results=10))
-    assert "nothing found" not in out.lower(), \
+    assert "nothing found" not in out.lower(), (
         f"still claims nothing was found when the answer merely could not be decoded: {out!r}"
+    )
 
 
 # ---------------------------------------------------------------- P4: the loss is DECLARED
@@ -146,17 +151,18 @@ def test_a_repaired_name_is_declared_rather_than_repaired_silently():
     """Keeping a mangled path beats losing the search, but a replaced byte means the string no
     longer round-trips to a real file. A caller comparing it against a real path must be able to
     tell. Silent repair swaps a loud wrong answer for a quiet one."""
-    res = E.SearchResult(query=".flp", paths=["C:\\Music\\bad\ufffdname.flp"], ok=True,
-                         engine="everything")
-    assert hasattr(res, "undecodable") or hasattr(res, "repaired_names"), \
+    res = E.SearchResult(query=".flp", paths=["C:\\Music\\bad\ufffdname.flp"], ok=True, engine="everything")
+    assert hasattr(res, "undecodable") or hasattr(res, "repaired_names"), (
         "SearchResult carries no way to say that some returned names were repaired"
+    )
 
 
 def test_the_declaration_survives_into_the_rendered_output(es, monkeypatch):
     _run_returning(monkeypatch, DIRTY)
     out = E.format_result(E.search(".flp", max_results=10))
-    assert any(w in out.upper() for w in ("UNDECODABLE", "REPAIRED", "NOT VALID UTF-8")), \
+    assert any(w in out.upper() for w in ("UNDECODABLE", "REPAIRED", "NOT VALID UTF-8")), (
         f"the reader is not told that a name was repaired: {out!r}"
+    )
 
 
 # ---------------------------------------------------------------- P6-P7: RATCHETS, do not regress
@@ -164,7 +170,8 @@ def test_a_clean_search_is_completely_unchanged(es, monkeypatch):
     """RATCHET. The fix must be invisible when nothing is wrong."""
     _run_returning(monkeypatch, CLEAN)
     res = E.search(".flp", max_results=10)
-    assert res.ok and len(res.paths) == 2
+    assert res.ok
+    assert len(res.paths) == 2
     out = E.format_result(res)
     assert "2 match(es)" in out
     for w in ("UNDECODABLE", "REPAIRED"):
@@ -177,6 +184,8 @@ def test_a_genuinely_empty_result_still_says_nothing_found(es, monkeypatch):
     _run_returning(monkeypatch, b"")
     res = E.search("zzz-no-such-file-anywhere", max_results=10)
     out = E.format_result(res)
-    assert res.ok and not res.paths
-    assert "nothing found" in out.lower(), \
+    assert res.ok
+    assert not res.paths
+    assert "nothing found" in out.lower(), (
         "a true empty result stopped reporting itself as empty; the fix overcorrected"
+    )

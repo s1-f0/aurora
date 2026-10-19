@@ -51,12 +51,13 @@ keeps firing and is repeatedly judged unhelpful SHOULD sink. P6 and P7 hold that
 the conflation of "judged often, never useful" with "never judged", and only the conflation is
 fixed. Absence of evidence must not be evidence of noise.
 """
+
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.recall.at_action import usefulness_factor as uf  # noqa: E402
+from core.recall.at_action import usefulness_factor as uf
 
 NEUTRAL = 1.0
 
@@ -67,43 +68,46 @@ def test_an_unjudged_lesson_is_neutral_however_often_it_has_been_shown():
     for surfaced in (0, 1, 3, 6, 13, 28, 72, 200, 5000):
         assert uf({"surfaced": surfaced}) == NEUTRAL, (
             f"surfaced={surfaced} was punished to {uf({'surfaced': surfaced}):.3f} on no "
-            "evidence; absence of judgment is not evidence of noise")
+            "evidence; absence of judgment is not evidence of noise"
+        )
 
 
 def test_two_unjudged_lessons_rank_equally_whatever_their_exposure():
     """If exposure alone moved the multiplier, relevance would be self-defeating: the lesson that
     matches a RECURRING situation earns the most impressions and so the deepest penalty."""
-    assert uf({"surfaced": 1}) == uf({"surfaced": 72}), \
+    assert uf({"surfaced": 1}) == uf({"surfaced": 72}), (
         "exposure alone reordered two lessons that carry no judgments between them"
+    )
 
 
 def test_recall_surfacing_a_lesson_cannot_lower_its_own_future_rank():
     """`bump_surfaced` is called by recall_at itself (at_action.py:1772). If surfacing decays the
     multiplier, the loop is closed and self-reinforcing with no external input."""
     before = uf({"surfaced": 10})
-    after = uf({"surfaced": 11})       # exactly one more impression, nothing else learned
-    assert after == before, (
-        "one more impression changed the ranking multiplier, so recall demotes what it shows")
+    after = uf({"surfaced": 11})  # exactly one more impression, nothing else learned
+    assert after == before, "one more impression changed the ranking multiplier, so recall demotes what it shows"
 
 
 # ---------------------------------------------------------------- P4-P5: real evidence must win
 def test_a_credited_lesson_outranks_an_uncredited_one():
     """N3's live case, with the corpus's real counters. The correct lesson has been credited useful
     twice; the three that outranked it have never been credited at all."""
-    right = uf({"surfaced": 72, "useful": 2, "noise": 1})     # the correct lesson for N3
-    for usurper_surfaced in (1, 3, 6):                        # the three that beat it
+    right = uf({"surfaced": 72, "useful": 2, "noise": 1})  # the correct lesson for N3
+    for usurper_surfaced in (1, 3, 6):  # the three that beat it
         usurper = uf({"surfaced": usurper_surfaced})
         assert right > usurper, (
             f"a twice-credited lesson ({right:.3f}) ranked below a never-credited one "
-            f"({usurper:.3f}, surfaced={usurper_surfaced})")
+            f"({usurper:.3f}, surfaced={usurper_surfaced})"
+        )
 
 
 def test_the_boost_half_is_reachable_at_a_realistic_credit_rate():
     """A multiplier documented as [0.5, 1.5] that needs a >50% credit rate to exceed 1.0 has a dead
     upper half: the house's measured rate is ~2%. Ten impressions and two credits is a GOOD lesson
     in this house and must read as better than neutral."""
-    assert uf({"surfaced": 10, "useful": 2}) > NEUTRAL, \
+    assert uf({"surfaced": 10, "useful": 2}) > NEUTRAL, (
         "two credits in ten impressions could not clear neutral; the boost half is unreachable"
+    )
 
 
 # ---------------------------------------------------------------- P6-P8: the decay's intent SURVIVES
@@ -125,20 +129,22 @@ def test_noise_votes_still_decay():
     everything else here and leaves this line red, that is a real finding and this docstring is the
     place it was predicted."""
     assert uf({"surfaced": 10, "noise": 3}) < NEUTRAL, "a noise-voted lesson stopped decaying"
-    assert uf({"surfaced": 10, "noise": 8}) < uf({"surfaced": 10, "noise": 3}), \
+    assert uf({"surfaced": 10, "noise": 8}) < uf({"surfaced": 10, "noise": 3}), (
         "more noise votes must decay further; the clamp saturates both cases at 0.5"
+    )
 
 
 def test_judged_often_and_never_useful_still_decays():
     """The case the rule was WRITTEN for, and the one it must keep. Here `never useful` is a real
     observation rather than an absence: the lesson was judged twenty times and credited zero."""
-    assert uf({"surfaced": 40, "noise": 20}) < NEUTRAL, \
+    assert uf({"surfaced": 40, "noise": 20}) < NEUTRAL, (
         "the decay's actual purpose was removed instead of its conflation being fixed"
+    )
 
 
 def test_more_credit_never_lowers_the_multiplier():
     """Monotone in the only direction that can be argued about."""
-    seq = [uf({"surfaced": 20, "useful": u}) for u in range(0, 11)]
+    seq = [uf({"surfaced": 20, "useful": u}) for u in range(11)]
     assert seq == sorted(seq), f"credit was non-monotone: {[round(x, 3) for x in seq]}"
 
 
@@ -166,14 +172,21 @@ def test_credit_cannot_exceed_the_exposure_that_earned_it():
     absurd = uf({"surfaced": 1, "helped": 99})
     assert absurd == once, (
         f"99 credits on a lesson shown once read as {absurd:.3f} rather than {once:.3f}; "
-        "credit was counted beyond the exposure that could have earned it")
+        "credit was counted beyond the exposure that could have earned it"
+    )
 
 
 # ---------------------------------------------------------------- P9-P10: the contract itself
 def test_the_range_holds_and_the_empty_case_is_neutral():
-    assert uf(None) == NEUTRAL and uf({}) == NEUTRAL
-    for u in ({"surfaced": 0}, {"surfaced": 9999}, {"useful": 99}, {"noise": 99},
-              {"surfaced": 10, "useful": 5, "noise": 5, "helped": 5}):
+    assert uf(None) == NEUTRAL
+    assert uf({}) == NEUTRAL
+    for u in (
+        {"surfaced": 0},
+        {"surfaced": 9999},
+        {"useful": 99},
+        {"noise": 99},
+        {"surfaced": 10, "useful": 5, "noise": 5, "helped": 5},
+    ):
         assert 0.5 <= uf(u) <= 1.5, f"{u} left the documented range at {uf(u)}"
 
 
@@ -185,4 +198,5 @@ def test_the_sibling_can_be_restored():
     bad = uf({"surfaced": 50, "useful": 1, "noise": 20})
     assert good > NEUTRAL > bad, (
         f"with a restored feedback channel the rule still cannot separate good from bad "
-        f"(good={good:.3f}, bad={bad:.3f})")
+        f"(good={good:.3f}, bad={bad:.3f})"
+    )

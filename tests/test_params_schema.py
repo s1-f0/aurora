@@ -5,6 +5,7 @@ browser twin (arsenal/web/lib/params.js, tests/params_schema.test.mjs) reads the
 on a verdict, a preset saved on one side is refused or silently changed on the other. Every expectation lives in
 tests/fixtures/params/verdicts.json; this file only runs them, plus the node test when node is installed.
 """
+
 import json
 import math
 import shutil
@@ -17,7 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from arsenal import params as P  # noqa: E402
+from arsenal import params as P  # noqa: E402  # after the sys.path bootstrap
 
 FIX = ROOT / "tests" / "fixtures" / "params"
 D = json.loads((FIX / "descriptors.json").read_text(encoding="utf-8"))
@@ -50,9 +51,16 @@ def same(a, b):
             return math.copysign(1.0, a) == math.copysign(1.0, b)
         return a == b
     if isinstance(a, list) or isinstance(b, list):
-        return isinstance(a, list) and isinstance(b, list) and len(a) == len(b) and all(same(x, y) for x, y in zip(a, b))
+        return (
+            isinstance(a, list)
+            and isinstance(b, list)
+            and len(a) == len(b)
+            and all(same(x, y) for x, y in zip(a, b, strict=False))
+        )
     if isinstance(a, dict) or isinstance(b, dict):
-        return isinstance(a, dict) and isinstance(b, dict) and sorted(a) == sorted(b) and all(same(a[k], b[k]) for k in a)
+        return (
+            isinstance(a, dict) and isinstance(b, dict) and sorted(a) == sorted(b) and all(same(a[k], b[k]) for k in a)
+        )
     return type(a) is type(b) and a == b
 
 
@@ -84,7 +92,9 @@ def test_validate_matches_the_fixture(case):
     assert all(isinstance(p["message"], str) and p["message"] for p in r["problems"])
 
 
-@pytest.mark.parametrize("case", V["messages"], ids=[short(json.dumps(c["values"], ensure_ascii=False)) for c in V["messages"]])
+@pytest.mark.parametrize(
+    "case", V["messages"], ids=[short(json.dumps(c["values"], ensure_ascii=False)) for c in V["messages"]]
+)
 def test_problem_messages_match_the_fixture_word_for_word(case):
     r = P.validate(SETS[case["set"]], revive(case["values"]))
     assert [[p["id"], p["code"], p["message"]] for p in r["problems"]] == case["problems"]
@@ -98,15 +108,19 @@ def test_validate_leaves_its_input_alone():
 
 def test_validate_value_snaps_one_value_and_refuses_a_bad_toggle():
     one = P.validate_value(by_id("core", "intensity"), 0.333)
-    assert one["value"] == 0.33 and one["problem"] is None
+    assert one["value"] == 0.33
+    assert one["problem"] is None
     bad = P.validate_value(by_id("core", "rays"), "yes")
-    assert bad["value"] is True and bad["problem"]["code"] == "type"
+    assert bad["value"] is True
+    assert bad["problem"]["code"] == "type"
 
 
 def test_integer_grids_come_back_as_ints_for_python_callers():
     r = P.validate(SETS["core"], {"layers": 30.2, "angle": 44.6})
-    assert type(r["values"]["layers"]) is int and r["values"]["layers"] == 30
-    assert type(r["values"]["angle"]) is int and r["values"]["angle"] == 45
+    assert type(r["values"]["layers"]) is int
+    assert r["values"]["layers"] == 30
+    assert type(r["values"]["angle"]) is int
+    assert r["values"]["angle"] == 45
 
 
 # --------------------------------------------------------------------------------------------------- URL codec --
@@ -125,7 +139,9 @@ def test_decode_matches_the_fixture(case):
         assert pairs(r["problems"]) == case["verdict"]["problems"]
 
 
-@pytest.mark.parametrize("case", V["roundtrip"], ids=[json.dumps(c["values"], ensure_ascii=False) for c in V["roundtrip"]])
+@pytest.mark.parametrize(
+    "case", V["roundtrip"], ids=[json.dumps(c["values"], ensure_ascii=False) for c in V["roundtrip"]]
+)
 def test_the_url_codec_round_trips_validated_values(case):
     descriptors, values = SETS[case["set"]], revive(case["values"])
     want = P.validate(descriptors, values)["values"]
@@ -184,7 +200,9 @@ def test_params_from_module_matches_the_fixture(case):
     header = D["headers"][case["header"]]
     got = P.params_from_module(header, case["instance"])
     if "rows" in case:
-        assert [[d["id"], d["uniform"], d["type"], d["unit"], d["group"], d["order"], d["cost"]] for d in got] == case["rows"]
+        assert [[d["id"], d["uniform"], d["type"], d["unit"], d["group"], d["order"], d["cost"]] for d in got] == case[
+            "rows"
+        ]
     if "full" in case:
         assert same(got, case["full"]), got
     if "derived" in case:
@@ -199,7 +217,7 @@ def test_params_from_module_matches_the_fixture(case):
 
 @pytest.mark.parametrize("row", V["module_errors"], ids=[repr(r[1]) for r in V["module_errors"]])
 def test_params_from_module_refuses_a_bad_instance_id(row):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="must be a letter then letters or digits"):
         P.params_from_module(D["headers"][row[0]], row[1])
 
 
@@ -211,7 +229,7 @@ def test_params_from_module_then_the_descriptor_check(case):
 @pytest.mark.parametrize("instance", [None, "a"])
 @pytest.mark.parametrize("case", V["module_bad_headers"], ids=ids(V["module_bad_headers"]))
 def test_params_from_module_refuses_a_param_without_a_name(case, instance):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="needs a name"):
         P.params_from_module(case["header"], instance)
 
 
@@ -229,7 +247,13 @@ def test_the_refusal_text_is_the_house_text():
 # ------------------------------------------------------------------------------------------ the browser twin --
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_the_browser_twin_agrees_on_the_same_fixture():
-    res = subprocess.run([NODE, str(ROOT / "tests" / "params_schema.test.mjs")], capture_output=True, text=True,
-                         encoding="utf-8", cwd=str(ROOT), timeout=120)
+    res = subprocess.run(
+        [NODE, str(ROOT / "tests" / "params_schema.test.mjs")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(ROOT),
+        timeout=120,
+    )
     assert res.returncode == 0, (res.stdout + res.stderr)[-4000:]
     assert " 0 failed" in res.stdout

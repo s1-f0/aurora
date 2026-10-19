@@ -89,27 +89,25 @@ HARNESSES: dict[str, dict[str, Any]] = {
     },
     "codex-desktop": {
         "default_agent_id": "sol",
-        "adapters": "agent/harness/hooks/codex_*.py via scripts/hooks/codex_*.py; "
-                    "Codex user + repo hook definitions are atomically deduplicated; "
-                    "agent/harness/codex_app_server.py owns one Windows stdio child/reader; "
-                    "scripts/codex_bifrost_wake.py is the bounded Bifrost turn starter",
-        "wake": "armed -- private future-only direct-stream watermark, dsh_agent allowlist, "
-                "zero-model idle + supervised Windows process observed 2026-08-26; the first "
-                "eligible paid turn and causally linked reply remain unobserved",
+        "adapters": "agent/harness/hooks/codex_*.py via .codex/hooks.json "
+        "(`agent_cli.py hooks install --harness codex`; scripts/hooks/codex_*.py are shims kept for "
+        "older user-level registrations); Codex user + repo hook definitions are atomically "
+        "deduplicated; agent/harness/codex_app_server.py (owned app-server child)",
+        "wake": "armed -- agent/harness/codex_bifrost_wake.py; live wake receipts remain unobserved",
         "tiers": {
-            "T0": "yes -- shell/unified exec + user-scoped akashic-aurora MCP door",
-            "T1": "yes -- event session binding first, AKASHIC_AGENT_ID=sol fallback; "
-                  "subject label is emitted on every injected context",
+            "T0": "yes -- shell + ai_setup_mcp.py (.codex/config.toml)",
+            "T1": "yes -- event session binding first, .codex/config.toml AKASHIC_AGENT_ID=sol "
+            "fallback; subject label is emitted on every injected context",
             "T2": "pending -- Codex-native SessionStart identity+boot fold is configured and "
-                  "synthetically pinned; fresh trusted-session live receipt still required",
+            "synthetically pinned; no live receipt yet (docs/CODEX_INTEGRATION.md)",
             "T3": "pending -- canonical apply_patch/Bash PreToolUse translation is configured "
-                  "and synthetically pinned; live payload + injection receipt still required",
+            "and synthetically pinned; live payload + injection receipt still required",
             "T4": "pending -- Codex-native PostToolUse uses the direct event (including nonzero "
-                  "Bash) without Claude transcript synthesis; first live flip remains unobserved",
+            "Bash) without Claude transcript synthesis; first live flip remains unobserved",
             "T5": "pending -- subject-labelled UserPromptSubmit plan recall is configured and "
-                  "synthetically pinned; fresh trusted-session injection remains unobserved",
+            "synthetically pinned; fresh trusted-session injection remains unobserved",
             "T6": "pending -- no Codex-native SessionEnd draft exists; Claude transcript parsing "
-                  "is deliberately not reused against Codex rollout JSONL",
+            "is deliberately not reused against Codex rollout JSONL",
         },
     },
     "cursor": {
@@ -124,21 +122,6 @@ HARNESSES: dict[str, dict[str, Any]] = {
             "T4": "yes, DIRECT -- postToolUseFailure is a real fail event (no transcript synthesis needed)",
             "T5": "unavailable -- beforeSubmitPrompt cannot inject context",
             "T6": "yes -- sessionEnd -> chronicles/last-session-draft.md",
-        },
-    },
-    "codex-desktop": {
-        "default_agent_id": "sol",
-        "adapters": "agent/harness/codex_app_server.py (owned app-server child) + the claude_* hooks "
-        "via .codex/hooks.json (`agent_cli.py hooks install --harness codex`)",
-        "wake": "armed -- agent/harness/codex_bifrost_wake.py; live wake receipts remain unobserved",
-        "tiers": {
-            "T0": "yes -- shell + ai_setup_mcp.py (.codex/config.toml)",
-            "T1": "yes -- .codex/config.toml env (AKASHIC_AGENT_ID)",
-            "T2": "pending -- SessionStart wiring declared; no live receipt yet (docs/CODEX_INTEGRATION.md)",
-            "T3": "pending -- PreToolUse runs the claude_* adapter; Codex payload parity unobserved",
-            "T4": "pending -- PostToolUse runs the claude_* adapter; Codex payload parity unobserved",
-            "T5": "pending -- UserPromptSubmit not yet observed live",
-            "T6": "pending -- no Codex transcript parser; close/draft unbuilt",
         },
     },
     "bare-cli": {
@@ -197,14 +180,16 @@ HOOK_SPECS = {
         ("SessionEnd", "*", "claude_sessionend.py"),
         ("Stop", "*", "claude_stop.py"),
     ],
-    # Codex reads Claude-shaped hooks.json. No codex_* adapters exist in the tree yet, so it
-    # runs the claude_* ones (as .codex/hooks.json always has); T2-T6 stay `pending` above.
+    # Codex reads Claude-shaped hooks.json, but its payloads are its own (apply_patch, a direct
+    # PostToolUse on nonzero Bash), so it runs the codex_* adapters, never the claude_* ones
+    # (tests/test_codex_hook_contract.py pins that). Its tools are Bash and apply_patch. No
+    # Stop/PreCompact entry: there is no Codex-native close hook yet (T6 above), claude_sessionend
+    # parses Claude transcripts, and claude_stop's wake gate prescribes Claude's listener.
     "codex": [
-        ("PreToolUse", _TOOL_MATCHER, "claude_trace.py"),
-        ("PreToolUse", "Bash|Edit|Write|NotebookEdit", "claude_pretooluse.py"),
-        ("PostToolUse", "Bash|Edit|Write|NotebookEdit", "claude_posttooluse.py"),
-        ("PreCompact", "*", "claude_sessionend.py"),
-        ("Stop", None, "claude_stop.py"),
+        ("SessionStart", "startup|resume|clear|compact", "codex_sessionstart.py"),
+        ("UserPromptSubmit", None, "codex_userpromptsubmit.py"),
+        ("PreToolUse", "Bash|apply_patch", "codex_pretooluse.py"),
+        ("PostToolUse", "Bash|apply_patch", "codex_posttooluse.py"),
     ],
     # Cursor's own hooks.json shape: camelCase events, flat {command, matcher, failClosed}.
     "cursor": [

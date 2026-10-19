@@ -34,6 +34,7 @@ Read-only: xrange replays, no cursor is advanced, nothing is written.
 
     py scripts/measure_credit_join.py [--limit 50000] [--json]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -41,7 +42,7 @@ import json
 import os
 import sys
 from collections import Counter, defaultdict
-from typing import Any, Dict, List
+from typing import Any
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO not in sys.path:
@@ -50,32 +51,33 @@ if _REPO not in sys.path:
 OUTCOME_STREAM = "recall:outcome"
 
 
-def _rows(limit: int) -> List[dict]:
+def _rows(limit: int) -> list[dict]:
     """Replay the outcome stream oldest-first. Never consumes."""
     from core.comm.bus import Bus
+
     client = Bus("claude")._client
-    out: List[dict] = []
+    out: list[dict] = []
     for _mid, fields in client.xrange(OUTCOME_STREAM, min="-", max="+", count=limit):
         try:
             raw = next(iter(fields.values()))
             out.append(json.loads(raw.decode() if isinstance(raw, bytes) else str(raw)))
-        except Exception:                                                 # noqa: BLE001
+        except Exception:  # noqa: BLE001  # fail-soft: best effort, skipped on any error
             continue
     return out
 
 
-def measure(limit: int) -> Dict[str, Any]:
+def measure(limit: int) -> dict[str, Any]:
     from core.recall.at_action import coarse_target
 
     rows = _rows(limit)
-    by_sid: Dict[str, List[dict]] = defaultdict(list)
+    by_sid: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         by_sid[str(r.get("sid") or "?")].append(r)
 
     stats: Counter = Counter()
-    axis_examples: List[Dict[str, str]] = []
+    axis_examples: list[dict[str, str]] = []
 
-    for _sid, srows in by_sid.items():
+    for srows in by_sid.values():
         # Later-success index: which keys (exact and coarse) succeed at or after each point.
         # Walk backwards once so "is there a LATER success" is O(n) rather than O(n^2).
         later_exact, later_coarse = set(), set()
@@ -90,7 +92,7 @@ def measure(limit: int) -> Dict[str, Any]:
                     later_coarse.add(c)
         for r, exact_after, coarse_after in reversed(suffix):
             if r.get("ok"):
-                continue                                   # only FAILs can open a flip
+                continue  # only FAILs can open a flip
             t = str(r.get("t") or "")
             stats["fails"] += 1
             is_cmd = t.startswith("c:")
@@ -129,11 +131,12 @@ def measure(limit: int) -> Dict[str, Any]:
         "pct_joinable_before": round(100.0 * stats["joinable_exact"] / fails, 2),
         "pct_joinable_after": round(100.0 * stats["joinable_either"] / fails, 2),
         "coarse_only_share_of_joinable": round(
-            100.0 * stats["joinable_coarse_only"] / (stats["joinable_either"] or 1), 2),
+            100.0 * stats["joinable_coarse_only"] / (stats["joinable_either"] or 1), 2
+        ),
         "coarse_only_examples": axis_examples,
         "_reading": "COUNTERFACTUAL: rows were written before the coarse axis existed; "
-                    "joinable is an upper bound on OBSERVABILITY, and the _surfaced "
-                    "variants are the upper bound on realised CREDIT.",
+        "joinable is an upper bound on OBSERVABILITY, and the _surfaced "
+        "variants are the upper bound on realised CREDIT.",
     }
 
 
@@ -149,16 +152,15 @@ def main() -> int:
         return 0
 
     print(f"outcome rows replayed : {res['outcome_rows_replayed']} over {res['sessions']} session(s)")
-    print(f"failures              : {res['fails']}  "
-          f"({res['fails_command']} command, {res['fails_path']} path)")
-    print(f"  no coarse axis      : {res['fails_without_coarse_axis']}  "
-          f"(refused: identity lived in the flags)")
+    print(f"failures              : {res['fails']}  ({res['fails_command']} command, {res['fails_path']} path)")
+    print(f"  no coarse axis      : {res['fails_without_coarse_axis']}  (refused: identity lived in the flags)")
     print(f"joinable BEFORE       : {res['joinable_exact']}  ({res['pct_joinable_before']}%)")
     print(f"joinable AFTER        : {res['joinable_either']}  ({res['pct_joinable_after']}%)")
-    print(f"  coarse-only         : {res['joinable_coarse_only']}  "
-          f"({res['coarse_only_share_of_joinable']}% of all joinable)")
-    print(f"  ...with a lesson up : {res['joinable_coarse_only_surfaced']}  "
-          f"(the creditable subset)")
+    print(
+        f"  coarse-only         : {res['joinable_coarse_only']}  "
+        f"({res['coarse_only_share_of_joinable']}% of all joinable)"
+    )
+    print(f"  ...with a lesson up : {res['joinable_coarse_only_surfaced']}  (the creditable subset)")
     print(f"\n{res['_reading']}")
     if res["coarse_only_examples"]:
         print("\ncoarse-only examples (audit these: each is a place a FALSE join could mint credit)")

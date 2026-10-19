@@ -30,11 +30,13 @@ NULL IS NOT EMPTY, and the schema keeps the distinction in both places (Navi, am
 `targets: None` means the command could not be seen into; `targets: []` means it was read and
 touched nothing. Collapsing them is this house's "zero is not no" failure with a JSON accent.
 """
+
 from __future__ import annotations
 
 import os
+from collections.abc import Callable  # noqa: TC003  # runtime-evaluated annotations (annotation_sensitive module)
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 SCHEMA = "touch.v1"
 KIND = "touch"
@@ -49,15 +51,19 @@ MAX_TARGETS = 32
 #: The tools the spec names, with the ACTION each one means. A file tool's action is known from the
 #: tool itself; a shell tool's has to be extracted from the command, which is the hard case and
 #: belongs to `context.target.v1`'s extraction contract rather than here.
-_FILE_ACTIONS: Dict[str, str] = {
-    "Read": "read", "NotebookRead": "read",
-    "Edit": "write", "Write": "write", "NotebookEdit": "write",
+_FILE_ACTIONS: dict[str, str] = {
+    "Read": "read",
+    "NotebookRead": "read",
+    "Edit": "write",
+    "Write": "write",
+    "NotebookEdit": "write",
 }
 _SHELL_TOOLS = {"Bash": "bash", "PowerShell": "powershell"}
 _SEARCH_TOOLS = {"Grep", "Glob"}
 _URL_TOOLS = {"WebFetch", "WebSearch"}
 
 _drops = 0
+
 
 #: The drop counter has to be DURABLE, and that is not a nicety -- it is the difference between a
 #: counter and a decoration. This module's main caller is a PostToolUse hook, which is a fresh
@@ -71,8 +77,8 @@ _drops = 0
 #: watching is a counter that goes quiet in the only situation it exists for.
 def _drop_file() -> str:
     import tempfile
-    return os.path.join(os.getenv("AKASHIC_TOUCH_DROPS_DIR") or tempfile.gettempdir(),
-                        "akashic_touch_drops.txt")
+
+    return os.path.join(os.getenv("AKASHIC_TOUCH_DROPS_DIR") or tempfile.gettempdir(), "akashic_touch_drops.txt")
 
 
 def _bump_drop() -> None:
@@ -88,8 +94,8 @@ def _bump_drop() -> None:
             n = 0
         with open(p, "w", encoding="utf-8") as f:
             f.write(str(n + 1))
-    except Exception:                                                     # noqa: BLE001
-        pass          # the end of the line: if even this fails we are silent, and nothing is left
+    except Exception:  # noqa: BLE001
+        pass  # the end of the line: if even this fails we are silent, and nothing is left
 
 
 def drops() -> int:
@@ -109,11 +115,11 @@ class Touch:
     summary: str
     session_id: str
     agent_id: str
-    detail: Dict[str, Any]
-    refs: List[str] = field(default_factory=list)
+    detail: dict[str, Any]
+    refs: list[str] = field(default_factory=list)
 
 
-def _session_of(payload: Dict[str, Any]) -> tuple:
+def _session_of(payload: dict[str, Any]) -> tuple:
     """PAYLOAD FIRST, env only as a fallback, and the source is recorded either way.
 
     The environment is ambient: it inherits from parents and siblings, so resolving a seat from it
@@ -127,6 +133,7 @@ def _session_of(payload: Dict[str, Any]) -> tuple:
     # it returns was lifted into core/coord/session_id.py and every resolver now reads from
     # there -- so the (id, source) discipline spreads instead of this file's copy drifting.
     from core.coord.session_id import session_of as _session_of_shared
+
     return _session_of_shared(payload)
 
 
@@ -134,14 +141,15 @@ def _agent_of() -> str:
     try:
         from core.comm import seat_identity as _si
         from core.coord.session_id import ambient_session_id
+
         sid = ambient_session_id()[0]
         return _si.resolve(sid) if hasattr(_si, "resolve") else (os.getenv("AKASHIC_AGENT_ID") or "")
-    except Exception:                                                     # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return str(os.getenv("AKASHIC_AGENT_ID") or "")
 
 
-def _as_row(action: str, tgt, role: Optional[str] = None) -> Dict[str, Any]:
-    row: Dict[str, Any] = {"action": action, "key": tgt.key, "kind": tgt.kind}
+def _as_row(action: str, tgt, role: str | None = None) -> dict[str, Any]:
+    row: dict[str, Any] = {"action": action, "key": tgt.key, "kind": tgt.kind}
     if tgt.work:
         row["work"] = tgt.work
     if tgt.line is not None:
@@ -151,8 +159,9 @@ def _as_row(action: str, tgt, role: Optional[str] = None) -> Dict[str, Any]:
     return row
 
 
-def build(payload: Dict[str, Any], *, roots: Any, exists: Optional[Callable[[str], bool]] = None,
-          exists_all: bool = False) -> Optional[Touch]:
+def build(
+    payload: dict[str, Any], *, roots: Any, exists: Callable[[str], bool] | None = None, exists_all: bool = False
+) -> Touch | None:
     """One PostToolUse payload -> one touch record, or None (counted) if anything goes wrong.
 
     Pure: takes the payload, the roots and an existence callable. No disk, no Redis, no git."""
@@ -164,7 +173,7 @@ def build(payload: Dict[str, Any], *, roots: Any, exists: Optional[Callable[[str
         cwd = str(payload.get("cwd") or "") or None
         ex = (lambda _k: True) if exists_all else (exists or (lambda _k: False))
 
-        rows: Optional[List[Dict[str, Any]]] = []
+        rows: list[dict[str, Any]] | None = []
         incomplete = False
         total = 0
 
@@ -176,11 +185,10 @@ def build(payload: Dict[str, Any], *, roots: Any, exists: Optional[Callable[[str
             total = len(rows or [])
 
         elif tool in _SHELL_TOOLS:
-            ext = T.extract(str(ti.get("command") or ""), shell=_SHELL_TOOLS[tool],
-                            cwd=cwd, roots=roots, exists=ex)
+            ext = T.extract(str(ti.get("command") or ""), shell=_SHELL_TOOLS[tool], cwd=cwd, roots=roots, exists=ex)
             incomplete = bool(ext.incomplete)
             if ext.targets is None:
-                rows = None                      # could not see in; NOT the same as "nothing"
+                rows = None  # could not see in; NOT the same as "nothing"
             else:
                 total = len(ext.targets)
                 rows = [_as_row(t.action, t.target, t.role) for t in ext.targets[:MAX_TARGETS]]
@@ -190,7 +198,7 @@ def build(payload: Dict[str, Any], *, roots: Any, exists: Optional[Callable[[str
             try:
                 rows = [_as_row("search", T.parse(p, roots=roots, cwd=cwd, exists=ex))] if p else []
             except T.TargetError:
-                rows = []                        # a bare regex is not a location, and that is fine
+                rows = []  # a bare regex is not a location, and that is fine
             total = len(rows)
 
         elif tool in _URL_TOOLS:
@@ -201,9 +209,9 @@ def build(payload: Dict[str, Any], *, roots: Any, exists: Optional[Callable[[str
             total = len(rows)
 
         else:
-            return None                          # an unlisted tool is not a touch
+            return None  # an unlisted tool is not a touch
 
-        detail: Dict[str, Any] = {
+        detail: dict[str, Any] = {
             "schema": SCHEMA,
             "harness": "claude-code",
             "tool": tool,
@@ -225,31 +233,32 @@ def build(payload: Dict[str, Any], *, roots: Any, exists: Optional[Callable[[str
         refs = [r["key"] for r in (rows or [])][:MAX_TARGETS]
         summary = f"{tool}: {n} target(s)" if rows is not None else f"{tool}: targets unknown"
 
-        return Touch(kind=KIND, summary=summary, session_id=sid, agent_id=_agent_of(),
-                     detail=detail, refs=refs)
+        return Touch(kind=KIND, summary=summary, session_id=sid, agent_id=_agent_of(), detail=detail, refs=refs)
 
-    except Exception:                                                     # noqa: BLE001
+    except Exception:  # noqa: BLE001
         # The hot path of every seat runs through here. Never raise; always count.
         _bump_drop()
         return None
 
 
-def emit(payload: Dict[str, Any], *, roots: Any = None,
-         exists: Optional[Callable[[str], bool]] = None) -> bool:
+def emit(payload: dict[str, Any], *, roots: Any = None, exists: Callable[[str], bool] | None = None) -> bool:
     """Build a touch and put it on the spine. Returns whether a record landed. Never raises.
 
     The default roots are resolved HERE rather than by the hook, so the caller stays one line and
     the expensive lookup (`git worktree list`) is cached per process in one place."""
     try:
-        t = build(payload, roots=roots if roots is not None else default_roots(),
-                  exists=exists if exists is not None else _repo_exists)
+        t = build(
+            payload,
+            roots=roots if roots is not None else default_roots(),
+            exists=exists if exists is not None else _repo_exists,
+        )
         if t is None:
             return False
         from core.events.event_log import capture_event
-        capture_event(t.kind, t.summary, agent_id=t.agent_id, session_id=t.session_id,
-                      detail=t.detail, refs=t.refs)
+
+        capture_event(t.kind, t.summary, agent_id=t.agent_id, session_id=t.session_id, detail=t.detail, refs=t.refs)
         return True
-    except Exception:                                                     # noqa: BLE001
+    except Exception:  # noqa: BLE001
         _bump_drop()
         return False
 
@@ -261,18 +270,20 @@ def default_roots():
     """`git worktree list` once per process, never once per touch. The spec prices it this way."""
     if _ROOTS_CACHE:
         return _ROOTS_CACHE[0]
-    from core.coord import target as T
     from core import paths
+    from core.coord import target as T
+
     main = str(paths.repo_root())
-    trees: List[str] = []
+    trees: list[str] = []
     try:
         import subprocess
-        out = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=main,
-                             capture_output=True, text=True, timeout=10).stdout
-        trees = [ln.split(" ", 1)[1].strip() for ln in out.splitlines()
-                 if ln.startswith("worktree ")]
-    except Exception:                                                     # noqa: BLE001
-        trees = []                               # no worktrees known is a degraded read, not a crash
+
+        out = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"], cwd=main, capture_output=True, text=True, timeout=10
+        ).stdout
+        trees = [ln.split(" ", 1)[1].strip() for ln in out.splitlines() if ln.startswith("worktree ")]
+    except Exception:  # noqa: BLE001
+        trees = []  # no worktrees known is a degraded read, not a crash
     r = T.Roots(main=main, worktrees=tuple(t for t in trees if t), resolve_sha=None)
     _ROOTS_CACHE.append(r)
     return r
@@ -281,6 +292,7 @@ def default_roots():
 def _repo_exists(key: str) -> bool:
     try:
         from core import paths
+
         return os.path.exists(os.path.join(str(paths.repo_root()), key.replace("/", os.sep)))
-    except Exception:                                                     # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return False

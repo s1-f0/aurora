@@ -52,6 +52,7 @@ Run::
 
     py -m pytest tests/test_the_fences_plane_is_reachable.py -q
 """
+
 from __future__ import annotations
 
 import sys
@@ -76,12 +77,14 @@ def test_lookback_has_a_fences_layer():
     """THE PIN. `lookback` is the verb built for 'the strategic WHY' and cannot see where the WHYs
     are written down."""
     from core.recall.lookback import LAYERS
+
     names = [n for n, _fn in LAYERS]
     assert "fences" in names, (
-        "lookback's layers are %r -- there is no `fences` layer, so the house's %d sealed "
+        f"lookback's layers are {names!r} -- there is no `fences` layer, so the house's {len(_fence_reconciliations())} sealed "
         "reconciliations cannot appear as result rows in the one verb built to answer "
         "'why did we decide X'. Both cold readers reached the Wave 0 build spec only because a "
-        "note happened to quote its path." % (names, len(_fence_reconciliations())))
+        "note happened to quote its path."
+    )
 
 
 def test_the_fences_layer_actually_yields_the_reconciliations():
@@ -92,6 +95,7 @@ def test_the_fences_layer_actually_yields_the_reconciliations():
     change nothing about what a reader can find.
     """
     from core.recall.lookback import LAYERS
+
     fn = dict(LAYERS).get("fences")
     if fn is None:
         pytest.fail("no fences layer to exercise (see test_lookback_has_a_fences_layer)")
@@ -99,8 +103,8 @@ def test_the_fences_layer_actually_yields_the_reconciliations():
     assert items, "the fences layer returned 0 items"
     sources = {i.get("source") for i in items}
     assert TARGET in sources, (
-        "the fences layer yielded %d item(s) but not %s. Sample: %r"
-        % (len(items), TARGET, sorted(sources)[:5]))
+        f"the fences layer yielded {len(items)} item(s) but not {TARGET}. Sample: {sorted(sources)[:5]!r}"
+    )
 
 
 def test_a_cold_question_about_the_wave_0_spec_reaches_it():
@@ -120,12 +124,13 @@ def test_a_cold_question_about_the_wave_0_spec_reaches_it():
     as a generous assertion.
     """
     from core.recall.lookback import lookback
+
     hits = lookback("what did we agree to build first for the context system and what waits")
     sources = [h.get("source") for h in hits]
     assert TARGET in sources, (
-        "the Wave 0 build spec is not reachable by a question about what it is about. %d hit(s) "
-        "came back and the authoritative document was not among them: %r"
-        % (len(hits), sources[:12]))
+        f"the Wave 0 build spec is not reachable by a question about what it is about. {len(hits)} hit(s) "
+        f"came back and the authoritative document was not among them: {sources[:12]!r}"
+    )
 
 
 def test_the_exact_question_a_cold_reader_actually_asked():
@@ -152,13 +157,16 @@ def test_the_exact_question_a_cold_reader_actually_asked():
     them as rivals invents a competition the house does not have.
     """
     from core.recall.lookback import lookback
-    hits = lookback("how is an agent's working context assembled, and what was decided for "
-                    "round one versus later rounds")
+
+    hits = lookback(
+        "how is an agent's working context assembled, and what was decided for round one versus later rounds"
+    )
     sources = [h.get("source") for h in hits]
     fences = [s for s in sources if s and s.startswith("fences/")]
     assert TARGET in sources, (
-        "the reader's own phrasing does not reach the ruling. fence rows returned: %r "
-        "(all %d hits: %r)" % (fences, len(sources), sources[:12]))
+        f"the reader's own phrasing does not reach the ruling. fence rows returned: {fences!r} "
+        f"(all {len(sources)} hits: {sources[:12]!r})"
+    )
 
 
 def test_an_addendum_never_outranks_the_ruling_it_annotates():
@@ -168,15 +176,17 @@ def test_an_addendum_never_outranks_the_ruling_it_annotates():
     a reader handed the addendum without the ruling has been given a footnote and told it is the law.
     """
     from core.recall.lookback import LAYERS
+
     fn = dict(LAYERS).get("fences")
     if fn is None:
         pytest.fail("no fences layer")
     sources = [i.get("source", "") for i in fn()]
     stray = [s for s in sources if "addendum" in s.rsplit("/", 1)[-1]]
     assert not stray, (
-        "addenda are indexed as rows of their own and so compete with the rulings they annotate: %r. "
+        f"addenda are indexed as rows of their own and so compete with the rulings they annotate: {stray[:5]!r}. "
         "They belong folded into their reconciliation's row, which is what the house's "
-        "never-edit-sealed-text rule already means." % stray[:5])
+        "never-edit-sealed-text rule already means."
+    )
 
 
 def test_fence_status_prints_a_path():
@@ -185,16 +195,22 @@ def test_fence_status_prints_a_path():
     and the round's question -- and no filename, so a confirmed document still cannot be opened
     without crossing to a different verb."""
     import subprocess
-    r = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "agent_cli.py"),
-                        "fence", "status", "context-system"],
-                       capture_output=True, text=True, encoding="utf-8", errors="replace",
-                       cwd=str(ROOT), timeout=180)
+
+    r = subprocess.run(
+        [sys.executable, "-X", "utf8", str(ROOT / "agent_cli.py"), "fence", "status", "context-system"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(ROOT),
+        timeout=180,
+    )
     out = r.stdout + r.stderr
     if "reconciliation" not in out.lower():
         pytest.skip("fence status does not mention the reconciliation slot on this checkout")
-    assert ("fences/" in out or "fences\\" in out), (
-        "fence status names the reconciliation as SEALED and never says where it is. Output:\n%s"
-        % out[-700:])
+    assert "fences/" in out or "fences\\" in out, (
+        f"fence status names the reconciliation as SEALED and never says where it is. Output:\n{out[-700:]}"
+    )
 
 
 # ------------------------------------------------------------------ the plane itself
@@ -203,6 +219,7 @@ def test_every_sealed_reconciliation_is_in_the_corpus():
     reachable". A layer that indexes one directory and misses twenty is the same defect at a smaller
     scale."""
     from core.recall.lookback import LAYERS
+
     fn = dict(LAYERS).get("fences")
     if fn is None:
         pytest.fail("no fences layer (see test_lookback_has_a_fences_layer)")
@@ -210,8 +227,8 @@ def test_every_sealed_reconciliation_is_in_the_corpus():
     want = {str(p.relative_to(ROOT)).replace("\\", "/") for p in _fence_reconciliations()}
     missing = sorted(want - have)
     assert not missing, (
-        "%d of %d sealed reconciliation(s) are absent from the corpus: %r"
-        % (len(missing), len(want), missing[:6]))
+        f"{len(missing)} of {len(want)} sealed reconciliation(s) are absent from the corpus: {missing[:6]!r}"
+    )
 
 
 # ------------------------------------------------------------------ ratchets
@@ -221,23 +238,26 @@ def test_docs_stays_the_first_layer():
     tests/test_charters_in_lookback_corpus.py::test_p3 already pins it. A new layer must be
     registered AFTER docs, exactly as `charters` was."""
     from core.recall.lookback import LAYERS
+
     assert LAYERS[0][0] == "docs", (
-        "LAYERS[0] is %r -- the query counter keys off it; a new layer goes after docs, never "
-        "before" % (LAYERS[0][0],))
+        f"LAYERS[0] is {LAYERS[0][0]!r} -- the query counter keys off it; a new layer goes after docs, never before"
+    )
 
 
 def test_the_existing_layers_all_survive():
     """RATCHET. Adding a layer must not displace one. These seven were the corpus on 2026-10-07."""
     from core.recall.lookback import LAYERS
+
     names = [n for n, _fn in LAYERS]
     for expected in ("docs", "charters", "research", "notes", "promoted", "chapters", "git"):
-        assert expected in names, "the %r layer disappeared: %r" % (expected, names)
+        assert expected in names, f"the {expected!r} layer disappeared: {names!r}"
 
 
 def test_the_charters_precedent_still_holds():
     """RATCHET on the precedent this fix copies. If charters stopped yielding, the reasoning cited in
     this file's docstring would be describing something that no longer works."""
     from core.recall.lookback import LAYERS
+
     fn = dict(LAYERS).get("charters")
     if fn is None:
         pytest.skip("no charters layer on this checkout")

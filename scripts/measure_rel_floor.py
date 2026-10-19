@@ -49,6 +49,7 @@ the ratio it was given, and refuses to report numbers if it does not.
 
     py scripts/measure_rel_floor.py [--set PATH] [--ratios 0,0.5,0.8] [--json]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -56,31 +57,38 @@ import json
 import os
 import subprocess
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _KNOB = "AKASHIC_RECALL_REL_FLOOR"
 
 
-def _child_env(ratio: str) -> Dict[str, str]:
+def _child_env(ratio: str) -> dict[str, str]:
     """A fresh env per arm. PYTHONPYCACHEPREFIX is per-ratio so no arm can read another's
     bytecode: a fresh process is not a fresh import, and the cache key is (mtime, size)."""
     env = dict(os.environ)
     env[_KNOB] = str(ratio)
     env["PYTHONPYCACHEPREFIX"] = os.path.join(
-        env.get("TEMP") or env.get("TMP") or ".", "pycache_relfloor_" + str(ratio).replace(".", "_"))
+        env.get("TEMP") or env.get("TMP") or ".", "pycache_relfloor_" + str(ratio).replace(".", "_")
+    )
     return env
 
 
 def calibrate() -> bool:
     """Prove the knob reaches the child. Without this, a dead knob reads as a null result."""
-    probe = ("from core.recall.at_action import _rel_floor_ratio as r; print(r())")
-    r = subprocess.run([sys.executable, "-X", "utf8", "-c", probe], cwd=_REPO,
-                       env=_child_env("0.777"), capture_output=True, text=True,
-                       errors="replace", timeout=120)
+    probe = "from core.recall.at_action import _rel_floor_ratio as r; print(r())"
+    r = subprocess.run(
+        [sys.executable, "-X", "utf8", "-c", probe],
+        cwd=_REPO,
+        env=_child_env("0.777"),
+        capture_output=True,
+        text=True,
+        errors="replace",
+        timeout=120,
+    )
     got = (r.stdout or "").strip()
     ok = got.startswith("0.777")
-    print("calibration: child reads ratio %s -- %s" % (got or "(nothing)", "OK" if ok else "FAILED"))
+    print("calibration: child reads ratio {} -- {}".format(got or "(nothing)", "OK" if ok else "FAILED"))
     if not ok:
         print("  REFUSING to report numbers: the arms would be indistinguishable.")
         if r.stderr:
@@ -88,19 +96,20 @@ def calibrate() -> bool:
     return ok
 
 
-def arm(ratio: str, moments: Optional[str]) -> Optional[Dict[str, Any]]:
+def arm(ratio: str, moments: str | None) -> dict[str, Any] | None:
     cmd = [sys.executable, "-X", "utf8", "agent_cli.py", "recall-bench", "--json"]
     if moments:
         cmd += ["--set", moments]
-    r = subprocess.run(cmd, cwd=_REPO, env=_child_env(ratio), capture_output=True,
-                       text=True, errors="replace", timeout=900)
+    r = subprocess.run(
+        cmd, cwd=_REPO, env=_child_env(ratio), capture_output=True, text=True, errors="replace", timeout=900
+    )
     if r.returncode != 0:
-        print("arm ratio=%s FAILED rc=%s\n%s" % (ratio, r.returncode, (r.stderr or "")[-800:]))
+        print("arm ratio={} FAILED rc={}\n{}".format(ratio, r.returncode, (r.stderr or "")[-800:]))
         return None
     try:
         return json.loads(r.stdout)["result"]
-    except Exception as exc:                                              # noqa: BLE001
-        print("arm ratio=%s: unreadable bench output (%s)" % (ratio, exc))
+    except Exception as exc:  # noqa: BLE001  # fail-soft: logged, caller continues
+        print(f"arm ratio={ratio}: unreadable bench output ({exc})")
         return None
 
 
@@ -114,9 +123,9 @@ def main() -> int:
     if not calibrate():
         return 2
 
-    ratios: List[str] = [x.strip() for x in args.ratios.split(",") if x.strip()]
-    out: Dict[str, Any] = {"ratios": {}, "moments_set": args.moments or "(committed)"}
-    verdicts: Dict[str, Dict[str, str]] = {}
+    ratios: list[str] = [x.strip() for x in args.ratios.split(",") if x.strip()]
+    out: dict[str, Any] = {"ratios": {}, "moments_set": args.moments or "(committed)"}
+    verdicts: dict[str, dict[str, str]] = {}
 
     for ratio in ratios:
         res = arm(ratio, args.moments)
@@ -137,15 +146,21 @@ def main() -> int:
         out["ratios"][ratio] = row
         verdicts[ratio] = {r["id"]: r["verdict"] for r in res.get("rows", [])}
         if not args.json:
-            print("ratio=%-6s scored=%-3s recall@1=%s/%s  recall@5=%s/%s  abstention=%s/%s" % (
-                ratio, scored, row["recall_at_1_n"], scored, row["recall_at_k_n"], scored,
-                row["abstention_correct"], row["abstention_total"]))
+            print(
+                f"ratio={ratio!s:<6} scored={scored!s:<3} "
+                f"recall@1={row['recall_at_1_n']}/{scored}  "
+                f"recall@5={row['recall_at_k_n']}/{scored}  "
+                f"abstention={row['abstention_correct']}/{row['abstention_total']}"
+            )
 
     base = ratios[0]
     changed = {}
     for ratio in ratios[1:]:
-        d = {i: (verdicts[base].get(i), verdicts[ratio].get(i))
-             for i in verdicts[base] if verdicts[base].get(i) != verdicts[ratio].get(i)}
+        d = {
+            i: (verdicts[base].get(i), verdicts[ratio].get(i))
+            for i in verdicts[base]
+            if verdicts[base].get(i) != verdicts[ratio].get(i)
+        }
         if d:
             changed[ratio] = d
     out["changed_vs_" + base] = changed
@@ -156,12 +171,12 @@ def main() -> int:
 
     print()
     if not changed:
-        print("NO moment changed verdict at any ratio (compared id by id against ratio=%s)." % base)
+        print(f"NO moment changed verdict at any ratio (compared id by id against ratio={base}).")
     else:
-        print("MOMENTS THAT CHANGED VERDICT (vs ratio=%s):" % base)
+        print(f"MOMENTS THAT CHANGED VERDICT (vs ratio={base}):")
         for ratio, d in changed.items():
             for i, (was, now) in sorted(d.items()):
-                print("  ratio=%-6s %-5s %-18s -> %s" % (ratio, i, was, now))
+                print(f"  ratio={ratio!s:<6} {i!s:<5} {was!s:<18} -> {now}")
     print("\nRead the count, not the rate. One moment moving on 18 is not an improvement;")
     print("it is the size of sample at which a tuned threshold starts to look like one.")
     return 0

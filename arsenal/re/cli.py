@@ -6,16 +6,19 @@ never a hard import failure. This module is imported lazily by the arsenal CLI o
 when the `re` family is requested, so optional dependencies (pefile/magic) never
 block the rest of the arsenal.
 """
+
 from __future__ import annotations
 
-import argparse
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import argparse
 
 
 def _register(sub: argparse.ArgumentParser) -> None:
     p = sub.add_parser("triage", help="identify a file read-only and route to the next door")
     p.add_argument("path", help="file to triage (read a bounded prefix, never executed)")
-    p.add_argument("--max-prefix", type=int, default=4096,
-                   help="bytes to read before any detector runs (default 4096)")
+    p.add_argument("--max-prefix", type=int, default=4096, help="bytes to read before any detector runs (default 4096)")
     p.add_argument("--json", action="store_true", help="emit the receipt as JSON")
     p.set_defaults(func=_run)
 

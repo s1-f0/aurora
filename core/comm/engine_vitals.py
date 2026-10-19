@@ -63,13 +63,18 @@ def _today_journal(agent: str, journal_dir: str | None) -> dict[str, int]:
         path = os.path.join(base, f"runner_{agent}_{time.strftime('%Y-%m-%d')}.json")
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
-    except Exception as exc:                                               # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         # TYPED ABSENCE. Until 2026-10-07 this returned {"prompt": 0, "completion": 0}, so a seat
         # with no journal and a seat that ran all day and spent nothing rendered identically -- and
         # a quiet meter is the one nobody investigates. `measured` is the field that separates them;
         # the numeric keys stay PRESENT (as None) so every existing reader keeps its shape.
-        return {"prompt": None, "completion": None, "measured": False,
-                "why": "%s: %s" % (type(exc).__name__, str(exc)[:80])}
+        return {
+            "prompt": None,
+            "completion": None,
+            "measured": False,
+            "why": f"{type(exc).__name__}: {str(exc)[:80]}",
+        }
+
     # THE KEYS THE WRITER ACTUALLY SERIALIZES. This asked for "prompt"/"completion"; the journal
     # has always written "prompt_tokens"/"completion_tokens" (scripts/runner_token_journal.py:98),
     # so `.get` returned None, `or 0` made it a number, and the gauge reported a confident zero over
@@ -95,8 +100,12 @@ def _today_journal(agent: str, journal_dir: str | None) -> dict[str, int]:
     c = _pick("completion_tokens", "completion")
     if p is None and c is None:
         # The file exists and carries neither shape: readable, and still not a measurement.
-        return {"prompt": None, "completion": None, "measured": False,
-                "why": "journal present but carries no token keys"}
+        return {
+            "prompt": None,
+            "completion": None,
+            "measured": False,
+            "why": "journal present but carries no token keys",
+        }
     return {"prompt": p or 0, "completion": c or 0, "measured": True}
 
 

@@ -18,6 +18,7 @@ the house library, and lint finds nothing.
 
 Apache-2.0, Akashic Aurora. Written fresh; no corpus code.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -163,9 +164,9 @@ def test_box_and_round_box_are_exact_inside_and_outside():
         g = np.linalg.norm(grad(lambda q: s.sdBox(q.astype(F32), h), p))
         d = float(s.sdBox(p.astype(F32), h))
         if d > 0.01:
-            assert abs(g - 1.0) < 2e-3, (p, g)               # Eikonal outside: an exact distance
+            assert abs(g - 1.0) < 2e-3, (p, g)  # Eikonal outside: an exact distance
         else:
-            assert g < 1.0 + 2e-3, (p, g)                     # never faster than distance (1 off the medial creases)
+            assert g < 1.0 + 2e-3, (p, g)  # never faster than distance (1 off the medial creases)
 
 
 def test_capsule_is_the_segment_distance_minus_the_radius_and_survives_a_zero_length_segment():
@@ -177,7 +178,8 @@ def test_capsule_is_the_segment_distance_minus_the_radius_and_survives_a_zero_le
         ref = np.linalg.norm(p - a - k * ab) - 0.3
         assert close(s.sdCapsule(p, a, b, 0.3), ref, 2e-5)
     v = s.sdCapsule([1.0, 0.0, 0.0], a * 0, a * 0, 0.5)
-    assert np.isfinite(v) and close(v, 0.5)       # a == b is a sphere, not a NaN
+    assert np.isfinite(v)
+    assert close(v, 0.5)
 
 
 @pytest.mark.parametrize("shape", ["cylinder", "cone", "cone_inverted", "cone_point"])
@@ -186,11 +188,11 @@ def test_solids_of_revolution_match_the_distance_to_their_meridian_profile(shape
     if shape == "cylinder":
         r, hh = 0.6, 0.8
         poly = [(0, -hh), (r, -hh), (r, hh), (0, hh)]
-        fn = lambda p: s.sdCylinderY(p, r, hh)                       # noqa: E731
+        fn = lambda p: s.sdCylinderY(p, r, hh)  # noqa: E731  # one-line SDF handed to the twin, as the GLSL reads
     else:
         h, rb, rt = {"cone": (0.7, 0.9, 0.3), "cone_inverted": (0.5, 0.2, 1.1), "cone_point": (0.6, 1.0, 0.0)}[shape]
         poly = [(0, -h), (rb, -h), (rt, h), (0, h)]
-        fn = lambda p: s.sdConeCappedY(p, h, rb, rt)                  # noqa: E731
+        fn = lambda p: s.sdConeCappedY(p, h, rb, rt)  # noqa: E731  # one-line SDF handed to the twin, as the GLSL reads
     for p in random_points(500, 2.0, seed=3):
         ref = profile_sdf(p, poly, [0, 1, 2])
         assert close(fn(p.astype(F32)), ref, 3e-5), (shape, p, fn(p), ref)
@@ -203,7 +205,7 @@ def test_round_cone_is_the_hull_of_two_spheres():
     centres = a[None, :] + ss[:, None] * (b - a)[None, :]
     radii = ra + ss * (rb - ra)
     for p in random_points(300, 2.0, seed=4):
-        ref = float(np.min(np.linalg.norm(p[None, :] - centres, axis=1) - radii))   # exact outside: a union of balls
+        ref = float(np.min(np.linalg.norm(p[None, :] - centres, axis=1) - radii))  # exact outside: a union of balls
         v = float(s.sdRoundConeAB(p, a, b, ra, rb))
         if ref > 0:
             assert close(v, ref, 2e-4), (p, v, ref)
@@ -219,7 +221,7 @@ def test_hex_prism_is_an_exact_extruded_hexagon_with_flat_top_and_bottom():
     a, hd = 0.5, 0.3
     big = 2 * a / math.sqrt(3)
     hexagon = [(big * math.cos(k * math.pi / 3), big * math.sin(k * math.pi / 3)) for k in range(6)]
-    assert close(s.sdHexPrismZ([0.0, a, 0.0], a, hd), 0.0)          # the apothem is along y: a flat edge on top
+    assert close(s.sdHexPrismZ([0.0, a, 0.0], a, hd), 0.0)  # the apothem is along y: a flat edge on top
     for p in random_points(500, 1.5, seed=5):
         d2 = polygon_sdf((p[0], p[1]), hexagon)
         w = (d2, abs(p[2]) - hd)
@@ -238,7 +240,7 @@ def test_octahedron_is_exact_not_the_planar_bound():
             ref = np.linalg.norm(p - l1_ball_projection(p, size))
         assert close(s.sdOctahedron(p.astype(F32), size), ref, 3e-5), p
         worst_bound_gap = max(worst_bound_gap, ref - (np.abs(p).sum() - size) / math.sqrt(3))
-    assert worst_bound_gap > 0.1      # the cheap planar formula really is only a bound out there
+    assert worst_bound_gap > 0.1  # the cheap planar formula really is only a bound out there
 
 
 def test_ellipsoid_bound_never_exceeds_the_true_distance_and_is_tight_near_the_surface():
@@ -247,8 +249,9 @@ def test_ellipsoid_bound_never_exceeds_the_true_distance_and_is_tight_near_the_s
     u = np.linspace(0, np.pi, 700)
     v = np.linspace(0, 2 * np.pi, 1400)
     uu, vv = np.meshgrid(u, v)
-    surf = np.stack([radii[0] * np.sin(uu) * np.cos(vv), radii[1] * np.sin(uu) * np.sin(vv),
-                     radii[2] * np.cos(uu)], axis=-1).reshape(-1, 3)
+    surf = np.stack(
+        [radii[0] * np.sin(uu) * np.cos(vv), radii[1] * np.sin(uu) * np.sin(vv), radii[2] * np.cos(uu)], axis=-1
+    ).reshape(-1, 3)
     spacing = 0.004
     for p in random_points(60, 1.6, seed=8):
         true = float(np.min(np.linalg.norm(surf - p[None, :], axis=1)))
@@ -260,14 +263,14 @@ def test_ellipsoid_bound_never_exceeds_the_true_distance_and_is_tight_near_the_s
     for d in ([1, 0, 0], [0, 1, 0], [1, 1, 1], [0.2, -1, 0.5]):
         d = np.array(d, dtype=np.float64)
         on = d / np.sqrt(np.sum((d / radii) ** 2))
-        n = on / radii ** 2
+        n = on / radii**2
         n /= np.linalg.norm(n)
         p = on + 0.003 * n
         assert close(s.sbEllipsoid(p.astype(F32), radii), 0.003, 1e-4)
-    assert close(s.sbEllipsoid([0.0, 0.0, 0.0], radii), -0.3)        # no NaN at the centre: minus the smallest radius
+    assert close(s.sbEllipsoid([0.0, 0.0, 0.0], radii), -0.3)  # no NaN at the centre: minus the smallest radius
 
 
-@pytest.mark.parametrize("kind,faces", [(0, 6), (1, 8), (2, 12), (3, 20), (4, 14), (5, 32)])
+@pytest.mark.parametrize(("kind", "faces"), [(0, 6), (1, 8), (2, 12), (3, 20), (4, 14), (5, 32)])
 def test_polyhedron_bound_has_its_faces_at_the_inradius_and_never_overestimates(kind, faces):
     s = twin("sdf")
     r = 0.8
@@ -279,10 +282,10 @@ def test_polyhedron_bound_has_its_faces_at_the_inradius_and_never_overestimates(
     assert len(hits) == faces
     pts = random_points(400, 2.0, seed=10)
     vals = np.array([float(s.sbPolyhedron(p.astype(F32), r, kind)) for p in pts])
-    for i in range(len(pts) - 1):        # 1-Lipschitz: a bound
+    for i in range(len(pts) - 1):  # 1-Lipschitz: a bound
         assert abs(vals[i] - vals[i + 1]) <= np.linalg.norm(pts[i] - pts[i + 1]) * (1 + 1e-4) + 1e-6
     for n in s.polyhedronNormals(kind):
-        assert abs(float(s.sbPolyhedron((r * n).astype(F32), r, kind))) < 1e-5     # every face centre is surface
+        assert abs(float(s.sbPolyhedron((r * n).astype(F32), r, kind))) < 1e-5  # every face centre is surface
     assert close(s.sbPolyhedron([0.0, 0.0, 0.0], r, kind), -r)
 
 
@@ -297,7 +300,8 @@ def test_superquadric_is_a_sphere_at_two_and_a_bound_for_every_exponent():
         for i in range(len(pts) - 1):
             assert abs(vals[i] - vals[i + 1]) <= np.linalg.norm(pts[i] - pts[i + 1]) * (1 + 1e-4) + 1e-6, n
     far = float(s.sbSuperquadric([1e6, 3e5, 0.0], [1.0, 1.0, 1.0], 24.0))
-    assert np.isfinite(far) and far > 0          # no overflow to Inf for a big exponent far away
+    assert np.isfinite(far)
+    assert far > 0
 
 
 def test_triangle_distance_is_exact_and_unsigned():
@@ -306,32 +310,35 @@ def test_triangle_distance_is_exact_and_unsigned():
     g = np.linspace(0, 1, 401)
     uu, vv = np.meshgrid(g, g)
     keep = uu + vv <= 1
-    tri = (a[None, :] + uu[keep][:, None] * (b - a)[None, :] + vv[keep][:, None] * (c - a)[None, :])
+    tri = a[None, :] + uu[keep][:, None] * (b - a)[None, :] + vv[keep][:, None] * (c - a)[None, :]
     for p in random_points(80, 1.5, seed=13):
         ref = float(np.min(np.linalg.norm(tri - p[None, :], axis=1)))
         v = float(s.udTriangle(p.astype(F32), a, b, c))
-        assert v >= 0 and abs(v - ref) < 4e-3 and v <= ref + 1e-5, (p, v, ref)
+        assert v >= 0, (p, v, ref)
+        assert abs(v - ref) < 4e-3, (p, v, ref)
+        assert v <= ref + 1e-5, (p, v, ref)
 
 
 # ======================================================================================================= combination
 def test_booleans_follow_the_house_order_a_minus_b():
     s = twin("sdf")
-    assert s.opUnion(0.3, -0.2) == F32(-0.2) and s.opIntersect(0.3, -0.2) == F32(0.3)
-    assert s.opSubtract(-0.5, -0.2) == F32(0.2)            # a minus b: inside b is carved away
-    assert s.opSubtract(-0.5, 0.4) == F32(-0.4)            # inside a, 0.4 from b: the carved face bounds it
+    assert s.opUnion(0.3, -0.2) == F32(-0.2)
+    assert s.opIntersect(0.3, -0.2) == F32(0.3)
+    assert s.opSubtract(-0.5, -0.2) == F32(0.2)  # a minus b: inside b is carved away
+    assert s.opSubtract(-0.5, 0.4) == F32(-0.4)  # inside a, 0.4 from b: the carved face bounds it
     assert list(s.opPick([0.4, 2.0], [0.1, 5.0])) == [F32(0.1), F32(5.0)]
-    assert list(s.opPick([0.1, 2.0], [0.1, 5.0])) == [F32(0.1), F32(2.0)]    # a tie keeps the first id
+    assert list(s.opPick([0.1, 2.0], [0.1, 5.0])) == [F32(0.1), F32(2.0)]  # a tie keeps the first id
 
 
 def test_xor_is_exact_on_both_sides():
     s = twin("sdf")
     xs = np.linspace(-3, 4, 7001)
-    a = np.abs(xs) - 1.0                      # [-1, 1]
-    b = np.abs(xs - 1.5) - 1.0                # [0.5, 2.5]
+    a = np.abs(xs) - 1.0  # [-1, 1]
+    b = np.abs(xs - 1.5) - 1.0  # [0.5, 2.5]
     inside = (a < 0) ^ (b < 0)
     boundary = np.array([-1.0, 0.5, 1.0, 2.5])
     ref = np.min(np.abs(xs[:, None] - boundary[None, :]), axis=1) * np.where(inside, -1, 1)
-    got = np.array([float(s.opXor(float(u), float(v))) for u, v in zip(a, b)])
+    got = np.array([float(s.opXor(float(u), float(v))) for u, v in zip(a, b, strict=False)])
     assert np.max(np.abs(got - ref)) < 1e-5
 
 
@@ -339,15 +346,18 @@ def test_smooth_union_dips_by_exactly_k_is_rigid_and_conservative():
     s = twin("sdf")
     k = 0.2
     assert close(s.opSmin(0.5, 0.5, k), 0.5 - k)
-    for gap in (0.8, 1.0, 3.0):                                      # beyond 4k apart: plain min
+    for gap in (0.8, 1.0, 3.0):  # beyond 4k apart: plain min
         assert s.opSmin(0.1, 0.1 + gap, k) == F32(0.1)
     xs = rng(14).uniform(-1, 1, size=(300, 2))
     for a, b in xs:
         v = float(s.opSmin(a, b, k))
-        assert v <= min(a, b) + 1e-6 and v >= min(a, b) - k - 1e-6
+        assert v <= min(a, b) + 1e-6
+        assert v >= min(a, b) - k - 1e-6
         da = (float(s.opSmin(a + 1e-3, b, k)) - float(s.opSmin(a - 1e-3, b, k))) / 2e-3
         db = (float(s.opSmin(a, b + 1e-3, k)) - float(s.opSmin(a, b - 1e-3, k))) / 2e-3
-        assert -1e-2 <= da <= 1 + 1e-2 and -1e-2 <= db <= 1 + 1e-2 and abs(da + db - 1) < 2e-2
+        assert -1e-2 <= da <= 1 + 1e-2
+        assert -1e-2 <= db <= 1 + 1e-2
+        assert abs(da + db - 1) < 2e-2
 
 
 def test_smooth_union_mix_weight_is_the_gradient_weight_of_b():
@@ -357,7 +367,8 @@ def test_smooth_union_mix_weight_is_the_gradient_weight_of_b():
         m = s.opSminMix(a, b, k)
         assert close(m[0], s.opSmin(a, b, k))
         db = (float(s.opSmin(a, b + 1e-3, k)) - float(s.opSmin(a, b - 1e-3, k))) / 2e-3
-        assert abs(float(m[1]) - db) < 2e-2 and 0 <= float(m[1]) <= 1
+        assert abs(float(m[1]) - db) < 2e-2
+        assert 0 <= float(m[1]) <= 1
     assert close(s.opSminMix(0.3, 0.3, k)[1], 0.5)
 
 
@@ -378,7 +389,7 @@ def test_circular_smooth_union_draws_a_circular_fillet_between_perpendicular_pla
     for theta in np.linspace(0.05, math.pi / 2 - 0.05, 11):
         x, y = rho - rho * math.cos(theta), rho - rho * math.sin(theta)
         assert abs(float(s.opSminCircular(x, y, k))) < 2e-5, theta
-    assert s.opSminCircular(0.0, rho + 0.01, k) == F32(0.0)          # rigid: no effect a fillet width apart
+    assert s.opSminCircular(0.0, rho + 0.01, k) == F32(0.0)  # rigid: no effect a fillet width apart
 
 
 def test_exponential_smooth_union_is_order_independent_and_overflow_safe():
@@ -394,13 +405,22 @@ def test_exponential_smooth_union_is_order_independent_and_overflow_safe():
 def test_round_onion_scale_and_displace_are_their_one_liners():
     s = twin("sdf")
     assert close(s.opRound(0.5, 0.2), 0.3)
-    assert close(s.opOnion(-0.3, 0.1), 0.2) and close(s.opOnion(0.05, 0.1), -0.05)
+    assert close(s.opOnion(-0.3, 0.1), 0.2)
+    assert close(s.opOnion(0.05, 0.1), -0.05)
     assert close(s.opUniformScale(0.25, 4.0), 1.0)
     assert close(s.opDisplace(0.4, 0.1, 1.5), 0.2)
     # an honest Lipschitz figure keeps a displaced sphere a bound: amplitude 0.1, frequency 6 -> L = 0.6
     pts = random_points(300, 1.5, seed=18)
-    f = lambda p: float(s.opDisplace(np.linalg.norm(p) - 0.8,                   # noqa: E731
-                                     0.1 * np.sin(6 * p[0]) * np.sin(6 * p[1]) * np.sin(6 * p[2]), 0.6))
+
+    def f(p):
+        return float(
+            s.opDisplace(
+                np.linalg.norm(p) - 0.8,
+                0.1 * np.sin(6 * p[0]) * np.sin(6 * p[1]) * np.sin(6 * p[2]),
+                0.6,
+            )
+        )
+
     vals = [f(p) for p in pts]
     for i in range(len(pts) - 1):
         assert abs(vals[i] - vals[i + 1]) <= np.linalg.norm(pts[i] - pts[i + 1]) + 1e-5
@@ -412,9 +432,13 @@ def _rot(axis, angle):
     axis /= np.linalg.norm(axis)
     x, y, z = axis
     c, s_ = math.cos(angle), math.sin(angle)
-    return np.array([[c + x * x * (1 - c), x * y * (1 - c) - z * s_, x * z * (1 - c) + y * s_],
-                     [y * x * (1 - c) + z * s_, c + y * y * (1 - c), y * z * (1 - c) - x * s_],
-                     [z * x * (1 - c) - y * s_, z * y * (1 - c) + x * s_, c + z * z * (1 - c)]])
+    return np.array(
+        [
+            [c + x * x * (1 - c), x * y * (1 - c) - z * s_, x * z * (1 - c) + y * s_],
+            [y * x * (1 - c) + z * s_, c + y * y * (1 - c), y * z * (1 - c) - x * s_],
+            [z * x * (1 - c) - y * s_, z * y * (1 - c) + x * s_, c + z * z * (1 - c)],
+        ]
+    )
 
 
 def test_rigid_placement_undoes_rotation_then_position():
@@ -430,17 +454,20 @@ def test_mirror_and_reflect_fold_space():
     s = twin("sdf")
     assert close(s.domMirror([-1.0, -2.0, -3.0], [1.0, 0.0, 1.0]), [1.0, -2.0, 3.0])
     n = np.array([0.0, 0.6, 0.8])
-    p, side = s.domReflect([0.0, -1.0, 0.0], n, 0.2)        # dot = -0.6 + 0.2 = -0.4: folded, side -1
-    assert side == F32(-1.0) and close(np.dot(p, n) + 0.2, 0.4)
+    p, side = s.domReflect([0.0, -1.0, 0.0], n, 0.2)  # dot = -0.6 + 0.2 = -0.4: folded, side -1
+    assert side == F32(-1.0)
+    assert close(np.dot(p, n) + 0.2, 0.4)
     p, side = s.domReflect([0.0, 1.0, 0.0], n, 0.2)
-    assert side == F32(1.0) and close(p, [0.0, 1.0, 0.0])
+    assert side == F32(1.0)
+    assert close(p, [0.0, 1.0, 0.0])
 
 
 def test_twist_turns_by_rate_times_height_and_lip_twist_bounds_its_stretch():
     s = twin("sdf")
     q = s.domTwistY([1.0, 0.5, 0.0], 2.0)
-    assert close(q[1], 0.5) and close(math.hypot(q[0], q[2]), 1.0)
-    assert close(abs(math.atan2(q[2], q[0])), 1.0, 1e-5)          # turned by rate * y = 1 radian
+    assert close(q[1], 0.5)
+    assert close(math.hypot(q[0], q[2]), 1.0)
+    assert close(abs(math.atan2(q[2], q[0])), 1.0, 1e-5)  # turned by rate * y = 1 radian
     for k, R in ((1.0, 1.0), (3.0, 0.7), (0.5, 2.0)):
         worst = 0.0
         for p in rng(20).uniform(-R / math.sqrt(2), R / math.sqrt(2), size=(300, 3)):
@@ -448,12 +475,14 @@ def test_twist_turns_by_rate_times_height_and_lip_twist_bounds_its_stretch():
             for i in range(3):
                 e = np.zeros(3)
                 e[i] = 1e-4
-                J[:, i] = (np.asarray(s.domTwistY(p + e, k), dtype=np.float64)
-                           - np.asarray(s.domTwistY(p - e, k), dtype=np.float64)) / 2e-4
+                J[:, i] = (
+                    np.asarray(s.domTwistY(p + e, k), dtype=np.float64)
+                    - np.asarray(s.domTwistY(p - e, k), dtype=np.float64)
+                ) / 2e-4
             worst = max(worst, np.linalg.svd(J, compute_uv=False)[0])
         lip = float(s.lipTwist(k, R))
         assert worst <= lip * (1 + 2e-3), (k, R, worst, lip)
-        assert lip > math.sqrt(1 + (k * R) ** 2)       # the tempting formula is too small
+        assert lip > math.sqrt(1 + (k * R) ** 2)  # the tempting formula is too small
     assert close(s.lipTwist(1.0, 1.0), PHI, 1e-5)
 
 
@@ -461,7 +490,8 @@ def test_bend_keeps_lengths_in_its_plane():
     s = twin("sdf")
     for p in random_points(50, 1.0, seed=21):
         q = s.domBend(p, 0.8)
-        assert close(math.hypot(q[0], q[1]), math.hypot(p[0], p[1]), 3e-5) and close(q[2], p[2])
+        assert close(math.hypot(q[0], q[1]), math.hypot(p[0], p[1]), 3e-5)
+        assert close(q[2], p[2])
 
 
 def test_repeat_returns_the_cell_id_and_a_centred_local_point():
@@ -473,7 +503,8 @@ def test_repeat_returns_the_cell_id_and_a_centred_local_point():
         assert close(local + cell * period, p, 3e-5)
         assert np.all(cell == np.floor(cell))
     local, cell = s.domRepeatLimited([10.3, 0.2, -7.0], period, [-2.0, -2.0, -2.0], [2.0, 2.0, 2.0])
-    assert list(cell) == [2.0, 0.0, -2.0] and close(local, [10.3 - 2.0, 0.2, -7.0 + 1.0])
+    assert list(cell) == [2.0, 0.0, -2.0]
+    assert close(local, [10.3 - 2.0, 0.2, -7.0 + 1.0])
 
 
 def test_polar_repeat_names_the_sector_and_keeps_the_radius():
@@ -482,11 +513,13 @@ def test_polar_repeat_names_the_sector_and_keeps_the_radius():
         local, sector = s.domPolar(p, 7.0)
         assert close(np.linalg.norm(local), np.linalg.norm(p), 3e-5)
         assert abs(math.atan2(local[1], local[0])) <= math.pi / 7 + 1e-5
-        assert 0 <= sector < 7 and sector == math.floor(sector)
+        assert 0 <= sector < 7
+        assert sector == math.floor(sector)
         back = math.atan2(local[1], local[0]) + sector * 2 * math.pi / 7
         assert close(math.cos(back), p[0] / np.linalg.norm(p), 1e-4)
-    local, sector = s.domPolar(np.array([0.0, 0.0]), 5.0)        # the centre has no angle: no NaN
-    assert np.all(np.isfinite(local)) and sector == 0
+    local, sector = s.domPolar(np.array([0.0, 0.0]), 5.0)  # the centre has no angle: no NaN
+    assert np.all(np.isfinite(local))
+    assert sector == 0
 
 
 def test_repeat_survives_a_zero_period_like_its_2d_sibling():
@@ -496,11 +529,13 @@ def test_repeat_survives_a_zero_period_like_its_2d_sibling():
     for period in ([0.0, 1.0, 0.5], [0.0, 0.0, 0.0], [-1.0, 1.0, 1.0]):
         for p in random_points(20, 3.0, seed=24):
             local, cell = s.domRepeat(p, period)
-            assert np.all(np.isfinite(local)) and np.all(np.isfinite(cell)), (period, p, local, cell)
+            assert np.all(np.isfinite(local)), (period, p, local, cell)
+            assert np.all(np.isfinite(cell)), (period, p, local, cell)
             floored = np.maximum(np.asarray(period, np.float32), F32(1e-6))
             assert np.all(np.abs(local) <= floored / 2 + 1e-5)
             local, cell = s.domRepeatLimited(p, period, [-2.0, -2.0, -2.0], [2.0, 2.0, 2.0])
-            assert np.all(np.isfinite(local)) and np.all(np.isfinite(cell)), (period, p, local, cell)
+            assert np.all(np.isfinite(local)), (period, p, local, cell)
+            assert np.all(np.isfinite(cell)), (period, p, local, cell)
 
 
 def test_polar_repeat_rounds_a_count_that_is_not_whole():
@@ -511,7 +546,8 @@ def test_polar_repeat_rounds_a_count_that_is_not_whole():
         for count, whole in ((6.6, 7.0), (6.4, 6.0), (0.3, 1.0)):
             got, sector = s.domPolar(p, count)
             want, want_sector = s.domPolar(p, whole)
-            assert close(got, want) and sector == want_sector, (count, p)
+            assert close(got, want), (count, p)
+            assert sector == want_sector, (count, p)
 
 
 def test_icosahedral_fold_lands_in_one_chamber_and_is_invariant_under_all_120_symmetries():
@@ -538,11 +574,13 @@ def test_icosahedral_fold_lands_in_one_chamber_and_is_invariant_under_all_120_sy
     assert len(group) == 120
     for p in random_points(150, 1.5, seed=24):
         f = np.asarray(s.domFoldIcosa(p), dtype=np.float64)
-        assert f[0] >= -1e-5 and f[1] >= -1e-5 and np.dot(f, n3) >= -1e-5
+        assert f[0] >= -1e-5
+        assert f[1] >= -1e-5
+        assert np.dot(f, n3) >= -1e-5
         assert close(np.linalg.norm(f), np.linalg.norm(p), 3e-5)
         for g in group[::7]:
             assert close(s.domFoldIcosa(g @ p), f, 3e-4)
-        assert close(s.domFoldIcosa(-f), f, 3e-4)          # the antipode, the longest way round, folds home too
+        assert close(s.domFoldIcosa(-f), f, 3e-4)  # the antipode, the longest way round, folds home too
     # the chamber's three corners: a 2-fold axis (z), a 5-fold vertex (0, 1, PHI) and a 3-fold face centre
     for corner in ([0.0, 0.0, 1.0], [0.0, 1.0, PHI], [1.0, 0.0, PHI * PHI]):
         c = np.array(corner) / np.linalg.norm(corner)
@@ -555,9 +593,11 @@ def test_sphere_inversion_is_an_involution_with_its_scale():
         q, scale = s.domInvert3(p, 1.5, 1.0)
         assert close(np.linalg.norm(q) * np.linalg.norm(p), 1.5, 1e-4)
         back, scale2 = s.domInvert3(q, 1.5, scale)
-        assert close(back, p, 1e-4) and close(scale2, 1.0, 1e-4)
+        assert close(back, p, 1e-4)
+        assert close(scale2, 1.0, 1e-4)
     q, scale = s.domInvert3([0.0, 0.0, 0.0], 1.0, 1.0)
-    assert np.all(np.isfinite(q)) and np.isfinite(scale)
+    assert np.all(np.isfinite(q))
+    assert np.isfinite(scale)
 
 
 def test_an_inverted_field_is_an_estimate_that_over_reports_by_at_most_its_stated_factor():
@@ -596,7 +636,7 @@ def _sphere_roots64(ro, rd, c, r):
 
 def test_ray_sphere_returns_both_roots_and_minus_one_on_a_miss():
     y = twin("ray")
-    for i, (ro, rd) in enumerate(zip(random_points(200, 4.0, seed=26), rng(27).normal(size=(200, 3)))):
+    for _i, (ro, rd) in enumerate(zip(random_points(200, 4.0, seed=26), rng(27).normal(size=(200, 3)), strict=False)):
         rd /= np.linalg.norm(rd)
         c, r = np.array([0.3, -0.2, 0.1]), 1.1
         ref = _sphere_roots64(ro, rd, c, r)
@@ -623,7 +663,7 @@ def test_ray_sphere_keeps_its_precision_for_a_small_sphere_far_away():
 def test_ray_box_is_the_slab_method_with_the_entry_face_normal():
     y = twin("ray")
     half = np.array([1.0, 0.5, 0.8])
-    for ro, rd in zip(random_points(300, 3.0, seed=28), rng(29).normal(size=(300, 3))):
+    for ro, rd in zip(random_points(300, 3.0, seed=28), rng(29).normal(size=(300, 3)), strict=False):
         rd /= np.linalg.norm(rd)
         t1 = (-half - ro) / rd
         t2 = (half - ro) / rd
@@ -637,35 +677,38 @@ def test_ray_box_is_the_slab_method_with_the_entry_face_normal():
             want = np.zeros(3)
             want[axis] = -np.sign(rd[axis])
             assert close(normal, want)
-    got, normal = y.ixBox([0.0, 0.2, 5.0], [0.0, 0.0, -1.0], half)      # zero components: no NaN
-    assert close(got, (4.2, 5.8)) and close(normal, [0.0, 0.0, 1.0])
+    got, normal = y.ixBox([0.0, 0.2, 5.0], [0.0, 0.0, -1.0], half)  # zero components: no NaN
+    assert close(got, (4.2, 5.8))
+    assert close(normal, [0.0, 0.0, 1.0])
 
 
 def test_ray_plane_and_slab():
     y = twin("ray")
     n = np.array([0.0, 1.0, 0.0])
-    assert close(y.ixPlane([0.0, 2.0, 0.0], [0.0, -1.0, 0.0], n, 0.5), 2.5)          # plane y = -0.5
-    assert y.ixPlane([0.0, 2.0, 0.0], [0.0, 1.0, 0.0], n, 0.5) == F32(-1.0)            # behind
-    assert y.ixPlane([0.0, 2.0, 0.0], [1.0, 0.0, 0.0], n, 0.5) == F32(-1.0)            # parallel
+    assert close(y.ixPlane([0.0, 2.0, 0.0], [0.0, -1.0, 0.0], n, 0.5), 2.5)  # plane y = -0.5
+    assert y.ixPlane([0.0, 2.0, 0.0], [0.0, 1.0, 0.0], n, 0.5) == F32(-1.0)  # behind
+    assert y.ixPlane([0.0, 2.0, 0.0], [1.0, 0.0, 0.0], n, 0.5) == F32(-1.0)  # parallel
     assert close(y.ixSlabY(0.0, 0.5, 1.0, 2.0), (2.0, 4.0))
-    assert close(y.ixSlabY(1.5, 0.5, 1.0, 2.0), (0.0, 1.0))           # inside: entry clamped to 0
-    near, far = y.ixSlabY(3.0, 0.5, 1.0, 2.0)                        # behind: a miss
+    assert close(y.ixSlabY(1.5, 0.5, 1.0, 2.0), (0.0, 1.0))  # inside: entry clamped to 0
+    near, far = y.ixSlabY(3.0, 0.5, 1.0, 2.0)  # behind: a miss
     assert far < near
-    near, far = y.ixSlabY(1.5, 0.0, 1.0, 2.0)                        # parallel, inside: all of the ray
-    assert near == 0 and far > 1e20
-    near, far = y.ixSlabY(5.0, 0.0, 1.0, 2.0)                        # parallel, outside: a miss
+    near, far = y.ixSlabY(1.5, 0.0, 1.0, 2.0)  # parallel, inside: all of the ray
+    assert near == 0
+    assert far > 1e20
+    near, far = y.ixSlabY(5.0, 0.0, 1.0, 2.0)  # parallel, outside: a miss
     assert far < near
 
 
 def test_shell_gives_the_first_segment_inside_from_outside_inside_and_within():
     y = twin("ray")
     c, ri, ro_ = np.zeros(3), 1.0, 2.0
-    assert close(y.ixShell([0.0, 0.0, 5.0], [0.0, 0.0, -1.0], c, ri, ro_), (3.0, 4.0))      # outside: to the inner
-    assert close(y.ixShell([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], c, ri, ro_), (1.0, 2.0))      # in the core: out
-    assert close(y.ixShell([0.0, 0.0, 1.5], [0.0, 0.0, 1.0], c, ri, ro_), (0.0, 0.5))       # in the shell, outward
-    assert close(y.ixShell([0.0, 0.0, 1.5], [0.0, 0.0, -1.0], c, ri, ro_), (0.0, 0.5))      # in the shell, inward
-    assert close(y.ixShell([0.0, 1.5, 5.0], [0.0, 0.0, -1.0], c, ri, ro_),
-                 (5.0 - math.sqrt(4 - 2.25), 5.0 + math.sqrt(4 - 2.25)))                    # grazing past the core
+    assert close(y.ixShell([0.0, 0.0, 5.0], [0.0, 0.0, -1.0], c, ri, ro_), (3.0, 4.0))  # outside: to the inner
+    assert close(y.ixShell([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], c, ri, ro_), (1.0, 2.0))  # in the core: out
+    assert close(y.ixShell([0.0, 0.0, 1.5], [0.0, 0.0, 1.0], c, ri, ro_), (0.0, 0.5))  # in the shell, outward
+    assert close(y.ixShell([0.0, 0.0, 1.5], [0.0, 0.0, -1.0], c, ri, ro_), (0.0, 0.5))  # in the shell, inward
+    assert close(
+        y.ixShell([0.0, 1.5, 5.0], [0.0, 0.0, -1.0], c, ri, ro_), (5.0 - math.sqrt(4 - 2.25), 5.0 + math.sqrt(4 - 2.25))
+    )  # grazing past the core
     near, far = y.ixShell([0.0, 3.0, 5.0], [0.0, 0.0, -1.0], c, ri, ro_)
     assert far < near
 
@@ -678,7 +721,8 @@ def test_clip_to_box_narrows_the_range_and_skip_is_honest():
     assert got[0] > got[1]
     got = y.rmClipToBox([0.0, 0.0, 5.0], [0.0, 0.0, -1.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [0.0, 4.5])
     assert close(got, (4.0, 4.5))
-    assert y.bvCanSkip(1.0, 0.5) and not y.bvCanSkip(0.4, 0.5)
+    assert y.bvCanSkip(1.0, 0.5)
+    assert not y.bvCanSkip(0.4, 0.5)
 
 
 def test_planet_scale_sphere_from_radius_and_zenith_cosine():
@@ -700,15 +744,18 @@ def test_look_at_is_right_handed_looks_down_minus_z_and_rolls_counter_clockwise(
     y = twin("ray")
     ro, target = np.array([3.0, 2.0, 4.0]), np.array([0.0, 0.5, 0.0])
     B = y.camLookAt(ro, target, 0.0)
-    assert close(B.T @ B, np.eye(3)) and close(np.linalg.det(B), 1.0)
+    assert close(B.T @ B, np.eye(3))
+    assert close(np.linalg.det(B), 1.0)
     fwd = (target - ro) / np.linalg.norm(target - ro)
     assert close(B @ np.array([0.0, 0.0, -1.0]), fwd)
-    assert abs(B[1, 0]) < 1e-6 and B[1, 1] > 0                     # unrolled: right is level, up points up
+    assert abs(B[1, 0]) < 1e-6
+    assert B[1, 1] > 0
     Br = y.camLookAt(ro, target, 0.3)
     assert close(Br[:, 2], B[:, 2])
     assert close(Br[:, 0], math.cos(0.3) * B[:, 0] + math.sin(0.3) * B[:, 1])
-    Bup = y.camLookAt([0.0, 5.0, 0.0], [0.0, 0.0, 0.0], 0.0)          # straight down: still a basis, no NaN
-    assert np.all(np.isfinite(Bup)) and close(Bup.T @ Bup, np.eye(3))
+    Bup = y.camLookAt([0.0, 5.0, 0.0], [0.0, 0.0, 0.0], 0.0)  # straight down: still a basis, no NaN
+    assert np.all(np.isfinite(Bup))
+    assert close(Bup.T @ Bup, np.eye(3))
 
 
 def test_camera_ray_is_unit_through_the_pixel_centre_and_the_pixel_angle_matches_it():
@@ -735,10 +782,12 @@ def test_orbit_keeps_its_radius_and_poses_itself_when_the_mouse_is_untouched():
         assert close(np.linalg.norm(p - target), 4.0)
     a = y.camOrbit(np.zeros(2), 0.0, 4.0, target)
     b = y.camOrbit(np.zeros(2), 1.0, 4.0, target)
-    assert not close(a, b) and close(a[1], b[1]) and a[1] > target[1]    # untouched: auto-yaw, from a little above
+    assert not close(a, b)
+    assert close(a[1], b[1])
+    assert a[1] > target[1]
     c = y.camOrbit(np.array([0.3, 0.6]), 0.0, 4.0, target)
     d = y.camOrbit(np.array([0.3, 0.6]), 5.0, 4.0, target)
-    assert close(c, d)                                                    # touched: the mouse alone decides
+    assert close(c, d)  # touched: the mouse alone decides
 
 
 def test_ortho_rays_are_parallel_and_offset_across_the_image_plane():
@@ -746,8 +795,10 @@ def test_ortho_rays_are_parallel_and_offset_across_the_image_plane():
     B = y.camLookAt([0.0, 0.0, 5.0], [0.0, 0.0, 0.0], 0.0)
     rd0, ro0 = y.camOrthoRay(np.array([0.0, 0.0]), B, 2.0, np.array([0.0, 0.0, 5.0]))
     rd1, ro1 = y.camOrthoRay(np.array([0.5, -0.25]), B, 2.0, np.array([0.0, 0.0, 5.0]))
-    assert close(rd0, rd1) and close(rd0, [0.0, 0.0, -1.0])
-    assert close(ro0, [0.0, 0.0, 5.0]) and close(ro1, [1.0, -0.5, 5.0])
+    assert close(rd0, rd1)
+    assert close(rd0, [0.0, 0.0, -1.0])
+    assert close(ro0, [0.0, 0.0, 5.0])
+    assert close(ro1, [1.0, -0.5, 5.0])
 
 
 def test_lissajous_path_derivatives_are_exact_and_a_zero_frequency_axis_flies():
@@ -761,19 +812,22 @@ def test_lissajous_path_derivatives_are_exact_and_a_zero_frequency_axis_flies():
         _, v1, _ = y.pathLissajous3(t + 1e-3, amp, freq)
         _, v0, _ = y.pathLissajous3(t - 1e-3, amp, freq)
         assert close(a, (np.asarray(v1, np.float64) - v0) / 2e-3, 2e-3)
-        assert close(p[2], 0.5 * t) and close(v[2], 0.5) and close(a[2], 0.0)
+        assert close(p[2], 0.5 * t)
+        assert close(v[2], 0.5)
+        assert close(a[2], 0.0)
 
 
 def test_banked_frame_follows_the_velocity_and_leans_into_the_turn():
     y = twin("ray")
-    vel, acc = np.array([0.0, 0.0, -2.0]), np.array([1.0, 0.0, 0.0])        # flying -z, turning toward +x
+    vel, acc = np.array([0.0, 0.0, -2.0]), np.array([1.0, 0.0, 0.0])  # flying -z, turning toward +x
     level = y.camBanked(vel, np.zeros(3), 1.0)
     bank = y.camBanked(vel, acc, 0.5)
     for B in (level, bank):
-        assert close(B.T @ B, np.eye(3)) and close(np.linalg.det(B), 1.0)
+        assert close(B.T @ B, np.eye(3))
+        assert close(np.linalg.det(B), 1.0)
         assert close(B @ np.array([0.0, 0.0, -1.0]), [0.0, 0.0, -1.0])
     assert close(level[:, 1], [0.0, 1.0, 0.0])
-    assert bank[0, 1] > 0.1                          # the up vector tilts toward the inside of the turn
+    assert bank[0, 1] > 0.1  # the up vector tilts toward the inside of the turn
 
 
 def test_barrel_keeps_the_centre_and_scales_by_one_plus_k_r_squared():
@@ -799,40 +853,50 @@ def test_sphere_trace_hits_the_first_surface_and_records_the_closest_angular_app
     y = twin("ray")
     scene = _sphere_scene()
     hit = y.rmSphereTrace([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 50.0], 0.004, 1.0, 96, scene)
-    assert hit[3] == 1.0 and abs(hit[0] - 4.0) < 0.5 * 0.004 * 4.0 + 1e-4 and hit[1] < 20
+    assert hit[3] == 1.0
+    assert abs(hit[0] - 4.0) < 0.5 * 0.004 * 4.0 + 1e-4
+    assert hit[1] < 20
     # a ray that misses the sphere by an angle of about 0.05 radians records about that much (the smallest d / t along
     # the ray is near (5 sin a - 1) / (5 cos a) for a ray at angle a from the centre)
     ang = math.asin(1.0 / 5.0) + 0.05
     rd = np.array([math.sin(ang), 0.0, -math.cos(ang)])
     miss = y.rmSphereTrace([0.0, 0.0, 0.0], rd, [0.0, 50.0], 0.004, 1.0, 96, scene)
-    assert miss[3] == 0.0 and 0.03 < miss[2] < 0.06
-    assert np.isfinite(miss[0]) and 3.0 < miss[0] < 7.0       # a miss reports where it came closest
+    assert miss[3] == 0.0
+    assert 0.03 < miss[2] < 0.06
+    assert np.isfinite(miss[0])
+    assert 3.0 < miss[0] < 7.0
     # the march cap holds: never more steps than asked
     capped = y.rmSphereTrace([0.0, 0.0, 0.0], rd, [0.0, 50.0], 0.004, 1.0, 5, scene)
-    assert capped[1] <= 5 and capped[3] == 0.0
+    assert capped[1] <= 5
+    assert capped[3] == 0.0
     # under-relaxation still lands on the surface
     under = y.rmSphereTrace([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 50.0], 0.004, 0.6, 96, scene)
-    assert under[3] == 1.0 and abs(under[0] - 4.0) < 0.01 and under[1] > hit[1]
+    assert under[3] == 1.0
+    assert abs(under[0] - 4.0) < 0.01
+    assert under[1] > hit[1]
     # a camera inside a solid traces its inner wall (the sign at the start is kept), the way a refracted ray must
     inner = y.rmSphereTrace([0.0, 0.0, -5.0], [0.0, 0.0, -1.0], [0.0, 50.0], 0.004, 1.0, 96, scene)
-    assert inner[3] == 1.0 and abs(inner[0] - 1.0) < 0.01
+    assert inner[3] == 1.0
+    assert abs(inner[0] - 1.0) < 0.01
 
 
 def test_relaxed_march_matches_the_plain_one_with_fewer_steps_along_a_floor_and_never_skips_a_thin_wall():
     y = twin("ray")
-    floor = lambda p: F32(np.asarray(p, np.float32)[1] + F32(1.0))      # noqa: E731  plane y = -1
+    floor = lambda p: F32(np.asarray(p, np.float32)[1] + F32(1.0))  # noqa: E731  # one-line SDF handed to the twin, as the GLSL reads: plane y = -1
     rd = np.array([0.0, -0.05, -1.0])
     rd /= np.linalg.norm(rd)
     plain = y.rmSphereTrace([0.0, 0.0, 0.0], rd, [0.0, 100.0], 0.002, 1.0, 256, floor)
     relaxed = y.rmRelaxed([0.0, 0.0, 0.0], rd, [0.0, 100.0], 0.002, 1.6, 256, floor)
-    assert plain[3] == 1.0 and relaxed[3] == 1.0
-    for t in (plain[0], relaxed[0]):                              # both stop within half a pixel of the floor
+    assert plain[3] == 1.0
+    assert relaxed[3] == 1.0
+    for t in (plain[0], relaxed[0]):  # both stop within half a pixel of the floor
         assert 0.0 <= float(floor(rd * t)) < 0.5 * 0.002 * t + 1e-6
     assert relaxed[1] < 0.75 * plain[1]
     # a thin slab across the ray: over-relaxation would leap it; the overlap check must catch that
-    wall = lambda p: F32(abs(float(np.asarray(p)[2]) + 3.0) - 0.02)      # noqa: E731  |z + 3| - 0.02
+    wall = lambda p: F32(abs(float(np.asarray(p)[2]) + 3.0) - 0.02)  # noqa: E731  # one-line SDF handed to the twin, as the GLSL reads: |z + 3| - 0.02
     r = y.rmRelaxed([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 20.0], 0.002, 1.9, 256, wall)
-    assert r[3] == 1.0 and abs(r[0] - 2.98) < 0.02
+    assert r[3] == 1.0
+    assert abs(r[0] - 2.98) < 0.02
 
 
 def _wall_at_five(p):
@@ -852,38 +916,46 @@ def test_relaxed_march_never_reports_a_hit_inside_a_solid_it_meets_head_on(omega
     rd /= np.linalg.norm(rd)
     hit = y.rmRelaxed(np.zeros(3, np.float32), rd, (0.0, 50.0), 0.001, omega, 96, _wall_at_five)
     plain = y.rmSphereTrace(np.zeros(3, np.float32), rd, (0.0, 50.0), 0.001, 1.0, 96, _wall_at_five)
-    assert hit[3] == 1.0 and plain[3] == 1.0
+    assert hit[3] == 1.0
+    assert plain[3] == 1.0
     eps = 0.5 * 0.001 * float(hit[0])
-    assert -1e-5 <= float(_wall_at_five(rd * hit[0])) < eps + 1e-5, (omega, tilt, hit)     # on the face, not inside
+    assert -1e-5 <= float(_wall_at_five(rd * hit[0])) < eps + 1e-5, (omega, tilt, hit)  # on the face, not inside
     assert abs(float(hit[0]) - float(plain[0])) < eps + 1e-4
 
 
 @pytest.mark.parametrize("omega", [1.2, 1.6])
 def test_relaxed_march_meets_a_ball_head_on_at_its_near_side(omega):
     y = twin("ray")
-    ball = _sphere_scene(c=(0.0, 0.0, -6.0), r=1.0)              # its near side is 5 units ahead
-    hit = y.rmRelaxed(np.zeros(3, np.float32), np.array([0.0, 0.0, -1.0], np.float32), (0.0, 50.0), 0.001, omega, 96,
-                      ball)
-    assert hit[3] == 1.0 and abs(float(hit[0]) - 5.0) < 0.5 * 0.001 * 5.0 + 1e-4, hit       # omega 1.2 said 6.0
+    ball = _sphere_scene(c=(0.0, 0.0, -6.0), r=1.0)  # its near side is 5 units ahead
+    hit = y.rmRelaxed(
+        np.zeros(3, np.float32), np.array([0.0, 0.0, -1.0], np.float32), (0.0, 50.0), 0.001, omega, 96, ball
+    )
+    assert hit[3] == 1.0, hit
+    assert abs(float(hit[0]) - 5.0) < 0.5 * 0.001 * 5.0 + 1e-4, hit  # omega 1.2 said 6.0
 
 
 def test_backtracking_march_survives_a_field_that_overestimates():
     y = twin("ray")
-    liar = _sphere_scene(scale=1.4)                  # claims 1.4x the true distance: a plain march oversteps
+    liar = _sphere_scene(scale=1.4)  # claims 1.4x the true distance: a plain march oversteps
     plain = y.rmSphereTrace([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 50.0], 0.002, 1.0, 96, liar)
     back = y.rmBacktrack([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 50.0], 0.002, 96, 12, liar)
-    assert plain[3] == 1.0 and abs(plain[0] - 4.0) > 0.5          # it "hits" deep inside the solid
-    assert back[3] == 1.0 and abs(back[0] - 4.0) < 0.01 and back[0] <= 4.0 + 1e-4   # never reported inside
-    tangent = lambda p: F32(1.4) * (np.linalg.norm(np.asarray(p, np.float32) - F32([0, 1.0, -5])) - F32(1.0))  # noqa
+    assert plain[3] == 1.0
+    assert abs(plain[0] - 4.0) > 0.5
+    assert back[3] == 1.0
+    assert abs(back[0] - 4.0) < 0.01
+    assert back[0] <= 4.0 + 1e-4
+    tangent = lambda p: F32(1.4) * (np.linalg.norm(np.asarray(p, np.float32) - F32([0, 1.0, -5])) - F32(1.0))  # noqa: E731  # one-line SDF handed to the twin, as the GLSL reads
     graze = y.rmBacktrack([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 50.0], 0.002, 96, 12, tangent)
-    assert np.isfinite(graze[0]) and graze[1] <= 96 + 12
+    assert np.isfinite(graze[0])
+    assert graze[1] <= 96 + 12
 
 
 def test_step_helpers_and_the_secondary_origin():
     y = twin("ray")
     assert close(y.rmPassStep(-0.4, 0.01, 4.0), 0.11)
-    assert y.rmPassStep(0.0, 0.0, 1.0) > 0                     # never zero
-    assert close(y.rmHybridStep(0.3, 0.05), 0.3) and close(y.rmHybridStep(-0.1, 0.05), 0.05)
+    assert y.rmPassStep(0.0, 0.0, 1.0) > 0  # never zero
+    assert close(y.rmHybridStep(0.3, 0.05), 0.3)
+    assert close(y.rmHybridStep(-0.1, 0.05), 0.05)
     assert close(y.rmJitterStart(1.0, 0.2, 0.25), 1.05)
     o = y.rmSecondaryOrigin(np.zeros(3), np.array([0.0, 1.0, 0.0]), -0.003, 1e-3, 1.0)
     assert close(o, [0.0, 0.006, 0.0])
@@ -904,18 +976,18 @@ def test_refine_pulls_hits_onto_one_offset_surface():
 def test_tetrahedral_and_central_normals_agree_with_the_analytic_gradient():
     y = twin("ray")
     c = np.array([0.2, -0.1, 0.3])
-    scene = lambda p: F32(np.linalg.norm(np.asarray(p, np.float32) - c) - 1.0)       # noqa: E731
+    scene = lambda p: F32(np.linalg.norm(np.asarray(p, np.float32) - c) - 1.0)  # noqa: E731  # one-line SDF handed to the twin, as the GLSL reads
     for d in rng(30).normal(size=(50, 3)):
         d /= np.linalg.norm(d)
         p = c + d
         assert close(y.nrmTetra(p, 1e-3, scene), d, 2e-3)
         assert close(y.nrmCentral(p, 1e-3, scene), d, 2e-3)
-    flat = lambda p: F32(np.asarray(p)[1] * 0.0 + np.asarray(p)[2] - 1.0)             # noqa: E731
-    assert np.all(np.isfinite(y.nrmTetra(np.zeros(3), 1e-3, lambda p: F32(0.0))))    # no gradient: no NaN
+    flat = lambda p: F32(np.asarray(p)[1] * 0.0 + np.asarray(p)[2] - 1.0)  # noqa: E731  # one-line SDF handed to the twin, as the GLSL reads
+    assert np.all(np.isfinite(y.nrmTetra(np.zeros(3), 1e-3, lambda p: F32(0.0))))  # no gradient: no NaN
     # (float32: f is near -1 here, so each tap carries about 6e-8 of rounding against differences of 4e-3)
     assert close(y.nrmTetra(np.zeros(3), 1e-3, flat), [0.0, 0.0, 1.0], 1e-4)
-    assert close(y.nrmTetra(np.zeros(3), -1e-3, flat), [0.0, 0.0, 1.0], 1e-4)         # a negative h still points out
-    assert close(y.nrmTetra(np.zeros(3), -2.5, flat), [0.0, 0.0, 1.0], 1e-4)          # every tap twice: still symmetric
+    assert close(y.nrmTetra(np.zeros(3), -1e-3, flat), [0.0, 0.0, 1.0], 1e-4)  # a negative h still points out
+    assert close(y.nrmTetra(np.zeros(3), -2.5, flat), [0.0, 0.0, 1.0], 1e-4)  # every tap twice: still symmetric
 
 
 def test_normal_epsilon_follows_the_footprint():
@@ -928,11 +1000,11 @@ def test_normal_epsilon_follows_the_footprint():
 def test_curvature_is_the_sum_of_the_principal_curvatures():
     y = twin("ray")
     for R in (0.5, 1.0, 2.0):
-        sphere = lambda p, R=R: F32(np.linalg.norm(np.asarray(p, np.float32)) - R)     # noqa: E731
-        cyl = lambda p, R=R: F32(math.hypot(float(p[0]), float(p[2])) - R)          # noqa: E731
+        sphere = lambda p, R=R: F32(np.linalg.norm(np.asarray(p, np.float32)) - R)  # noqa: E731  # one-line SDF handed to the twin, as the GLSL reads
+        cyl = lambda p, R=R: F32(math.hypot(float(p[0]), float(p[2])) - R)  # noqa: E731  # one-line SDF handed to the twin, as the GLSL reads
         assert close(y.nrmCurvature(np.array([0.0, R, 0.0]), 0.01, sphere), 2 / R, 2e-2)
         assert close(y.nrmCurvature(np.array([R, 0.3, 0.0]), 0.01, cyl), 1 / R, 2e-2)
-    plane = lambda p: F32(np.asarray(p)[1])                                            # noqa: E731
+    plane = lambda p: F32(np.asarray(p)[1])  # noqa: E731  # one-line SDF handed to the twin, as the GLSL reads
     assert abs(float(y.nrmCurvature(np.array([0.3, 0.0, 0.1]), 0.01, plane))) < 1e-3
 
 
@@ -940,7 +1012,8 @@ def test_facet_quantises_a_normal_to_a_unit_lattice_direction():
     y = twin("ray")
     a = y.nrmFacet(np.array([0.70, 0.71, 0.0]) / math.hypot(0.70, 0.71), 2.0)
     b = y.nrmFacet(np.array([0.72, 0.69, 0.0]) / math.hypot(0.72, 0.69), 2.0)
-    assert close(a, b) and close(np.linalg.norm(a), 1.0)
+    assert close(a, b)
+    assert close(np.linalg.norm(a), 1.0)
     assert close(y.nrmFacet(np.array([0.0, 0.0, 1.0]), 3.0), [0.0, 0.0, 1.0])
     assert np.all(np.isfinite(y.nrmFacet(np.array([0.3, 0.3, 0.9]) / np.linalg.norm([0.3, 0.3, 0.9]), 0.2)))
 
@@ -958,9 +1031,11 @@ def _disk_area_beyond(edge, radius, n=200000):
 def test_cone_coverage_is_one_for_every_hit_and_the_disk_area_beyond_half_a_pixel_out():
     y = twin("ray")
     px = 0.004
-    assert y.aaConeCoverage(0.0, px) == 1.0 and y.aaConeCoverage(0.5 * px, px) == 1.0
+    assert y.aaConeCoverage(0.0, px) == 1.0
+    assert y.aaConeCoverage(0.5 * px, px) == 1.0
     assert close(y.aaConeCoverage(1.0 * px, px), 0.5)
-    assert y.aaConeCoverage(1.5 * px, px) == 0.0 and y.aaConeCoverage(10 * px, px) == 0.0
+    assert y.aaConeCoverage(1.5 * px, px) == 0.0
+    assert y.aaConeCoverage(10 * px, px) == 0.0
     prev = 1.0
     for a in np.linspace(0.5 * px, 1.5 * px, 21):
         c = float(y.aaConeCoverage(a, px))
@@ -976,7 +1051,8 @@ def test_cone_coverage_is_one_for_every_hit_and_the_disk_area_beyond_half_a_pixe
 def test_discriminant_edge_is_half_on_the_rim_and_one_pixel_wide():
     y = twin("ray")
     assert close(y.aaDiscriminantEdge(0.0, 0.01), 0.5)
-    assert y.aaDiscriminantEdge(0.005, 0.01) == 1.0 and y.aaDiscriminantEdge(-0.005, 0.01) == 0.0
+    assert y.aaDiscriminantEdge(0.005, 0.01) == 1.0
+    assert y.aaDiscriminantEdge(-0.005, 0.01) == 0.0
     assert close(y.aaDiscriminantEdge(0.0025, 0.01) + y.aaDiscriminantEdge(-0.0025, 0.01), 1.0)
 
 
@@ -1025,22 +1101,33 @@ def test_module_defines_every_planned_p0_function_and_nothing_unplanned(house, f
 def test_module_header_carries_the_library_fields(house, file):
     m = _module(house, file)
     h = m.header
-    assert h["name"] == MODULES[file] and h["kind"] == "helper"
-    assert h["cat"] == _category(file) and h["family"] == ("D" if file.startswith("sdf/") else "E")
+    assert h["name"] == MODULES[file]
+    assert h["kind"] == "helper"
+    assert h["cat"] == _category(file)
+    assert h["family"] == ("D" if file.startswith("sdf/") else "E")
     assert re.fullmatch(r"\d+\.\d+\.\d+", h["version"])
-    assert h["license"] == "Apache-2.0" and isinstance(h["credits"], list) and h["credits"]
+    assert h["license"] == "Apache-2.0"
+    assert isinstance(h["credits"], list)
+    assert h["credits"]
     assert all("http" in c for c in h["credits"]), "every credit carries its URL"
-    assert isinstance(h["cost"], dict) and h["cost"]["class"] in ("C0", "C1", "C2", "C3", "C4")
+    assert isinstance(h["cost"], dict)
+    assert h["cost"]["class"] in ("C0", "C1", "C2", "C3", "C4")
     for key in ("contract", "note"):
-        assert isinstance(h[key], str) and len(h[key]) > 20, key
-    assert h["targets"]["glsl"] == "300es" and set(h["targets"]["needs"]) <= set(M.KNOWN_NEEDS)
-    assert h["card"] == f"{h['name']}.card" and h["status"] == "P0"
-    assert isinstance(h.get("exemplars", []), list) and isinstance(h.get("learn", []), list) and h["learn"]
+        assert isinstance(h[key], str), key
+        assert len(h[key]) > 20, key
+    assert h["targets"]["glsl"] == "300es"
+    assert set(h["targets"]["needs"]) <= set(M.KNOWN_NEEDS)
+    assert h["card"] == f"{h['name']}.card"
+    assert h["status"] == "P0"
+    assert isinstance(h.get("exemplars", []), list)
+    assert isinstance(h.get("learn", []), list)
+    assert h["learn"]
     code = M.strip_comments(m.body)
     uses_derivatives = any(re.search(rf"\b{d}\b", code) for d in M.DERIVATIVES)
     assert uses_derivatives == ("derivatives" in h["targets"]["needs"]), "declare derivatives exactly when used"
     if file in HOOKED:
-        assert h["hooks"] == [SCENE_HOOK] and h["cost"].get("hooks", 0) >= 1
+        assert h["hooks"] == [SCENE_HOOK]
+        assert h["cost"].get("hooks", 0) >= 1
     else:
         assert not h.get("hooks")
 
@@ -1049,7 +1136,8 @@ def test_module_header_carries_the_library_fields(house, file):
 def test_every_glsl_function_has_a_twin_of_the_same_name(house, file):
     m = _module(house, file)
     path, _, fn = m.header["twin"].partition(":")
-    assert path.startswith("arsenal/shaders/twins/") and path.endswith(".py")
+    assert path.startswith("arsenal/shaders/twins/")
+    assert path.endswith(".py")
     mod = importlib.import_module(path[:-3].replace("/", "."))
     for name in (fn,) if fn else tuple(m.functions) + tuple(m.consts):
         assert hasattr(mod, name), f"{path} has no twin for {name}"
@@ -1082,7 +1170,8 @@ def test_the_scene_hook_is_emitted_once_before_its_first_user(house):
 def test_module_has_a_card_that_builds_against_the_house_library(house, file):
     name = MODULES[file]
     card = K.load_card(name)
-    assert name in card.uses and card.note
+    assert name in card.uses
+    assert card.note
     shader = K.build_card(card, library=house)
     assert name in shader["card"]["modules"]
 
@@ -1093,7 +1182,7 @@ def test_module_has_a_card_that_builds_against_the_house_library(house, file):
 # every function of the eight modules at a few arguments and writes each result's float32 bits into pixels, 16 bits per
 # pixel; the twins evaluate the same calls on the CPU. It renders on SwiftShader under the house GPU lock (render.py's
 # driver, one burst), exactly as tests/test_glsl_twins_light.py does. Deselect with  py -m pytest -m "not slow".
-PROBE_COLS = 8              # cases per row; each case is 6 pixels (3 channels x 2 halves of 32 bits)
+PROBE_COLS = 8  # cases per row; each case is 6 pixels (3 channels x 2 halves of 32 bits)
 BALL_C = np.array([0.3, 0.2, -6.0], dtype=np.float32)
 LIAR_C = np.array([0.0, 0.0, -5.0], dtype=np.float32)
 
@@ -1172,6 +1261,7 @@ vec3 probePath(float t, vec3 amp, vec3 freq, int part) {
 
 def _probe_scene(kind):
     """The probe's mapScene in float32, for the twins (their scene hook is their LAST argument)."""
+
     def scene(p):
         p = np.asarray(p, dtype=np.float32)
         if kind == 1:
@@ -1179,6 +1269,7 @@ def _probe_scene(kind):
         if kind == 2:
             return F32(F32(1.4) * (F32(np.linalg.norm(p - LIAR_C)) - F32(1.0)))
         return min(F32(np.linalg.norm(p - BALL_C)) - F32(1.0), F32(p[1] + F32(1.0)))
+
     return scene
 
 
@@ -1195,7 +1286,7 @@ def unit3(*xs):
 def _three(x):
     """Any twin result (a scalar, a 2- or 3-vector, a bool) as three floats, padded with zeros."""
     a = np.atleast_1d(np.asarray(x, dtype=np.float64)).ravel().tolist()
-    return (a + [0.0, 0.0, 0.0])[:3]
+    return [*a, 0.0, 0.0, 0.0][:3]
 
 
 def _rot(axis, angle):
@@ -1208,10 +1299,10 @@ def _rot(axis, angle):
 def _probe_groups():
     """(label, GLSL expression over the named args, {arg: (type, values)}, twin(**args) -> three floats)."""
     s, y = twin("sdf"), twin("ray")
-    f1 = lambda vals: ("float", vals)          # noqa: E731
-    v2 = lambda vals: ("vec2", vals)           # noqa: E731
-    v3 = lambda vals: ("vec3", vals)           # noqa: E731
-    i1 = lambda vals: ("int", vals)            # noqa: E731
+    f1 = lambda vals: ("float", vals)  # noqa: E731  # one-line type tag for the case table
+    v2 = lambda vals: ("vec2", vals)  # noqa: E731  # one-line type tag for the case table
+    v3 = lambda vals: ("vec3", vals)  # noqa: E731  # one-line type tag for the case table
+    i1 = lambda vals: ("int", vals)  # noqa: E731  # one-line type tag for the case table
     P = [(0.3, -0.4, 0.5), (1.5, 0.2, -0.7), (-0.1, 0.05, 0.02), (2.0, 1.0, -1.5)]
     R = _rot([0.3, 1.0, -0.4], 1.1).astype(np.float32)
     cols = [tuple(float(c) for c in R[:, i]) for i in range(3)]
@@ -1221,220 +1312,509 @@ def _probe_groups():
     head_on = (0.0, 0.0, -1.0)
     tilted = tuple(float(c) for c in (np.array([1e-4, 0.0, -1.0]) / np.linalg.norm([1e-4, 0.0, -1.0])))
     floor_ray = tuple(float(c) for c in (np.array([0.0, -0.05, -1.0]) / np.linalg.norm([0.0, -0.05, -1.0])))
-    plain, relaxed, backtrack = 0, 1, 2                      # probeMarch's marcher numbers
-    ball_floor, wall, liar = 0, 1, 2                         # its scene numbers
-    marches = [(ball_floor, plain, toward, 1.0), (ball_floor, plain, floor_ray, 0.7),
-               (ball_floor, relaxed, floor_ray, 1.6), (wall, relaxed, head_on, 1.2), (wall, relaxed, head_on, 1.6),
-               (wall, relaxed, tilted, 1.9), (wall, plain, head_on, 1.0), (ball_floor, relaxed, toward, 1.5),
-               (liar, plain, head_on, 1.0), (liar, backtrack, head_on, 1.0)]
-    g = [
+    plain, relaxed, backtrack = 0, 1, 2  # probeMarch's marcher numbers
+    ball_floor, wall, liar = 0, 1, 2  # its scene numbers
+    marches = [
+        (ball_floor, plain, toward, 1.0),
+        (ball_floor, plain, floor_ray, 0.7),
+        (ball_floor, relaxed, floor_ray, 1.6),
+        (wall, relaxed, head_on, 1.2),
+        (wall, relaxed, head_on, 1.6),
+        (wall, relaxed, tilted, 1.9),
+        (wall, plain, head_on, 1.0),
+        (ball_floor, relaxed, toward, 1.5),
+        (liar, plain, head_on, 1.0),
+        (liar, backtrack, head_on, 1.0),
+    ]
+    return [
         # ------------------------------------------------------------------------------------------- sdf/shapes
-        ("sdSphere", "vec3(sdSphere(a, t), 0.0, 0.0)", {"a": v3(P), "t": f1([0.5, 1.0, 0.3, 2.0])},
-         lambda a, t: _three(s.sdSphere(a, t))),
-        ("sdBox", "vec3(sdBox(a, b), 0.0, 0.0)", {"a": v3(P), "b": v3([(0.4, 0.3, 0.6), (0.5, 0.5, 0.5)])},
-         lambda a, b: _three(s.sdBox(a, b))),
-        ("sdRoundBox", "vec3(sdRoundBox(a, b, t), 0.0, 0.0)",
-         {"a": v3(P), "b": v3([(0.4, 0.3, 0.6)]), "t": f1([0.1, 0.05])},
-         lambda a, b, t: _three(s.sdRoundBox(a, b, t))),
-        ("sdPlane", "vec3(sdPlane(a, b, t), 0.0, 0.0)",
-         {"a": v3(P), "b": v3([(0.0, 0.6, 0.8), up]), "t": f1([-1.0, 0.25])},
-         lambda a, b, t: _three(s.sdPlane(a, b, t))),
-        ("sdTorusY", "vec3(sdTorusY(a, t, u), 0.0, 0.0)", {"a": v3(P), "t": f1([0.8, 1.2]), "u": f1([0.2, 0.35])},
-         lambda a, t, u: _three(s.sdTorusY(a, t, u))),
-        ("sdCapsule", "vec3(sdCapsule(a, b, c, t), 0.0, 0.0)",
-         {"a": v3(P), "b": v3([(-0.5, 0.0, 0.0), (0.2, 0.2, 0.2)]), "c": v3([(0.5, 0.3, 0.0), (0.2, 0.2, 0.2)]),
-          "t": f1([0.25, 0.4])},
-         lambda a, b, c, t: _three(s.sdCapsule(a, b, c, t))),
-        ("sdCylinderY", "vec3(sdCylinderY(a, t, u), 0.0, 0.0)", {"a": v3(P), "t": f1([0.5, 0.8]), "u": f1([0.6, 0.3])},
-         lambda a, t, u: _three(s.sdCylinderY(a, t, u))),
-        ("sdConeCappedY", "vec3(sdConeCappedY(a, t, u, v), 0.0, 0.0)",
-         {"a": v3(P), "t": f1([0.6, 1.0]), "u": f1([0.5, 0.7]), "v": f1([0.2, 0.0])},
-         lambda a, t, u, v: _three(s.sdConeCappedY(a, t, u, v))),
-        ("sdRoundConeAB", "vec3(sdRoundConeAB(a, b, c, t, u), 0.0, 0.0)",
-         {"a": v3(P), "b": v3([(0.0, -0.3, 0.0)]), "c": v3([(0.4, 0.6, -0.2)]), "t": f1([0.4, 0.3]),
-          "u": f1([0.15, 0.3])},
-         lambda a, b, c, t, u: _three(s.sdRoundConeAB(a, b, c, t, u))),
-        ("sdHexPrismZ", "vec3(sdHexPrismZ(a, t, u), 0.0, 0.0)", {"a": v3(P), "t": f1([0.5, 0.8]), "u": f1([0.3, 0.6])},
-         lambda a, t, u: _three(s.sdHexPrismZ(a, t, u))),
-        ("sdOctahedron", "vec3(sdOctahedron(a, t), 0.0, 0.0)", {"a": v3(P), "t": f1([0.7, 1.2])},
-         lambda a, t: _three(s.sdOctahedron(a, t))),
-        ("sbEllipsoid", "vec3(sbEllipsoid(a, b), 0.0, 0.0)", {"a": v3(P), "b": v3([(0.8, 0.4, 0.6), (1.0, 0.5, 0.25)])},
-         lambda a, b: _three(s.sbEllipsoid(a, b))),
-        ("sbPolyhedron", "vec3(sbPolyhedron(a, t, k), 0.0, 0.0)",
-         {"a": v3(P + P[:2]), "t": f1([0.6, 0.8, 0.5, 1.0, 0.7, 0.9]), "k": i1([0, 1, 2, 3, 4, 5])},
-         lambda a, t, k: _three(s.sbPolyhedron(a, t, k))),
-        ("sbSuperquadric", "vec3(sbSuperquadric(a, b, t), 0.0, 0.0)",
-         {"a": v3(P), "b": v3([(0.8, 0.6, 0.7)]), "t": f1([2.0, 4.0, 1.5, 8.0])},
-         lambda a, b, t: _three(s.sbSuperquadric(a, b, t))),
-        ("udTriangle", "vec3(udTriangle(a, b, c, d), 0.0, 0.0)",
-         {"a": v3(P), "b": v3([(0.0, 0.0, 0.0)]), "c": v3([(1.0, 0.0, 0.2)]), "d": v3([(0.2, 0.9, -0.3)])},
-         lambda a, b, c, d: _three(s.udTriangle(a, b, c, d))),
+        (
+            "sdSphere",
+            "vec3(sdSphere(a, t), 0.0, 0.0)",
+            {"a": v3(P), "t": f1([0.5, 1.0, 0.3, 2.0])},
+            lambda a, t: _three(s.sdSphere(a, t)),
+        ),
+        (
+            "sdBox",
+            "vec3(sdBox(a, b), 0.0, 0.0)",
+            {"a": v3(P), "b": v3([(0.4, 0.3, 0.6), (0.5, 0.5, 0.5)])},
+            lambda a, b: _three(s.sdBox(a, b)),
+        ),
+        (
+            "sdRoundBox",
+            "vec3(sdRoundBox(a, b, t), 0.0, 0.0)",
+            {"a": v3(P), "b": v3([(0.4, 0.3, 0.6)]), "t": f1([0.1, 0.05])},
+            lambda a, b, t: _three(s.sdRoundBox(a, b, t)),
+        ),
+        (
+            "sdPlane",
+            "vec3(sdPlane(a, b, t), 0.0, 0.0)",
+            {"a": v3(P), "b": v3([(0.0, 0.6, 0.8), up]), "t": f1([-1.0, 0.25])},
+            lambda a, b, t: _three(s.sdPlane(a, b, t)),
+        ),
+        (
+            "sdTorusY",
+            "vec3(sdTorusY(a, t, u), 0.0, 0.0)",
+            {"a": v3(P), "t": f1([0.8, 1.2]), "u": f1([0.2, 0.35])},
+            lambda a, t, u: _three(s.sdTorusY(a, t, u)),
+        ),
+        (
+            "sdCapsule",
+            "vec3(sdCapsule(a, b, c, t), 0.0, 0.0)",
+            {
+                "a": v3(P),
+                "b": v3([(-0.5, 0.0, 0.0), (0.2, 0.2, 0.2)]),
+                "c": v3([(0.5, 0.3, 0.0), (0.2, 0.2, 0.2)]),
+                "t": f1([0.25, 0.4]),
+            },
+            lambda a, b, c, t: _three(s.sdCapsule(a, b, c, t)),
+        ),
+        (
+            "sdCylinderY",
+            "vec3(sdCylinderY(a, t, u), 0.0, 0.0)",
+            {"a": v3(P), "t": f1([0.5, 0.8]), "u": f1([0.6, 0.3])},
+            lambda a, t, u: _three(s.sdCylinderY(a, t, u)),
+        ),
+        (
+            "sdConeCappedY",
+            "vec3(sdConeCappedY(a, t, u, v), 0.0, 0.0)",
+            {"a": v3(P), "t": f1([0.6, 1.0]), "u": f1([0.5, 0.7]), "v": f1([0.2, 0.0])},
+            lambda a, t, u, v: _three(s.sdConeCappedY(a, t, u, v)),
+        ),
+        (
+            "sdRoundConeAB",
+            "vec3(sdRoundConeAB(a, b, c, t, u), 0.0, 0.0)",
+            {
+                "a": v3(P),
+                "b": v3([(0.0, -0.3, 0.0)]),
+                "c": v3([(0.4, 0.6, -0.2)]),
+                "t": f1([0.4, 0.3]),
+                "u": f1([0.15, 0.3]),
+            },
+            lambda a, b, c, t, u: _three(s.sdRoundConeAB(a, b, c, t, u)),
+        ),
+        (
+            "sdHexPrismZ",
+            "vec3(sdHexPrismZ(a, t, u), 0.0, 0.0)",
+            {"a": v3(P), "t": f1([0.5, 0.8]), "u": f1([0.3, 0.6])},
+            lambda a, t, u: _three(s.sdHexPrismZ(a, t, u)),
+        ),
+        (
+            "sdOctahedron",
+            "vec3(sdOctahedron(a, t), 0.0, 0.0)",
+            {"a": v3(P), "t": f1([0.7, 1.2])},
+            lambda a, t: _three(s.sdOctahedron(a, t)),
+        ),
+        (
+            "sbEllipsoid",
+            "vec3(sbEllipsoid(a, b), 0.0, 0.0)",
+            {"a": v3(P), "b": v3([(0.8, 0.4, 0.6), (1.0, 0.5, 0.25)])},
+            lambda a, b: _three(s.sbEllipsoid(a, b)),
+        ),
+        (
+            "sbPolyhedron",
+            "vec3(sbPolyhedron(a, t, k), 0.0, 0.0)",
+            {"a": v3(P + P[:2]), "t": f1([0.6, 0.8, 0.5, 1.0, 0.7, 0.9]), "k": i1([0, 1, 2, 3, 4, 5])},
+            lambda a, t, k: _three(s.sbPolyhedron(a, t, k)),
+        ),
+        (
+            "sbSuperquadric",
+            "vec3(sbSuperquadric(a, b, t), 0.0, 0.0)",
+            {"a": v3(P), "b": v3([(0.8, 0.6, 0.7)]), "t": f1([2.0, 4.0, 1.5, 8.0])},
+            lambda a, b, t: _three(s.sbSuperquadric(a, b, t)),
+        ),
+        (
+            "udTriangle",
+            "vec3(udTriangle(a, b, c, d), 0.0, 0.0)",
+            {"a": v3(P), "b": v3([(0.0, 0.0, 0.0)]), "c": v3([(1.0, 0.0, 0.2)]), "d": v3([(0.2, 0.9, -0.3)])},
+            lambda a, b, c, d: _three(s.udTriangle(a, b, c, d)),
+        ),
         # ------------------------------------------------------------------------------------------ sdf/combine
-        ("opUnion opIntersect opSubtract", "vec3(opUnion(t, u), opIntersect(t, u), opSubtract(t, u))",
-         {"t": f1([0.3, -0.2, 0.5]), "u": f1([-0.1, 0.4, 0.5])},
-         lambda t, u: [float(s.opUnion(t, u)), float(s.opIntersect(t, u)), float(s.opSubtract(t, u))]),
-        ("opXor opRound opOnion", "vec3(opXor(t, u), opRound(t, u), opOnion(t, u))",
-         {"t": f1([0.3, -0.2, 0.5]), "u": f1([-0.1, 0.4, 0.05])},
-         lambda t, u: [float(s.opXor(t, u)), float(s.opRound(t, u)), float(s.opOnion(t, u))]),
-        ("opPick", "vec3(opPick(vec2(t, 1.0), vec2(u, 2.0)), 0.0)", {"t": f1([0.3, -0.2, 0.5]), "u": f1([-0.1, 0.4, 0.5])},
-         lambda t, u: _three(s.opPick(_v(t, 1.0), _v(u, 2.0)))),
-        ("opSmin opSmax opSsubtract", "vec3(opSmin(t, u, v), opSmax(t, u, v), opSsubtract(t, u, v))",
-         {"t": f1([0.3, -0.2, 0.1, 0.0]), "u": f1([0.2, 0.4, 0.5, 0.0]), "v": f1([0.1, 0.2, 0.05, 0.3])},
-         lambda t, u, v: [float(s.opSmin(t, u, v)), float(s.opSmax(t, u, v)), float(s.opSsubtract(t, u, v))]),
-        ("opSminMix", "vec3(opSminMix(t, u, v), 0.0)",
-         {"t": f1([0.3, -0.2, 0.1]), "u": f1([0.2, 0.4, 0.5]), "v": f1([0.1, 0.2, 0.05])},
-         lambda t, u, v: _three(s.opSminMix(t, u, v))),
-        ("opSminCircular opSminExp opDisplace", "vec3(opSminCircular(t, u, v), opSminExp(t, u, v), "
-         "opDisplace(t, u, v))", {"t": f1([0.3, -0.2, 0.1]), "u": f1([0.2, 0.4, 0.5]), "v": f1([0.1, 0.2, 0.05])},
-         lambda t, u, v: [float(s.opSminCircular(t, u, v)), float(s.opSminExp(t, u, v)),
-                          float(s.opDisplace(t, u, v))]),
-        ("opUniformScale", "vec3(opUniformScale(t, u), 0.0, 0.0)", {"t": f1([0.3, -0.2]), "u": f1([2.0, 0.5])},
-         lambda t, u: _three(s.opUniformScale(t, u))),
+        (
+            "opUnion opIntersect opSubtract",
+            "vec3(opUnion(t, u), opIntersect(t, u), opSubtract(t, u))",
+            {"t": f1([0.3, -0.2, 0.5]), "u": f1([-0.1, 0.4, 0.5])},
+            lambda t, u: [float(s.opUnion(t, u)), float(s.opIntersect(t, u)), float(s.opSubtract(t, u))],
+        ),
+        (
+            "opXor opRound opOnion",
+            "vec3(opXor(t, u), opRound(t, u), opOnion(t, u))",
+            {"t": f1([0.3, -0.2, 0.5]), "u": f1([-0.1, 0.4, 0.05])},
+            lambda t, u: [float(s.opXor(t, u)), float(s.opRound(t, u)), float(s.opOnion(t, u))],
+        ),
+        (
+            "opPick",
+            "vec3(opPick(vec2(t, 1.0), vec2(u, 2.0)), 0.0)",
+            {"t": f1([0.3, -0.2, 0.5]), "u": f1([-0.1, 0.4, 0.5])},
+            lambda t, u: _three(s.opPick(_v(t, 1.0), _v(u, 2.0))),
+        ),
+        (
+            "opSmin opSmax opSsubtract",
+            "vec3(opSmin(t, u, v), opSmax(t, u, v), opSsubtract(t, u, v))",
+            {"t": f1([0.3, -0.2, 0.1, 0.0]), "u": f1([0.2, 0.4, 0.5, 0.0]), "v": f1([0.1, 0.2, 0.05, 0.3])},
+            lambda t, u, v: [float(s.opSmin(t, u, v)), float(s.opSmax(t, u, v)), float(s.opSsubtract(t, u, v))],
+        ),
+        (
+            "opSminMix",
+            "vec3(opSminMix(t, u, v), 0.0)",
+            {"t": f1([0.3, -0.2, 0.1]), "u": f1([0.2, 0.4, 0.5]), "v": f1([0.1, 0.2, 0.05])},
+            lambda t, u, v: _three(s.opSminMix(t, u, v)),
+        ),
+        (
+            "opSminCircular opSminExp opDisplace",
+            "vec3(opSminCircular(t, u, v), opSminExp(t, u, v), opDisplace(t, u, v))",
+            {"t": f1([0.3, -0.2, 0.1]), "u": f1([0.2, 0.4, 0.5]), "v": f1([0.1, 0.2, 0.05])},
+            lambda t, u, v: [
+                float(s.opSminCircular(t, u, v)),
+                float(s.opSminExp(t, u, v)),
+                float(s.opDisplace(t, u, v)),
+            ],
+        ),
+        (
+            "opUniformScale",
+            "vec3(opUniformScale(t, u), 0.0, 0.0)",
+            {"t": f1([0.3, -0.2]), "u": f1([2.0, 0.5])},
+            lambda t, u: _three(s.opUniformScale(t, u)),
+        ),
         # ------------------------------------------------------------------------------------------ sdf/domain3
-        ("domRigid", "domRigid(a, mat3(b, c, d), e)",
-         {"a": v3(P), "b": v3([cols[0]]), "c": v3([cols[1]]), "d": v3([cols[2]]), "e": v3([(0.5, -1.0, 2.0)])},
-         lambda a, b, c, d, e: _three(s.domRigid(a, np.stack([b, c, d], axis=1), e))),
-        ("domMirror", "domMirror(a, b)", {"a": v3(P), "b": v3([(1.0, 0.0, 1.0), (0.0, 1.0, 0.0)])},
-         lambda a, b: _three(s.domMirror(a, b))),
+        (
+            "domRigid",
+            "domRigid(a, mat3(b, c, d), e)",
+            {"a": v3(P), "b": v3([cols[0]]), "c": v3([cols[1]]), "d": v3([cols[2]]), "e": v3([(0.5, -1.0, 2.0)])},
+            lambda a, b, c, d, e: _three(s.domRigid(a, np.stack([b, c, d], axis=1), e)),
+        ),
+        (
+            "domMirror",
+            "domMirror(a, b)",
+            {"a": v3(P), "b": v3([(1.0, 0.0, 1.0), (0.0, 1.0, 0.0)])},
+            lambda a, b: _three(s.domMirror(a, b)),
+        ),
         ("domTwistY", "domTwistY(a, t)", {"a": v3(P), "t": f1([2.0, -0.7])}, lambda a, t: _three(s.domTwistY(a, t))),
         ("domBend", "domBend(a, t)", {"a": v3(P), "t": f1([0.8, -1.3])}, lambda a, t: _three(s.domBend(a, t))),
-        ("lipTwist", "vec3(lipTwist(t, u), 0.0, 0.0)", {"t": f1([1.0, 3.0, -0.5]), "u": f1([1.0, 0.7, 2.0])},
-         lambda t, u: _three(s.lipTwist(t, u))),
-        ("domRepeat point", "probeRepeat(a, b, 0)", {"a": v3(P), "b": v3([(1.0, 2.0, 0.5), (0.0, 1.0, 0.7)])},
-         lambda a, b: _three(s.domRepeat(a, b)[0])),
-        ("domRepeat cell", "probeRepeat(a, b, 1)", {"a": v3(P), "b": v3([(1.0, 2.0, 0.5), (0.3, 1.0, 0.7)])},
-         lambda a, b: _three(s.domRepeat(a, b)[1])),
-        ("domRepeatLimited point", "probeRepeatLimited(a * 4.0, b, 0)", {"a": v3(P), "b": v3([(1.0, 2.0, 0.5)])},
-         lambda a, b: _three(s.domRepeatLimited(a * F32(4.0), b, [-2.0, -1.0, 0.0], [2.0, 1.0, 0.0])[0])),
-        ("domRepeatLimited cell", "probeRepeatLimited(a * 4.0, b, 1)", {"a": v3(P), "b": v3([(1.0, 2.0, 0.5)])},
-         lambda a, b: _three(s.domRepeatLimited(a * F32(4.0), b, [-2.0, -1.0, 0.0], [2.0, 1.0, 0.0])[1])),
-        ("domPolar", "probePolar(m, t)", {"m": v2([(0.3, -0.4), (-1.2, 0.5), (0.0, 0.0), (-0.7, -0.9)]),
-                                          "t": f1([7.0, 5.0, 3.0, 6.6])},
-         lambda m, t: (lambda q, k: [float(q[0]), float(q[1]), float(k)])(*s.domPolar(m, t))),
-        ("domReflect point", "probeReflect(a, b, t, 0)",
-         {"a": v3(P), "b": v3([(0.0, 0.6, 0.8)]), "t": f1([0.2, -0.5])},
-         lambda a, b, t: _three(s.domReflect(a, b, t)[0])),
-        ("domReflect side", "probeReflect(a, b, t, 1)",
-         {"a": v3(P), "b": v3([(0.0, 0.6, 0.8)]), "t": f1([0.2, -0.5])},
-         lambda a, b, t: _three(s.domReflect(a, b, t)[1])),
-        ("domFoldIcosa", "domFoldIcosa(a)", {"a": v3(P + [(-0.3, -0.8, -0.5)])}, lambda a: _three(s.domFoldIcosa(a))),
-        ("domInvert3 point", "probeInvert(a, t, u, 0)", {"a": v3(P), "t": f1([1.0, 2.5]), "u": f1([1.0, 0.5])},
-         lambda a, t, u: _three(s.domInvert3(a, t, u)[0])),
-        ("domInvert3 scale", "probeInvert(a, t, u, 1)", {"a": v3(P), "t": f1([1.0, 2.5]), "u": f1([1.0, 0.5])},
-         lambda a, t, u: _three(s.domInvert3(a, t, u)[1])),
+        (
+            "lipTwist",
+            "vec3(lipTwist(t, u), 0.0, 0.0)",
+            {"t": f1([1.0, 3.0, -0.5]), "u": f1([1.0, 0.7, 2.0])},
+            lambda t, u: _three(s.lipTwist(t, u)),
+        ),
+        (
+            "domRepeat point",
+            "probeRepeat(a, b, 0)",
+            {"a": v3(P), "b": v3([(1.0, 2.0, 0.5), (0.0, 1.0, 0.7)])},
+            lambda a, b: _three(s.domRepeat(a, b)[0]),
+        ),
+        (
+            "domRepeat cell",
+            "probeRepeat(a, b, 1)",
+            {"a": v3(P), "b": v3([(1.0, 2.0, 0.5), (0.3, 1.0, 0.7)])},
+            lambda a, b: _three(s.domRepeat(a, b)[1]),
+        ),
+        (
+            "domRepeatLimited point",
+            "probeRepeatLimited(a * 4.0, b, 0)",
+            {"a": v3(P), "b": v3([(1.0, 2.0, 0.5)])},
+            lambda a, b: _three(s.domRepeatLimited(a * F32(4.0), b, [-2.0, -1.0, 0.0], [2.0, 1.0, 0.0])[0]),
+        ),
+        (
+            "domRepeatLimited cell",
+            "probeRepeatLimited(a * 4.0, b, 1)",
+            {"a": v3(P), "b": v3([(1.0, 2.0, 0.5)])},
+            lambda a, b: _three(s.domRepeatLimited(a * F32(4.0), b, [-2.0, -1.0, 0.0], [2.0, 1.0, 0.0])[1]),
+        ),
+        (
+            "domPolar",
+            "probePolar(m, t)",
+            {"m": v2([(0.3, -0.4), (-1.2, 0.5), (0.0, 0.0), (-0.7, -0.9)]), "t": f1([7.0, 5.0, 3.0, 6.6])},
+            lambda m, t: (lambda q, k: [float(q[0]), float(q[1]), float(k)])(*s.domPolar(m, t)),
+        ),
+        (
+            "domReflect point",
+            "probeReflect(a, b, t, 0)",
+            {"a": v3(P), "b": v3([(0.0, 0.6, 0.8)]), "t": f1([0.2, -0.5])},
+            lambda a, b, t: _three(s.domReflect(a, b, t)[0]),
+        ),
+        (
+            "domReflect side",
+            "probeReflect(a, b, t, 1)",
+            {"a": v3(P), "b": v3([(0.0, 0.6, 0.8)]), "t": f1([0.2, -0.5])},
+            lambda a, b, t: _three(s.domReflect(a, b, t)[1]),
+        ),
+        ("domFoldIcosa", "domFoldIcosa(a)", {"a": v3([*P, (-0.3, -0.8, -0.5)])}, lambda a: _three(s.domFoldIcosa(a))),
+        (
+            "domInvert3 point",
+            "probeInvert(a, t, u, 0)",
+            {"a": v3(P), "t": f1([1.0, 2.5]), "u": f1([1.0, 0.5])},
+            lambda a, t, u: _three(s.domInvert3(a, t, u)[0]),
+        ),
+        (
+            "domInvert3 scale",
+            "probeInvert(a, t, u, 1)",
+            {"a": v3(P), "t": f1([1.0, 2.5]), "u": f1([1.0, 0.5])},
+            lambda a, t, u: _three(s.domInvert3(a, t, u)[1]),
+        ),
         # --------------------------------------------------------------------------------------- ray/intersect
-        ("ixSphere", "vec3(ixSphere(a, b, c, t), 0.0)",
-         {"a": v3([(0.0, 0.0, 0.0), (0.1, 0.0, 0.0), (0.0, 0.0, -6.0)]), "b": v3([toward, head_on, head_on]),
-          "c": v3([(0.3, -0.3, -6.0), (0.0, 0.0, -6.0), (0.0, 0.0, -6.0)]), "t": f1([1.0, 0.5, 1.0])},
-         lambda a, b, c, t: _three(y.ixSphere(a, b, c, t))),
-        ("ixBox span", "probeBox(a, b, c, 0)",
-         {"a": v3([(0.0, 0.0, 3.0), (2.0, 0.5, 0.0), (0.1, 0.1, 0.1)]),
-          "b": v3([head_on, (-1.0, 0.0, 0.0), toward]), "c": v3([(0.5, 0.5, 0.5), (0.4, 0.8, 0.6), (1.0, 1.0, 1.0)])},
-         lambda a, b, c: _three(y.ixBox(a, b, c)[0])),
-        ("ixBox normal", "probeBox(a, b, c, 1)",
-         {"a": v3([(0.0, 0.0, 3.0), (2.0, 0.5, 0.0)]), "b": v3([head_on, (-1.0, 0.0, 0.0)]),
-          "c": v3([(0.5, 0.5, 0.5), (0.4, 0.8, 0.6)])},
-         lambda a, b, c: _three(y.ixBox(a, b, c)[1])),
-        ("ixPlane", "vec3(ixPlane(a, b, c, t), 0.0, 0.0)",
-         {"a": v3([(0.0, 1.0, 0.0), (0.0, 1.0, 0.0), (0.0, -2.0, 0.0)]), "b": v3([floor_ray, (0.0, 1.0, 0.0), toward]),
-          "c": v3([up]), "t": f1([1.0, 1.0, 1.0])},
-         lambda a, b, c, t: _three(y.ixPlane(a, b, c, t))),
-        ("ixSlabY", "vec3(ixSlabY(t, u, v, w), 0.0)",
-         {"t": f1([0.0, 2.0, 0.5]), "u": f1([0.5, -0.25, 0.0]), "v": f1([1.0, 0.0, 0.0]), "w": f1([2.0, 1.0, 1.0])},
-         lambda t, u, v, w: _three(y.ixSlabY(t, u, v, w))),
-        ("ixShell", "vec3(ixShell(a, b, c, t, u), 0.0)",
-         {"a": v3([(0.0, 0.0, 0.0), (0.0, 0.0, -6.0), (0.0, 0.0, -6.8)]), "b": v3([head_on]),
-          "c": v3([(0.0, 0.0, -6.0)]), "t": f1([0.5]), "u": f1([1.0])},
-         lambda a, b, c, t, u: _three(y.ixShell(a, b, c, t, u))),
-        ("rmClipToBox", "vec3(rmClipToBox(a, b, c, d, m), 0.0)",
-         {"a": v3([(0.0, 0.0, 3.0), (0.0, 3.0, 3.0)]), "b": v3([head_on]), "c": v3([(0.0, 0.0, -1.0)]),
-          "d": v3([(0.5, 0.5, 0.5)]), "m": v2([(0.0, 20.0), (4.5, 5.0)])},
-         lambda a, b, c, d, m: _three(y.rmClipToBox(a, b, c, d, m))),
-        ("bvCanSkip", "vec3(bvCanSkip(t, u) ? 1.0 : 0.0, 0.0, 0.0)", {"t": f1([2.0, 0.5]), "u": f1([1.0, 1.0])},
-         lambda t, u: _three(1.0 if y.bvCanSkip(t, u) else 0.0)),
-        ("ixSphereAlt", "vec3(ixSphereAlt(t, u, v), 0.0)",
-         {"t": f1([6371.5, 6371.5, 6500.0]), "u": f1([0.2, -1.0, -0.99]), "v": f1([6371.0, 6371.0, 6400.0])},
-         lambda t, u, v: _three(y.ixSphereAlt(t, u, v))),
+        (
+            "ixSphere",
+            "vec3(ixSphere(a, b, c, t), 0.0)",
+            {
+                "a": v3([(0.0, 0.0, 0.0), (0.1, 0.0, 0.0), (0.0, 0.0, -6.0)]),
+                "b": v3([toward, head_on, head_on]),
+                "c": v3([(0.3, -0.3, -6.0), (0.0, 0.0, -6.0), (0.0, 0.0, -6.0)]),
+                "t": f1([1.0, 0.5, 1.0]),
+            },
+            lambda a, b, c, t: _three(y.ixSphere(a, b, c, t)),
+        ),
+        (
+            "ixBox span",
+            "probeBox(a, b, c, 0)",
+            {
+                "a": v3([(0.0, 0.0, 3.0), (2.0, 0.5, 0.0), (0.1, 0.1, 0.1)]),
+                "b": v3([head_on, (-1.0, 0.0, 0.0), toward]),
+                "c": v3([(0.5, 0.5, 0.5), (0.4, 0.8, 0.6), (1.0, 1.0, 1.0)]),
+            },
+            lambda a, b, c: _three(y.ixBox(a, b, c)[0]),
+        ),
+        (
+            "ixBox normal",
+            "probeBox(a, b, c, 1)",
+            {
+                "a": v3([(0.0, 0.0, 3.0), (2.0, 0.5, 0.0)]),
+                "b": v3([head_on, (-1.0, 0.0, 0.0)]),
+                "c": v3([(0.5, 0.5, 0.5), (0.4, 0.8, 0.6)]),
+            },
+            lambda a, b, c: _three(y.ixBox(a, b, c)[1]),
+        ),
+        (
+            "ixPlane",
+            "vec3(ixPlane(a, b, c, t), 0.0, 0.0)",
+            {
+                "a": v3([(0.0, 1.0, 0.0), (0.0, 1.0, 0.0), (0.0, -2.0, 0.0)]),
+                "b": v3([floor_ray, (0.0, 1.0, 0.0), toward]),
+                "c": v3([up]),
+                "t": f1([1.0, 1.0, 1.0]),
+            },
+            lambda a, b, c, t: _three(y.ixPlane(a, b, c, t)),
+        ),
+        (
+            "ixSlabY",
+            "vec3(ixSlabY(t, u, v, w), 0.0)",
+            {"t": f1([0.0, 2.0, 0.5]), "u": f1([0.5, -0.25, 0.0]), "v": f1([1.0, 0.0, 0.0]), "w": f1([2.0, 1.0, 1.0])},
+            lambda t, u, v, w: _three(y.ixSlabY(t, u, v, w)),
+        ),
+        (
+            "ixShell",
+            "vec3(ixShell(a, b, c, t, u), 0.0)",
+            {
+                "a": v3([(0.0, 0.0, 0.0), (0.0, 0.0, -6.0), (0.0, 0.0, -6.8)]),
+                "b": v3([head_on]),
+                "c": v3([(0.0, 0.0, -6.0)]),
+                "t": f1([0.5]),
+                "u": f1([1.0]),
+            },
+            lambda a, b, c, t, u: _three(y.ixShell(a, b, c, t, u)),
+        ),
+        (
+            "rmClipToBox",
+            "vec3(rmClipToBox(a, b, c, d, m), 0.0)",
+            {
+                "a": v3([(0.0, 0.0, 3.0), (0.0, 3.0, 3.0)]),
+                "b": v3([head_on]),
+                "c": v3([(0.0, 0.0, -1.0)]),
+                "d": v3([(0.5, 0.5, 0.5)]),
+                "m": v2([(0.0, 20.0), (4.5, 5.0)]),
+            },
+            lambda a, b, c, d, m: _three(y.rmClipToBox(a, b, c, d, m)),
+        ),
+        (
+            "bvCanSkip",
+            "vec3(bvCanSkip(t, u) ? 1.0 : 0.0, 0.0, 0.0)",
+            {"t": f1([2.0, 0.5]), "u": f1([1.0, 1.0])},
+            lambda t, u: _three(1.0 if y.bvCanSkip(t, u) else 0.0),
+        ),
+        (
+            "ixSphereAlt",
+            "vec3(ixSphereAlt(t, u, v), 0.0)",
+            {"t": f1([6371.5, 6371.5, 6500.0]), "u": f1([0.2, -1.0, -0.99]), "v": f1([6371.0, 6371.0, 6400.0])},
+            lambda t, u, v: _three(y.ixSphereAlt(t, u, v)),
+        ),
         # ----------------------------------------------------------------------------------------- ray/camera
-        ("camLookAt", "camLookAt(a, b, t)[k]",
-         {"a": v3([(2.0, 1.5, 3.0)] * 3 + [(0.0, 5.0, 0.0)] * 3), "b": v3([(0.0, 0.35, 0.0)]),
-          "t": f1([0.0, 0.0, 0.0, 0.4, 0.4, 0.4]), "k": i1([0, 1, 2, 0, 1, 2])},
-         lambda a, b, t, k: _three(y.camLookAt(a, b, t)[:, k])),
-        ("camRay", "camRay(m, vec2(320.0, 180.0), camLookAt(a, vec3(0.0), 0.0), t)",
-         {"m": v2([(160.5, 90.5), (0.5, 0.5), (300.0, 20.0)]), "a": v3([(2.0, 1.5, 3.0)]), "t": f1([1.7, 2.2, 1.0])},
-         lambda m, a, t: _three(y.camRay(m, [320.0, 180.0], y.camLookAt(a, zero3, 0.0), t))),
-        ("camPixelAngle", "vec3(camPixelAngle(t, u), 0.0, 0.0)", {"t": f1([1.0, 0.6]), "u": f1([180.0, 1080.0])},
-         lambda t, u: _three(y.camPixelAngle(t, u))),
-        ("camOrbit", "camOrbit(m, t, u, a)",
-         {"m": v2([(0.0, 0.0), (0.25, 0.75), (0.9, 0.1)]), "t": f1([0.8, 0.8, 2.0]), "u": f1([3.0, 2.0, 4.0]),
-          "a": v3([(0.0, 0.5, 0.0)])},
-         lambda m, t, u, a: _three(y.camOrbit(m, t, u, a))),
-        ("camOrthoRay dir", "probeOrtho(m, a, t, 0)",
-         {"m": v2([(0.2, -0.3), (-1.0, 0.5)]), "a": v3([(2.0, 1.5, 3.0)]), "t": f1([2.0, 0.5])},
-         lambda m, a, t: _three(y.camOrthoRay(m, y.camLookAt(a, zero3, 0.3), t, a)[0])),
-        ("camOrthoRay origin", "probeOrtho(m, a, t, 1)",
-         {"m": v2([(0.2, -0.3), (-1.0, 0.5)]), "a": v3([(2.0, 1.5, 3.0)]), "t": f1([2.0, 0.5])},
-         lambda m, a, t: _three(y.camOrthoRay(m, y.camLookAt(a, zero3, 0.3), t, a)[1])),
-        ("pathLissajous3", "probePath(t, a, b, k)",
-         {"t": f1([1.3, 1.3, 1.3, 0.4]), "a": v3([(1.0, 0.5, 2.0)]), "b": v3([(0.7, 0.0, 1.9)]),
-          "k": i1([0, 1, 2, 2])},
-         lambda t, a, b, k: _three(y.pathLissajous3(t, a, b)[k])),
-        ("camBanked", "camBanked(a, b, t)[k]",
-         {"a": v3([(1.0, 0.2, -1.0)]), "b": v3([(0.3, 0.0, 0.4)]), "t": f1([0.5, 0.5, 0.5]), "k": i1([0, 1, 2])},
-         lambda a, b, t, k: _three(y.camBanked(a, b, t)[:, k])),
-        ("camBarrel", "vec3(camBarrel(m, t), 0.0)", {"m": v2([(0.3, -0.4), (1.2, 0.6)]), "t": f1([0.15, -0.1])},
-         lambda m, t: _three(y.camBarrel(m, t))),
+        (
+            "camLookAt",
+            "camLookAt(a, b, t)[k]",
+            {
+                "a": v3([(2.0, 1.5, 3.0)] * 3 + [(0.0, 5.0, 0.0)] * 3),
+                "b": v3([(0.0, 0.35, 0.0)]),
+                "t": f1([0.0, 0.0, 0.0, 0.4, 0.4, 0.4]),
+                "k": i1([0, 1, 2, 0, 1, 2]),
+            },
+            lambda a, b, t, k: _three(y.camLookAt(a, b, t)[:, k]),
+        ),
+        (
+            "camRay",
+            "camRay(m, vec2(320.0, 180.0), camLookAt(a, vec3(0.0), 0.0), t)",
+            {"m": v2([(160.5, 90.5), (0.5, 0.5), (300.0, 20.0)]), "a": v3([(2.0, 1.5, 3.0)]), "t": f1([1.7, 2.2, 1.0])},
+            lambda m, a, t: _three(y.camRay(m, [320.0, 180.0], y.camLookAt(a, zero3, 0.0), t)),
+        ),
+        (
+            "camPixelAngle",
+            "vec3(camPixelAngle(t, u), 0.0, 0.0)",
+            {"t": f1([1.0, 0.6]), "u": f1([180.0, 1080.0])},
+            lambda t, u: _three(y.camPixelAngle(t, u)),
+        ),
+        (
+            "camOrbit",
+            "camOrbit(m, t, u, a)",
+            {
+                "m": v2([(0.0, 0.0), (0.25, 0.75), (0.9, 0.1)]),
+                "t": f1([0.8, 0.8, 2.0]),
+                "u": f1([3.0, 2.0, 4.0]),
+                "a": v3([(0.0, 0.5, 0.0)]),
+            },
+            lambda m, t, u, a: _three(y.camOrbit(m, t, u, a)),
+        ),
+        (
+            "camOrthoRay dir",
+            "probeOrtho(m, a, t, 0)",
+            {"m": v2([(0.2, -0.3), (-1.0, 0.5)]), "a": v3([(2.0, 1.5, 3.0)]), "t": f1([2.0, 0.5])},
+            lambda m, a, t: _three(y.camOrthoRay(m, y.camLookAt(a, zero3, 0.3), t, a)[0]),
+        ),
+        (
+            "camOrthoRay origin",
+            "probeOrtho(m, a, t, 1)",
+            {"m": v2([(0.2, -0.3), (-1.0, 0.5)]), "a": v3([(2.0, 1.5, 3.0)]), "t": f1([2.0, 0.5])},
+            lambda m, a, t: _three(y.camOrthoRay(m, y.camLookAt(a, zero3, 0.3), t, a)[1]),
+        ),
+        (
+            "pathLissajous3",
+            "probePath(t, a, b, k)",
+            {
+                "t": f1([1.3, 1.3, 1.3, 0.4]),
+                "a": v3([(1.0, 0.5, 2.0)]),
+                "b": v3([(0.7, 0.0, 1.9)]),
+                "k": i1([0, 1, 2, 2]),
+            },
+            lambda t, a, b, k: _three(y.pathLissajous3(t, a, b)[k]),
+        ),
+        (
+            "camBanked",
+            "camBanked(a, b, t)[k]",
+            {"a": v3([(1.0, 0.2, -1.0)]), "b": v3([(0.3, 0.0, 0.4)]), "t": f1([0.5, 0.5, 0.5]), "k": i1([0, 1, 2])},
+            lambda a, b, t, k: _three(y.camBanked(a, b, t)[:, k]),
+        ),
+        (
+            "camBarrel",
+            "vec3(camBarrel(m, t), 0.0)",
+            {"m": v2([(0.3, -0.4), (1.2, 0.6)]), "t": f1([0.15, -0.1])},
+            lambda m, t: _three(y.camBarrel(m, t)),
+        ),
         # ------------------------------------------------------------------------------------------ ray/march
-        ("rmEpsilon rmPassStep rmHybridStep", "vec3(rmEpsilon(t, u, 1e-4), rmPassStep(v, 0.01, u * 1000.0), "
-         "rmHybridStep(v, u))", {"t": f1([10.0, 0.01, 3.0]), "u": f1([0.002, 0.004, 0.05]),
-                                 "v": f1([-0.4, 0.3, 0.0])},
-         lambda t, u, v: [float(y.rmEpsilon(t, u, 1e-4)), float(y.rmPassStep(v, 0.01, F32(u) * F32(1000.0))),
-                          float(y.rmHybridStep(v, u))]),
-        ("rmJitterStart", "vec3(rmJitterStart(t, u, v), 0.0, 0.0)",
-         {"t": f1([1.0, 0.0]), "u": f1([0.2, 0.3]), "v": f1([0.25, 0.9])},
-         lambda t, u, v: _three(y.rmJitterStart(t, u, v))),
-        ("rmSecondaryOrigin", "rmSecondaryOrigin(a, b, t, 1e-3, u)",
-         {"a": v3([(0.0, 0.0, 0.0), (1.0, 2.0, 3.0)]), "b": v3([up, (0.0, 0.6, 0.8)]), "t": f1([-0.003, 0.0]),
-          "u": f1([1.0, -1.0])},
-         lambda a, b, t, u: _three(y.rmSecondaryOrigin(a, b, t, 1e-3, u))),
+        (
+            "rmEpsilon rmPassStep rmHybridStep",
+            "vec3(rmEpsilon(t, u, 1e-4), rmPassStep(v, 0.01, u * 1000.0), rmHybridStep(v, u))",
+            {"t": f1([10.0, 0.01, 3.0]), "u": f1([0.002, 0.004, 0.05]), "v": f1([-0.4, 0.3, 0.0])},
+            lambda t, u, v: [
+                float(y.rmEpsilon(t, u, 1e-4)),
+                float(y.rmPassStep(v, 0.01, F32(u) * F32(1000.0))),
+                float(y.rmHybridStep(v, u)),
+            ],
+        ),
+        (
+            "rmJitterStart",
+            "vec3(rmJitterStart(t, u, v), 0.0, 0.0)",
+            {"t": f1([1.0, 0.0]), "u": f1([0.2, 0.3]), "v": f1([0.25, 0.9])},
+            lambda t, u, v: _three(y.rmJitterStart(t, u, v)),
+        ),
+        (
+            "rmSecondaryOrigin",
+            "rmSecondaryOrigin(a, b, t, 1e-3, u)",
+            {
+                "a": v3([(0.0, 0.0, 0.0), (1.0, 2.0, 3.0)]),
+                "b": v3([up, (0.0, 0.6, 0.8)]),
+                "t": f1([-0.003, 0.0]),
+                "u": f1([1.0, -1.0]),
+            },
+            lambda a, b, t, u: _three(y.rmSecondaryOrigin(a, b, t, 1e-3, u)),
+        ),
         # the marchers: (t, steps, hit), then the smallest d / t; scene 0 a ball over a floor, 1 a wall head on (the
         # defect 2 case: rmRelaxed used to report 6 and 8 there), 2 a ball that claims 1.4 times its distance
-        ("march t steps hit", "probeMarch(k, j, vec3(0.0), a, t).xyw",
-         {"k": i1([c[0] for c in marches]), "j": i1([c[1] for c in marches]), "a": v3([c[2] for c in marches]),
-          "t": f1([c[3] for c in marches])},
-         lambda k, j, a, t: _march_twin(y, k, j, a, t)[[0, 1, 3]].tolist()),
-        ("march closest", "vec3(probeMarch(k, j, vec3(0.0), a, t).z, 0.0, 0.0)",
-         {"k": i1([0, 0, 0]), "j": i1([0, 1, 2]), "a": v3([unit3(0.3, 0.6, -0.75), unit3(0.3, 0.6, -0.75),
-                                                          unit3(0.5, 0.2, -0.85)]),
-          "t": f1([1.0, 1.6, 1.0])},
-         lambda k, j, a, t: _three(_march_twin(y, k, j, a, t)[2])),
-        ("rmRefine", "vec3(rmRefine(vec3(0.0), a, t, 0.002, 3), 0.0, 0.0)",
-         {"a": v3([head_on, toward]), "t": f1([4.98, 5.0])},
-         lambda a, t: _three(y.rmRefine(zero3, a, t, 0.002, 3, _probe_scene(0)))),
+        (
+            "march t steps hit",
+            "probeMarch(k, j, vec3(0.0), a, t).xyw",
+            {
+                "k": i1([c[0] for c in marches]),
+                "j": i1([c[1] for c in marches]),
+                "a": v3([c[2] for c in marches]),
+                "t": f1([c[3] for c in marches]),
+            },
+            lambda k, j, a, t: _march_twin(y, k, j, a, t)[[0, 1, 3]].tolist(),
+        ),
+        (
+            "march closest",
+            "vec3(probeMarch(k, j, vec3(0.0), a, t).z, 0.0, 0.0)",
+            {
+                "k": i1([0, 0, 0]),
+                "j": i1([0, 1, 2]),
+                "a": v3([unit3(0.3, 0.6, -0.75), unit3(0.3, 0.6, -0.75), unit3(0.5, 0.2, -0.85)]),
+                "t": f1([1.0, 1.6, 1.0]),
+            },
+            lambda k, j, a, t: _three(_march_twin(y, k, j, a, t)[2]),
+        ),
+        (
+            "rmRefine",
+            "vec3(rmRefine(vec3(0.0), a, t, 0.002, 3), 0.0, 0.0)",
+            {"a": v3([head_on, toward]), "t": f1([4.98, 5.0])},
+            lambda a, t: _three(y.rmRefine(zero3, a, t, 0.002, 3, _probe_scene(0))),
+        ),
         # ---------------------------------------------------------------------------------------- ray/normals
-        ("nrmTetra", "probeNormal(0, a, t)",
-         {"a": v3([(0.3, 1.2, -6.0), (1.3, 0.2, -6.0), (0.0, -1.0, 0.0), (0.3, -0.5, -5.2)]),
-          "t": f1([1e-3, 2e-3, 1e-3, -1e-3])},
-         lambda a, t: _three(y.nrmTetra(a, t, _probe_scene(0)))),
-        ("nrmCentral", "probeNormal(1, a, t)",
-         {"a": v3([(0.3, 1.2, -6.0), (1.3, 0.2, -6.0), (0.0, -1.0, 0.0)]), "t": f1([1e-3, 2e-3, 1e-3])},
-         lambda a, t: _three(y.nrmCentral(a, t, _probe_scene(0)))),
-        ("nrmCurvature", "vec3(nrmCurvature(a, t), 0.0, 0.0)",
-         {"a": v3([(0.3, 1.2, -6.0), (2.0, -1.0, 0.0)]), "t": f1([0.05, 0.05])},
-         lambda a, t: _three(y.nrmCurvature(a, t, _probe_scene(0)))),
-        ("nrmEps", "vec3(nrmEps(t, u, v), 0.0, 0.0)", {"t": f1([10.0, 0.0]), "u": f1([0.002, 0.002]), "v": f1([3.0, 1.0])},
-         lambda t, u, v: _three(y.nrmEps(t, u, v))),
-        ("nrmFacet", "nrmFacet(a, t)",
-         {"a": v3([tuple(float(c) for c in _v(0.70, 0.71, 0.0) / np.linalg.norm([0.70, 0.71, 0.0])),
-                   tuple(float(c) for c in _v(0.3, 0.3, 0.9) / np.linalg.norm([0.3, 0.3, 0.9]))]),
-          "t": f1([2.0, 3.0])},
-         lambda a, t: _three(y.nrmFacet(a, t))),
+        (
+            "nrmTetra",
+            "probeNormal(0, a, t)",
+            {
+                "a": v3([(0.3, 1.2, -6.0), (1.3, 0.2, -6.0), (0.0, -1.0, 0.0), (0.3, -0.5, -5.2)]),
+                "t": f1([1e-3, 2e-3, 1e-3, -1e-3]),
+            },
+            lambda a, t: _three(y.nrmTetra(a, t, _probe_scene(0))),
+        ),
+        (
+            "nrmCentral",
+            "probeNormal(1, a, t)",
+            {"a": v3([(0.3, 1.2, -6.0), (1.3, 0.2, -6.0), (0.0, -1.0, 0.0)]), "t": f1([1e-3, 2e-3, 1e-3])},
+            lambda a, t: _three(y.nrmCentral(a, t, _probe_scene(0))),
+        ),
+        (
+            "nrmCurvature",
+            "vec3(nrmCurvature(a, t), 0.0, 0.0)",
+            {"a": v3([(0.3, 1.2, -6.0), (2.0, -1.0, 0.0)]), "t": f1([0.05, 0.05])},
+            lambda a, t: _three(y.nrmCurvature(a, t, _probe_scene(0))),
+        ),
+        (
+            "nrmEps",
+            "vec3(nrmEps(t, u, v), 0.0, 0.0)",
+            {"t": f1([10.0, 0.0]), "u": f1([0.002, 0.002]), "v": f1([3.0, 1.0])},
+            lambda t, u, v: _three(y.nrmEps(t, u, v)),
+        ),
+        (
+            "nrmFacet",
+            "nrmFacet(a, t)",
+            {
+                "a": v3(
+                    [
+                        tuple(float(c) for c in _v(0.70, 0.71, 0.0) / np.linalg.norm([0.70, 0.71, 0.0])),
+                        tuple(float(c) for c in _v(0.3, 0.3, 0.9) / np.linalg.norm([0.3, 0.3, 0.9])),
+                    ]
+                ),
+                "t": f1([2.0, 3.0]),
+            },
+            lambda a, t: _three(y.nrmFacet(a, t)),
+        ),
         # -------------------------------------------------------------------------------------------- ray/aa3
-        ("aaConeCoverage aaDiscriminantEdge", "vec3(aaConeCoverage(t, 0.004), aaDiscriminantEdge(u, 0.01), 0.0)",
-         {"t": f1([0.0, 0.003, 0.004, 0.0052, 0.01]), "u": f1([0.0, 0.0025, -0.0025, 0.004, -0.01])},
-         lambda t, u: [float(y.aaConeCoverage(t, 0.004)), float(y.aaDiscriminantEdge(u, 0.01)), 0.0]),
+        (
+            "aaConeCoverage aaDiscriminantEdge",
+            "vec3(aaConeCoverage(t, 0.004), aaDiscriminantEdge(u, 0.01), 0.0)",
+            {"t": f1([0.0, 0.003, 0.004, 0.0052, 0.01]), "u": f1([0.0, 0.0025, -0.0025, 0.004, -0.01])},
+            lambda t, u: [float(y.aaConeCoverage(t, 0.004)), float(y.aaDiscriminantEdge(u, 0.01)), 0.0],
+        ),
     ]
-    return g
 
 
 def _march_twin(y, kind, which, rd, omega):
@@ -1447,16 +1827,31 @@ def _march_twin(y, kind, which, rd, omega):
     return y.rmBacktrack(ro, rd, rng_, 0.002, 96, 12, scene)
 
 
-PROBE_DEFAULT_TOL = 1e-4    # float32 on SwiftShader against float32 on the CPU, relative to max(1, |value|)
+PROBE_DEFAULT_TOL = 1e-4  # float32 on SwiftShader against float32 on the CPU, relative to max(1, |value|)
 # SwiftShader's sin and cos are approximations (measured here: 2.7e-4 off at -0.14 rad, through rotate2), so a result
 # that goes through a rotation gets 1e-3; a wrong sign, a wrong axis or an unrounded sector count is off by far more.
 TRIG_TOL = 1e-3
-PROBE_TOLERANCE = {"sbSuperquadric": 1e-3, "march t steps hit": 1e-3, "march closest": 1e-3, "rmRefine": 1e-3,
-                   "nrmTetra": 2e-3, "nrmCentral": 2e-3, "nrmCurvature": 2e-2, "ixSphereAlt": 3e-4,
-                   "domInvert3 point": 3e-4, "domInvert3 scale": 3e-4, "opSminCircular opSminExp opDisplace": 3e-4,
-                   "domTwistY": TRIG_TOL, "domBend": TRIG_TOL, "domPolar": TRIG_TOL, "camLookAt": TRIG_TOL,
-                   "camOrbit": TRIG_TOL, "camOrthoRay dir": TRIG_TOL, "camOrthoRay origin": TRIG_TOL,
-                   "pathLissajous3": TRIG_TOL}
+PROBE_TOLERANCE = {
+    "sbSuperquadric": 1e-3,
+    "march t steps hit": 1e-3,
+    "march closest": 1e-3,
+    "rmRefine": 1e-3,
+    "nrmTetra": 2e-3,
+    "nrmCentral": 2e-3,
+    "nrmCurvature": 2e-2,
+    "ixSphereAlt": 3e-4,
+    "domInvert3 point": 3e-4,
+    "domInvert3 scale": 3e-4,
+    "opSminCircular opSminExp opDisplace": 3e-4,
+    "domTwistY": TRIG_TOL,
+    "domBend": TRIG_TOL,
+    "domPolar": TRIG_TOL,
+    "camLookAt": TRIG_TOL,
+    "camOrbit": TRIG_TOL,
+    "camOrthoRay dir": TRIG_TOL,
+    "camOrthoRay origin": TRIG_TOL,
+    "pathLissajous3": TRIG_TOL,
+}
 
 
 def _probe_literal(kind, v):
@@ -1474,19 +1869,35 @@ def _probe_card(groups):
         local = []
         for arg, (kind, vals) in args.items():
             vals = list(vals) + [vals[-1]] * (count - len(vals))
-            decls.append(f"const {kind} PROBE_G{gi}_{arg.upper()}[{count}] = {kind}[{count}]("
-                         + ", ".join(_probe_literal(kind, v) for v in vals) + ");")
+            decls.append(
+                f"const {kind} PROBE_G{gi}_{arg.upper()}[{count}] = {kind}[{count}]("
+                + ", ".join(_probe_literal(kind, v) for v in vals)
+                + ");"
+            )
             local.append(f"{kind} {arg} = PROBE_G{gi}_{arg.upper()}[i];")
         branches.append(f"    if (i < {count}) {{ {' '.join(local)} return {expr}; }}  // {label}\n    i -= {count};")
         n += count
     rows = (n + PROBE_COLS - 1) // PROBE_COLS
-    header = {"card": "rays-twin-probe", "uses": sorted(MODULES.values()), "t": [0], "size": [PROBE_COLS * 6, rows],
-              "note": "TEST PROBE (tests/test_glsl_twins_3d_rays.py): float32 bits of every case, 16 bits per pixel."}
-    body = "\n".join(decls) + "\n" + PROBE_GLSL + "\nvec3 probeCase(int i) {\n" + "\n".join(branches) + \
-        "\n    return vec3(-7.0);   // padding past the last case: never decoded\n}\n\n" + """
+    header = {
+        "card": "rays-twin-probe",
+        "uses": sorted(MODULES.values()),
+        "t": [0],
+        "size": [PROBE_COLS * 6, rows],
+        "note": "TEST PROBE (tests/test_glsl_twins_3d_rays.py): float32 bits of every case, 16 bits per pixel.",
+    }
+    body = (
+        "\n".join(decls)
+        + "\n"
+        + PROBE_GLSL
+        + "\nvec3 probeCase(int i) {\n"
+        + "\n".join(branches)
+        + "\n    return vec3(-7.0);   // padding past the last case: never decoded\n}\n\n"
+        + """
 void mainImage(out vec4 probeOut, in vec2 probeAt) {
     ivec2 cell = ivec2(probeAt);
-    int caseIndex = cell.y * """ + str(PROBE_COLS) + """ + cell.x / 6;
+    int caseIndex = cell.y * """
+        + str(PROBE_COLS)
+        + """ + cell.x / 6;
     int slot = cell.x - (cell.x / 6) * 6;
     vec3 v = probeCase(caseIndex);
     float f = slot < 2 ? v.x : (slot < 4 ? v.y : v.z);
@@ -1495,14 +1906,18 @@ void mainImage(out vec4 probeOut, in vec2 probeAt) {
     probeOut = vec4(float(half16 >> 8u) / 255.0, float(half16 & 255u) / 255.0, 0.0, 1.0);
 }
 """
-    return "//! " + json.dumps(header) + "\n// Apache-2.0, Akashic Aurora. Generated by the test; never tracked.\n" + body, n
+    )
+    return "//! " + json.dumps(
+        header
+    ) + "\n// Apache-2.0, Akashic Aurora. Generated by the test; never tracked.\n" + body, n
 
 
 def _probe_decode(png: Path, n: int) -> np.ndarray:
     from PIL import Image
+
     with Image.open(png) as im:
         px = np.asarray(im.convert("RGB"), dtype=np.uint32)
-    px = px[::-1]                                       # PNG row 0 is the top; fragment row 0 is the bottom
+    px = px[::-1]  # PNG row 0 is the top; fragment row 0 is the bottom
     out = np.zeros((n, 3), dtype=np.float32)
     for i in range(n):
         row, x0 = divmod(i, PROBE_COLS)
@@ -1525,6 +1940,7 @@ def test_the_probe_covers_every_function_of_the_eight_modules(house):
 @pytest.fixture(scope="module")
 def gpu(tmp_path_factory):
     import shutil
+
     if shutil.which("node") is None:
         pytest.skip("node is not on PATH (the headless driver)")
     groups = _probe_groups()
@@ -1532,8 +1948,9 @@ def gpu(tmp_path_factory):
     cards_dir = tmp_path_factory.mktemp("rays_probe_cards")
     (cards_dir / "rays-twin-probe.card").write_text(text, encoding="utf-8", newline="\n")
     out = tmp_path_factory.mktemp("rays_probe_out")
-    report = K.render_cards(["rays-twin-probe"], cards_dir=cards_dir, out_root=out, allow_tracked=True,
-                            lock_wait_min=5, quiet=True)
+    report = K.render_cards(
+        ["rays-twin-probe"], cards_dir=cards_dir, out_root=out, allow_tracked=True, lock_wait_min=5, quiet=True
+    )
     driver = report["driver"]
     if driver.get("error") and "lock" in str(driver["error"]).lower():
         pytest.skip(f"the GPU lock stayed busy: {driver['error']}")
@@ -1551,8 +1968,14 @@ def probe_disagreements(groups, got) -> list:
         count = max(len(v) for _, v in args.values())
         for k in range(count):
             pick = {arg: vals[min(k, len(vals) - 1)] for arg, (kind, vals) in args.items()}
-            call = {arg: (np.asarray(v, dtype=np.float32) if args[arg][0] in ("vec2", "vec3")
-                          else (int(v) if args[arg][0] == "int" else float(v))) for arg, v in pick.items()}
+            call = {
+                arg: (
+                    np.asarray(v, dtype=np.float32)
+                    if args[arg][0] in ("vec2", "vec3")
+                    else (int(v) if args[arg][0] == "int" else float(v))
+                )
+                for arg, v in pick.items()
+            }
             want = np.asarray(twin_fn(**call), dtype=np.float64).reshape(3)
             tol = PROBE_TOLERANCE.get(label, PROBE_DEFAULT_TOL) * np.maximum(1.0, np.abs(want))
             if not (np.all(np.isfinite(got[i])) and np.all(np.abs(got[i] - want) <= tol)):

@@ -39,6 +39,7 @@ the exact path stays byte-for-byte what it was.
   J7  the credit names the axis that won it, and the exact path still reports "exact"
   J8  consume-on-credit still holds across the axes -- one flip cannot be farmed twice
 """
+
 import os
 import sys
 import uuid
@@ -60,12 +61,15 @@ def _c(cmd):
 
 # ---------------------------------------------------------------- the coarsener
 
+
 def test_j1_flags_and_their_values_are_dropped():
     """The typo case, which is the whole reason this slice exists."""
     bad = at_action.coarse_target(_c('py agent_cli.py boot claude --taks "memory reach"'))
     good = at_action.coarse_target(_c('py agent_cli.py boot claude --task "memory reach"'))
-    assert bad and bad == good, "a flag typo must not change the join key"
-    assert "--task" not in good and "--taks" not in good
+    assert bad, "a flag typo must not change the join key"
+    assert bad == good, "a flag typo must not change the join key"
+    assert "--task" not in good
+    assert "--taks" not in good
     assert "memory" not in good, "a flag VALUE is not identity either"
     assert good.endswith("boot claude"), f"the action survives coarsening: {good!r}"
 
@@ -78,25 +82,25 @@ def test_j2_cd_prefix_and_pipeline_tail_are_dropped(monkeypatch):
     coarse axis or it can never reach the record its dressed failure left behind.
     """
     plain = at_action.coarse_target(_c("py scripts/measure_target_join.py"))
-    dressed = at_action.coarse_target(
-        _c("cd /e/AI-Setup && py scripts/measure_target_join.py --json | tail -40"))
-    assert plain and plain == dressed, f"{plain!r} != {dressed!r}"
+    dressed = at_action.coarse_target(_c("cd /e/AI-Setup && py scripts/measure_target_join.py --json | tail -40"))
+    assert plain, f"{plain!r} != {dressed!r}"
+    assert plain == dressed, f"{plain!r} != {dressed!r}"
 
     monkeypatch.setattr(at_action, "record_feedback", lambda *a, **k: True)
     sid = _sid()
-    at_action.mark_impression(sid, _c("cd /e/AI-Setup && py x.py --bad | tail -5"),
-                              ["learn:experiment:l"])
+    at_action.mark_impression(sid, _c("cd /e/AI-Setup && py x.py --bad | tail -5"), ["learn:experiment:l"])
     at_action.resolve_action_outcome(sid, _c("cd /e/AI-Setup && py x.py --bad | tail -5"), False)
     res = at_action.resolve_action_outcome(sid, _c("py x.py"), True)
-    assert res["flipped"] is True and res["credited"] == 1, \
-        "a minimal fix must join its own dressed failure"
+    assert res["flipped"] is True, "a minimal fix must join its own dressed failure"
+    assert res["credited"] == 1, "a minimal fix must join its own dressed failure"
 
 
 def test_j3_heredoc_bodies_are_dropped():
     a = _c("cat > notes.txt <<'EOF'\nfirst body\nEOF")
     b = _c("cat > notes.txt <<'EOF'\na completely different body\nEOF")
     ca, cb = at_action.coarse_target(a), at_action.coarse_target(b)
-    assert ca and ca == cb, "the heredoc BODY is payload, not identity"
+    assert ca, "the heredoc BODY is payload, not identity"
+    assert ca == cb, "the heredoc BODY is payload, not identity"
 
 
 def test_j4_identity_is_preserved_different_actions_never_join(monkeypatch):
@@ -106,12 +110,15 @@ def test_j4_identity_is_preserved_different_actions_never_join(monkeypatch):
     Each pair carries flags so BOTH sides genuinely have a coarse axis -- comparing two
     axis-less keys would pass vacuously on "" == "" and prove nothing.
     """
-    assert at_action.coarse_target(_c("py scripts/a.py --v 1")) \
-        != at_action.coarse_target(_c("py scripts/b.py --v 1")), "different file args"
-    assert at_action.coarse_target(_c("py agent_cli.py boot claude --j")) \
-        != at_action.coarse_target(_c("py agent_cli.py learn claude --j")), "different subcommand"
-    assert at_action.coarse_target(_c("pytest tests/x.py -q")) \
-        != at_action.coarse_target(_c("py tests/x.py -q")), "different executable"
+    assert at_action.coarse_target(_c("py scripts/a.py --v 1")) != at_action.coarse_target(
+        _c("py scripts/b.py --v 1")
+    ), "different file args"
+    assert at_action.coarse_target(_c("py agent_cli.py boot claude --j")) != at_action.coarse_target(
+        _c("py agent_cli.py learn claude --j")
+    ), "different subcommand"
+    assert at_action.coarse_target(_c("pytest tests/x.py -q")) != at_action.coarse_target(_c("py tests/x.py -q")), (
+        "different executable"
+    )
 
     # ...and the behaviour that actually matters: no flip across different actions.
     monkeypatch.setattr(at_action, "record_feedback", lambda *a, **k: True)
@@ -119,24 +126,25 @@ def test_j4_identity_is_preserved_different_actions_never_join(monkeypatch):
     at_action.mark_impression(sid, _c("py scripts/a.py --v 1"), ["learn:experiment:l"])
     at_action.resolve_action_outcome(sid, _c("py scripts/a.py --v 1"), False)
     res = at_action.resolve_action_outcome(sid, _c("py scripts/b.py --v 1"), True)
-    assert res["flipped"] is False and res["credited"] == 0, \
-        "succeeding at a DIFFERENT action must never credit the failed one's lesson"
+    assert res["flipped"] is False, "succeeding at a DIFFERENT action must never credit the failed one's lesson"
+    assert res["credited"] == 0, "succeeding at a DIFFERENT action must never credit the failed one's lesson"
 
 
 def test_j5_only_keys_that_need_no_axis_get_none():
-    """"" means "no second axis". It is for keys that already join exactly (paths) or
+    """ "" means "no second axis". It is for keys that already join exactly (paths) or
     that cannot be parsed -- NOT for minimal commands: suppressing the axis there was the
     bug test_j2 caught, because the fix for a broken command is often the minimal form."""
-    assert at_action.coarse_target(at_action.normalize_target(path=__file__)) == "", \
-        "a path key already joins exactly"
+    assert at_action.coarse_target(at_action.normalize_target(path=__file__)) == "", "a path key already joins exactly"
     assert at_action.coarse_target("") == ""
     assert at_action.coarse_target("garbage-with-no-tag") == ""
     assert at_action.coarse_target("c:") == ""
-    assert at_action.coarse_target(_c("pytest")) == "k:pytest", \
+    assert at_action.coarse_target(_c("pytest")) == "k:pytest", (
         "a minimal command still needs an axis so a dressed sibling can reach it"
+    )
 
 
 # ---------------------------------------------------------------- the loop closing
+
 
 def test_j6_the_credit_loop_closes_across_two_spellings(monkeypatch):
     """THE SLICE. This is the assertion the whole night is for."""
@@ -147,8 +155,8 @@ def test_j6_the_credit_loop_closes_across_two_spellings(monkeypatch):
     assert failed != fixed, "precondition: the exact keys genuinely differ"
 
     at_action.mark_impression(sid, failed, ["learn:experiment:the_lesson"])
-    at_action.resolve_action_outcome(sid, failed, False)        # the typo fails
-    res = at_action.resolve_action_outcome(sid, fixed, True)    # the fix succeeds
+    at_action.resolve_action_outcome(sid, failed, False)  # the typo fails
+    res = at_action.resolve_action_outcome(sid, fixed, True)  # the fix succeeds
 
     assert res["flipped"] is True, "a fixed command must join its own earlier failure"
     assert res["credited"] == 1, "and the lesson surfaced at the failure must be credited"
@@ -170,19 +178,20 @@ def test_j7_the_credit_names_the_axis_that_won_it(monkeypatch):
     at_action.mark_impression(sid2, tgt, ["learn:experiment:l"])
     at_action.resolve_action_outcome(sid2, tgt, False)
     exact = at_action.resolve_action_outcome(sid2, tgt, True)
-    assert exact["flipped"] is True and exact["join"] == "exact", \
-        "the pre-existing path is unchanged and still says so"
+    assert exact["flipped"] is True, "the pre-existing path is unchanged and still says so"
+    assert exact["join"] == "exact", "the pre-existing path is unchanged and still says so"
 
     staged = at_action.session_outcomes(sid)
-    assert staged and staged[-1].get("join") == "coarse", \
+    assert staged, "the durable outcome record carries the axis too, or the audit is impossible"
+    assert staged[-1].get("join") == "coarse", (
         "the durable outcome record carries the axis too, or the audit is impossible"
+    )
 
 
 def test_j8_consume_on_credit_holds_across_the_axes(monkeypatch):
     """One flip, one credit. The coarse axis must not become a farm."""
     calls = []
-    monkeypatch.setattr(at_action, "record_feedback",
-                        lambda src, *a, **k: calls.append(src) or True)
+    monkeypatch.setattr(at_action, "record_feedback", lambda src, *a, **k: calls.append(src) or True)
     sid = _sid()
     at_action.mark_impression(sid, _c("py z.py --a 1"), ["learn:experiment:l"])
     at_action.resolve_action_outcome(sid, _c("py z.py --a 1"), False)
@@ -203,15 +212,17 @@ def test_j9_a_command_whose_identity_is_a_flag_value_gets_no_axis(monkeypatch):
     path argument. A reduced-to-one-token key is refused; a genuinely minimal command,
     where nothing had to be dropped, still gets its axis (see test_j5).
     """
-    assert at_action.coarse_target(_c('py -c "import io; io.open(1)"')) == "", \
+    assert at_action.coarse_target(_c('py -c "import io; io.open(1)"')) == "", (
         "the interpreter name alone must never be a join key"
-    assert at_action.coarse_target(_c("pytest -q")) == "", \
+    )
+    assert at_action.coarse_target(_c("pytest -q")) == "", (
         "reduced to one token by dropping flags -- the identity was in the flags"
+    )
     # ...and the floor is DISTINCT tokens, not token COUNT: this one slips any length
     # test while naming nothing but the interpreter, twice. From the live sample.
-    assert at_action.coarse_target(
-        _c("py -m arsenal.practice --help; py -m arsenal.practice moment 20260915")) == "", \
+    assert at_action.coarse_target(_c("py -m arsenal.practice --help; py -m arsenal.practice moment 20260915")) == "", (
         "'py py' is two tokens and still only names the program being run"
+    )
     assert at_action.coarse_target(_c("py -c 'a'")) == at_action.coarse_target(_c("py -c 'b'")) == ""
 
     monkeypatch.setattr(at_action, "record_feedback", lambda *a, **k: True)
@@ -219,8 +230,8 @@ def test_j9_a_command_whose_identity_is_a_flag_value_gets_no_axis(monkeypatch):
     at_action.mark_impression(sid, _c('py -c "first script"'), ["learn:experiment:l"])
     at_action.resolve_action_outcome(sid, _c('py -c "first script"'), False)
     res = at_action.resolve_action_outcome(sid, _c('py -c "a totally different script"'), True)
-    assert res["flipped"] is False and res["credited"] == 0, \
-        "fixing an unrelated one-off script must not credit anything"
+    assert res["flipped"] is False, "fixing an unrelated one-off script must not credit anything"
+    assert res["credited"] == 0, "fixing an unrelated one-off script must not credit anything"
 
 
 def test_j10_a_shared_setup_preamble_does_not_collapse_distinct_actions(monkeypatch):
@@ -233,12 +244,16 @@ def test_j10_a_shared_setup_preamble_does_not_collapse_distinct_actions(monkeypa
     """
     a = at_action.coarse_target(_c("$t = get-date; node tests/score_export.test.mjs --sessions"))
     b = at_action.coarse_target(_c("$t = get-date; py tests/test_score_export.py --sessions"))
-    assert a and b and a != b, f"preamble collapsed two actions: {a!r} == {b!r}"
-    assert "score_export.test.mjs" in a and "node" in a, f"the real action must survive: {a!r}"
+    assert a, f"preamble collapsed two actions: {a!r} == {b!r}"
+    assert b, f"preamble collapsed two actions: {a!r} == {b!r}"
+    assert a != b, f"preamble collapsed two actions: {a!r} == {b!r}"
+    assert "score_export.test.mjs" in a, f"the real action must survive: {a!r}"
+    assert "node" in a, f"the real action must survive: {a!r}"
 
     # ...and the navigation prefix is still dropped, so the two spellings still agree.
-    assert at_action.coarse_target(_c("cd e:/ai-setup; git log --oneline -3")) \
-        == at_action.coarse_target(_c("git log --oneline -5"))
+    assert at_action.coarse_target(_c("cd e:/ai-setup; git log --oneline -3")) == at_action.coarse_target(
+        _c("git log --oneline -5")
+    )
 
     monkeypatch.setattr(at_action, "record_feedback", lambda *a, **k: True)
     sid = _sid()
@@ -260,25 +275,25 @@ def test_j11_a_heredoc_moves_the_program_into_the_body_so_there_is_nothing_to_jo
     60 distinct later successes. The floor's own docstring names `py -c "<script>"` as the
     case it refuses; every one of these routes around it with a prefix.
     """
-    for cmd in ("PYTHONUTF8=1 py - <<PY",
-                "export PYTHONIOENCODING=utf-8 && py - <<EOF",
-                "timeout 600 py - <<py"):
+    for cmd in ("PYTHONUTF8=1 py - <<PY", "export PYTHONIOENCODING=utf-8 && py - <<EOF", "timeout 600 py - <<py"):
         assert at_action.coarse_target(_c(cmd)) == "", f"preamble bought a key: {cmd!r}"
 
     # An env prefix is not identity, so stripping it EARNS a join rather than losing one.
-    assert at_action.coarse_target(_c("PYTHONUTF8=1 py scripts/x.py")) \
-        == at_action.coarse_target(_c("py scripts/x.py")) != ""
+    assert (
+        at_action.coarse_target(_c("PYTHONUTF8=1 py scripts/x.py"))
+        == at_action.coarse_target(_c("py scripts/x.py"))
+        != ""
+    )
     # A heredoc whose command still names a FILE keeps its identity (see test_j3).
     assert at_action.coarse_target(_c("cat > notes.txt <<'EOF'\nbody\nEOF")) != ""
 
     monkeypatch.setattr(at_action, "record_feedback", lambda *a, **k: True)
     sid = _sid()
-    at_action.mark_impression(sid, _c("PYTHONUTF8=1 py - <<PY\nprobe a\nPY"),
-                              ["learn:experiment:l"])
+    at_action.mark_impression(sid, _c("PYTHONUTF8=1 py - <<PY\nprobe a\nPY"), ["learn:experiment:l"])
     at_action.resolve_action_outcome(sid, _c("PYTHONUTF8=1 py - <<PY\nprobe a\nPY"), False)
     res = at_action.resolve_action_outcome(sid, _c("PYTHONUTF8=1 py - <<PY\nunrelated\nPY"), True)
-    assert res["flipped"] is False and res["credited"] == 0, \
-        "two unrelated heredoc programs must not credit each other"
+    assert res["flipped"] is False, "two unrelated heredoc programs must not credit each other"
+    assert res["credited"] == 0, "two unrelated heredoc programs must not credit each other"
 
 
 def test_j12_a_flag_before_the_program_must_not_erase_the_subcommand():
@@ -289,11 +304,15 @@ def test_j12_a_flag_before_the_program_must_not_erase_the_subcommand():
     successes, one of them a mailbox WRITE. A file argument restarts the identity space."""
     send = at_action.coarse_target(_c("py -3.11 agent_cli.py bifrost-send --help"))
     mail = at_action.coarse_target(_c("py -3.11 agent_cli.py mailbox claude --as act --note x"))
-    assert send and mail and send != mail, f"the CLI collapsed: {send!r} == {mail!r}"
-    assert "bifrost-send" in send and "mailbox" in mail
+    assert send, f"the CLI collapsed: {send!r} == {mail!r}"
+    assert mail, f"the CLI collapsed: {send!r} == {mail!r}"
+    assert send != mail, f"the CLI collapsed: {send!r} == {mail!r}"
+    assert "bifrost-send" in send
+    assert "mailbox" in mail
     # ...and the flag's own VALUE is still not identity (test_j1 must keep holding).
-    assert at_action.coarse_target(_c('py agent_cli.py boot claude --task "memory reach"')) \
-        == at_action.coarse_target(_c('py agent_cli.py boot claude --task "other thing"'))
+    assert at_action.coarse_target(_c('py agent_cli.py boot claude --task "memory reach"')) == at_action.coarse_target(
+        _c('py agent_cli.py boot claude --task "other thing"')
+    )
 
 
 def test_j13_redirection_direction_is_part_of_the_action():
@@ -303,8 +322,7 @@ def test_j13_redirection_direction_is_part_of_the_action():
     write = at_action.coarse_target(_c("cat > notes.txt <<MSG\nx\nMSG"))
     append = at_action.coarse_target(_c("cat >> notes.txt <<MSG\nx\nMSG"))
     read = at_action.coarse_target(_c("cat notes.txt"))
-    assert len({write, append, read}) == 3, \
-        f"write/append/read collapsed: {write!r} {append!r} {read!r}"
+    assert len({write, append, read}) == 3, f"write/append/read collapsed: {write!r} {append!r} {read!r}"
 
 
 def test_j14_an_inline_program_has_no_identity_left_to_join_on(monkeypatch):
@@ -318,10 +336,12 @@ def test_j14_an_inline_program_has_no_identity_left_to_join_on(monkeypatch):
     the program arrives in an argument, that argument IS the identity and we drop it, so
     there is nothing left to join two different programs on.
     """
-    for cmd in ('py -c "import json; p=\'state/coord/tasks.json\'; print(p)"',
-                'py -c "import io; io.open(1)"',
-                'node -e "require(\'./scripts/a.js\')"',
-                'pwsh -Command "Get-ChildItem e:/ai-setup"'):
+    for cmd in (
+        "py -c \"import json; p='state/coord/tasks.json'; print(p)\"",
+        'py -c "import io; io.open(1)"',
+        "node -e \"require('./scripts/a.js')\"",
+        'pwsh -Command "Get-ChildItem e:/ai-setup"',
+    ):
         assert at_action.coarse_target(_c(cmd)) == "", f"inline program kept a key: {cmd!r}"
 
     # ...but `-c` is NOT an inline program to everything: grep counts with it.
@@ -334,8 +354,8 @@ def test_j14_an_inline_program_has_no_identity_left_to_join_on(monkeypatch):
     at_action.mark_impression(sid, a, ["learn:experiment:l"])
     at_action.resolve_action_outcome(sid, a, False)
     res = at_action.resolve_action_outcome(sid, b, True)
-    assert res["flipped"] is False and res["credited"] == 0, \
-        "reading a fixture and deleting a build dir are not one action"
+    assert res["flipped"] is False, "reading a fixture and deleting a build dir are not one action"
+    assert res["credited"] == 0, "reading a fixture and deleting a build dir are not one action"
 
 
 def test_j15_which_tree_is_part_of_the_action(monkeypatch):
@@ -347,8 +367,7 @@ def test_j15_which_tree_is_part_of_the_action(monkeypatch):
     here = at_action.coarse_target(_c("cd /e/AI-Setup && npm run build"))
     sandbox = at_action.coarse_target(_c("cd /e/AI-Setup-Sandbox && npm run build"))
     sibling = at_action.coarse_target(_c("cd /e/akashiclabs-site && npm run build"))
-    assert len({here, sandbox, sibling}) == 3, \
-        f"three trees, one key: {here!r} {sandbox!r} {sibling!r}"
+    assert len({here, sandbox, sibling}) == 3, f"three trees, one key: {here!r} {sandbox!r} {sibling!r}"
     # cd to the repo root is a no-op and must still join the bare spelling, in BOTH the
     # git-bash and the Windows spelling of the same directory.
     bare = at_action.coarse_target(_c("npm run build"))
@@ -357,12 +376,9 @@ def test_j15_which_tree_is_part_of_the_action(monkeypatch):
 
     monkeypatch.setattr(at_action, "record_feedback", lambda *a, **k: True)
     sid = _sid()
-    at_action.mark_impression(sid, _c("cd /e/AI-Setup-Sandbox && py agent_cli.py boot claude"),
-                              ["learn:experiment:l"])
-    at_action.resolve_action_outcome(
-        sid, _c("cd /e/AI-Setup-Sandbox && py agent_cli.py boot claude"), False)
-    res = at_action.resolve_action_outcome(
-        sid, _c("cd /e/AI-Setup && py agent_cli.py boot claude"), True)
+    at_action.mark_impression(sid, _c("cd /e/AI-Setup-Sandbox && py agent_cli.py boot claude"), ["learn:experiment:l"])
+    at_action.resolve_action_outcome(sid, _c("cd /e/AI-Setup-Sandbox && py agent_cli.py boot claude"), False)
+    res = at_action.resolve_action_outcome(sid, _c("cd /e/AI-Setup && py agent_cli.py boot claude"), True)
     assert res["flipped"] is False, "the sandbox and the live repo are different actions"
 
 
@@ -371,13 +387,14 @@ def test_j16_powershell_nav_and_line_continuations_are_not_identity():
     PowerShell's own idiom created the bypass `cd` was dropped to prevent (2 live false
     flips). And `_looks_pathy("\\\\")` was True, so a trailing line-continuation became a
     phantom `/` token that satisfied the identity floor by itself."""
-    assert at_action.coarse_target(_c("Set-Location e:\\ai-setup; py -c \"import os\"")) == "", \
+    assert at_action.coarse_target(_c('Set-Location e:\\ai-setup; py -c "import os"')) == "", (
         "Set-Location must be nav, exactly as cd is"
-    assert at_action.coarse_target(_c("$env:PYTHONUTF8='1'; py -c \"import os\"")) == "", \
+    )
+    assert at_action.coarse_target(_c("$env:PYTHONUTF8='1'; py -c \"import os\"")) == "", (
         "an assignment-only statement performs nothing"
-    assert at_action.coarse_target(_c("$t = Get-Date; py -c \"import os\"")) == ""
-    assert at_action.coarse_target(_c('py -c "import os" \\\n 2>&1')) == "", \
-        "a line continuation is not a path"
+    )
+    assert at_action.coarse_target(_c('$t = Get-Date; py -c "import os"')) == ""
+    assert at_action.coarse_target(_c('py -c "import os" \\\n 2>&1')) == "", "a line continuation is not a path"
 
 
 def test_j17_a_dressed_minimal_command_still_joins_its_bare_sibling():
@@ -388,8 +405,7 @@ def test_j17_a_dressed_minimal_command_still_joins_its_bare_sibling():
     bare = at_action.coarse_target(_c("pytest"))
     assert bare == "k:pytest"
     assert at_action.coarse_target(_c("cd /e/AI-Setup && pytest")) == bare
-    assert at_action.coarse_target(_c("pytest | tail -40")) == bare, \
-        "a pipeline tail is not identity either"
+    assert at_action.coarse_target(_c("pytest | tail -40")) == bare, "a pipeline tail is not identity either"
     # ...while a dropped FLAG still refuses, because that is identity we cannot see.
     assert at_action.coarse_target(_c("pytest -q")) == ""
 

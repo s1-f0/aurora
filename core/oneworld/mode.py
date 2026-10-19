@@ -32,9 +32,13 @@ nothing read it). Adding a word is a one-line edit HERE and nowhere else.
 W2 builds the SHAPE and its validation. The specific modes each surface declares arrive WITH that
 surface (a later slice); this does not enumerate them.
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
 
 # Ordered quiet -> loud. The ONE place these words live.
 SEVERITY = ("silent", "whisper", "normal", "loud")
@@ -43,9 +47,9 @@ SEVERITY = ("silent", "whisper", "normal", "loud")
 EDGE_CLASSES = ("resolved", "dangling", "confessed")
 
 
-def make_mode(regions: Iterable[str],
-              verbosity: Optional[Mapping[str, str]] = None,
-              reach: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+def make_mode(
+    regions: Iterable[str], verbosity: Mapping[str, str] | None = None, reach: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     """Build and VALIDATE a mode. Refuses, rather than silently coercing:
       - a verbosity entry for a region not in `regions` (you cannot tune a region you do not draw);
       - a verbosity level outside SEVERITY;
@@ -54,12 +58,13 @@ def make_mode(regions: Iterable[str],
     """
     regs = tuple(dict.fromkeys(str(r) for r in regions))  # dedupe, keep order
 
-    verb: Dict[str, str] = {}
+    verb: dict[str, str] = {}
     for region, level in (verbosity or {}).items():
         if region not in regs:
             raise ValueError(
                 f"verbosity names region {region!r}, which is not declared in regions {regs} -- "
-                "a mode cannot set how loudly to draw a region it never declared it would draw")
+                "a mode cannot set how loudly to draw a region it never declared it would draw"
+            )
         if level not in SEVERITY:
             raise ValueError(f"verbosity level {level!r} not in SEVERITY {SEVERITY}")
         verb[region] = level
@@ -71,8 +76,7 @@ def make_mode(regions: Iterable[str],
         if e not in EDGE_CLASSES:
             raise ValueError(f"reach edge class {e!r} not in EDGE_CLASSES {EDGE_CLASSES}")
 
-    return {"regions": regs, "verbosity": verb,
-            "reach": {"directions": directions, "edges": edges}}
+    return {"regions": regs, "verbosity": verb, "reach": {"directions": directions, "edges": edges}}
 
 
 def permits(mode: Mapping[str, Any], region: str) -> bool:
@@ -86,4 +90,5 @@ def verdict_guard(mode: Mapping[str, Any], region: str) -> None:
     if not permits(mode, region):
         raise ValueError(
             f"mode declares regions {tuple(mode.get('regions', ()))} and may not issue a verdict "
-            f"about {region!r} -- declare the boundary before judging the whole")
+            f"about {region!r} -- declare the boundary before judging the whole"
+        )

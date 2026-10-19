@@ -2,13 +2,13 @@
 
 
 def test_report_bench_numbers():
+    from core.screenspace.capture import _load_mss
     from tests.screenspace.bench_observe_latency import (
-        _substrate_kind,
+        _BENCHABLE,
         _measure_capture_l5,
         _measure_l0_l3_v2,
-        _BENCHABLE,
+        _substrate_kind,
     )
-    from core.screenspace.capture import _load_mss
 
     print("\n=== [bench-report] observe latency on THIS host ===")
     print(f"substrate kind = {_substrate_kind()}")

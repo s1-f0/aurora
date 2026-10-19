@@ -10,30 +10,43 @@ cannot see, the stale layer is the browser's own list, and the hint can say so i
 
 Design: docs/library/map/20261007_design-night-roadmap-2026-10-07_fa48f2.md (H1). Tests: tests/test_arsenal_midiports.py.
 """
+
 from __future__ import annotations
 
 import re
 import subprocess
 import sys
-from typing import List
 
 SERVICE = "midisrv"
 _STATES = {"1": "stopped", "2": "start_pending", "3": "stop_pending", "4": "running"}
 
 
-def _winmm_names(kind: str) -> List[str]:
+def _winmm_names(kind: str) -> list[str]:
     """The WinMM device names for kind "in" or "out". The API caps each name at 31 characters."""
     import ctypes
     from ctypes import wintypes
 
     class _InCaps(ctypes.Structure):
-        _fields_ = [("wMid", wintypes.WORD), ("wPid", wintypes.WORD), ("vDriverVersion", wintypes.UINT),
-                    ("szPname", wintypes.WCHAR * 32), ("dwSupport", wintypes.DWORD)]
+        _fields_ = [
+            ("wMid", wintypes.WORD),
+            ("wPid", wintypes.WORD),
+            ("vDriverVersion", wintypes.UINT),
+            ("szPname", wintypes.WCHAR * 32),
+            ("dwSupport", wintypes.DWORD),
+        ]
 
     class _OutCaps(ctypes.Structure):
-        _fields_ = [("wMid", wintypes.WORD), ("wPid", wintypes.WORD), ("vDriverVersion", wintypes.UINT),
-                    ("szPname", wintypes.WCHAR * 32), ("wTechnology", wintypes.WORD), ("wVoices", wintypes.WORD),
-                    ("wNotes", wintypes.WORD), ("wChannelMask", wintypes.WORD), ("dwSupport", wintypes.DWORD)]
+        _fields_ = [
+            ("wMid", wintypes.WORD),
+            ("wPid", wintypes.WORD),
+            ("vDriverVersion", wintypes.UINT),
+            ("szPname", wintypes.WCHAR * 32),
+            ("wTechnology", wintypes.WORD),
+            ("wVoices", wintypes.WORD),
+            ("wNotes", wintypes.WORD),
+            ("wChannelMask", wintypes.WORD),
+            ("dwSupport", wintypes.DWORD),
+        ]
 
     winmm = ctypes.WinDLL("winmm")
     if kind == "in":
@@ -63,8 +76,9 @@ def parse_sc_state(text: str) -> str:
 def service_state(name: str = SERVICE) -> str:
     try:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # the server may run windowless: never flash a console
-        out = subprocess.run(["sc.exe", "query", name], capture_output=True, text=True, errors="replace",
-                             timeout=3, creationflags=flags)
+        out = subprocess.run(
+            ["sc.exe", "query", name], capture_output=True, text=True, errors="replace", timeout=3, creationflags=flags
+        )
         return parse_sc_state(out.stdout + out.stderr)
     except Exception:
         return "unknown"
@@ -75,7 +89,11 @@ def snapshot() -> dict:
     if sys.platform != "win32":
         return {"ok": False, "reason": "not windows"}
     try:
-        return {"ok": True, "inputs": _winmm_names("in"), "outputs": _winmm_names("out"),
-                "service": {"name": SERVICE, "state": service_state()}}
+        return {
+            "ok": True,
+            "inputs": _winmm_names("in"),
+            "outputs": _winmm_names("out"),
+            "service": {"name": SERVICE, "state": service_state()},
+        }
     except Exception as exc:
         return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}

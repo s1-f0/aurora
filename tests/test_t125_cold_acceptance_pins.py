@@ -20,16 +20,13 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import re
-import sys
+from pathlib import Path
 
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GEN = os.path.join(ROOT, "scripts", "generators", "gen_datasheet.py")
-LOOKUPS = os.path.join(
-    ROOT, "research", "in-flight", "newcomer-failed-lookups-grok-2026-07-31.md"
-)
+LOOKUPS = os.path.join(ROOT, "research", "in-flight", "newcomer-failed-lookups-grok-2026-07-31.md")
 
 
 def _load_gen():
@@ -66,7 +63,7 @@ def test_p0_generator_and_lookups_artifact_exist():
     """P0: cold seat can find the tool and the published lookup list."""
     assert os.path.isfile(GEN)
     assert os.path.isfile(LOOKUPS)
-    body = open(LOOKUPS, encoding="utf-8").read()
+    body = Path(LOOKUPS).read_text(encoding="utf-8")
     assert "check_comprehensibility" in body
     assert "I blamed myself" in body
 
@@ -108,7 +105,8 @@ def test_p2_two_worklive_organs_are_distinct_modules(sheets):
     """
     liv = sheets.get("core/comm/liveness.py")
     ros = sheets.get("core/comm/roster.py")
-    assert liv and ros, "RED: liveness/roster missing from universe sheets"
+    assert liv, "RED: liveness/roster missing from universe sheets"
+    assert ros, "RED: liveness/roster missing from universe sheets"
     assert "core.comm.liveness" in (ros.get("imports_internal") or []), (
         "RED: roster does not declare depends-on liveness in one hop"
     )
@@ -130,10 +128,10 @@ def test_p1_alive_now_is_not_claimed_by_temporal_band(sheets, coverage):
     assert "last_touch_days" in ros
     not_derived = " ".join(coverage.get("not_derived_in_v0") or []).lower()
     # Generator docstring / coverage must refuse runtime liveness claims.
-    src = open(GEN, encoding="utf-8").read().lower()
-    assert "who is active" in src or "says nothing about who is" in src or (
-        "runtime/observed" in not_derived
-    ), "RED: no honesty marker that temporal ≠ live presence"
+    src = Path(GEN).read_text(encoding="utf-8").lower()
+    assert "who is active" in src or "says nothing about who is" in src or ("runtime/observed" in not_derived), (
+        "RED: no honesty marker that temporal ≠ live presence"
+    )
 
 
 def test_p_mailbox_ownership_stays_unknown(sheets, coverage):
@@ -156,9 +154,9 @@ def test_p_no_verified_claim_without_gate_receipts(sheets, coverage):
     """Cross-cutting: nothing renders VERIFIED in v0 (gate-health not yet green)."""
     for path, s in sheets.items():
         blob = str(s).lower()
-        assert "verified" not in blob or "no field here is verified" in open(
-            GEN, encoding="utf-8"
-        ).read().lower(), f"unexpected verified claim on {path}"
+        assert "verified" not in blob or "no field here is verified" in Path(GEN).read_text(encoding="utf-8").lower(), (
+            f"unexpected verified claim on {path}"
+        )
     nd = " ".join(coverage.get("not_derived_in_v0") or []).lower()
     assert "verified" in nd or "gate-health" in nd or "gate" in nd
 
@@ -167,7 +165,7 @@ def test_p_no_verified_claim_without_gate_receipts(sheets, coverage):
 
 
 @pytest.mark.parametrize(
-    "lookup_id,module,must_answer",
+    ("lookup_id", "module", "must_answer"),
     [
         # Structural slices that the datasheet is ON THE HOOK for.
         (7, "scripts/githooks/pre_commit.py", "broken_path_refs"),
@@ -183,13 +181,12 @@ def test_one_hop_field_present(sheets, lookup_id, module, must_answer):
     assert s, f"lookup {lookup_id}: UNSCANNED {module}"
     val = s.get(must_answer)
     assert val not in (None, [], "", "UNKNOWN"), (
-        f"RED lookup {lookup_id}: {module}.{must_answer} empty/UNKNOWN — "
-        f"cold seat still cannot answer in one hop"
+        f"RED lookup {lookup_id}: {module}.{must_answer} empty/UNKNOWN — cold seat still cannot answer in one hop"
     )
 
 
 @pytest.mark.parametrize(
-    "lookup_id,reason",
+    ("lookup_id", "reason"),
     [
         (1, "live process liveness is runtime, not git"),
         (4, "wake-worthiness of kind=chat is protocol, not import graph"),
@@ -225,9 +222,7 @@ def test_ops_lookups_must_not_fake_structural_answers(sheets, coverage, lookup_i
     }
     for s in sheets.values():
         for k in forbidden_keys:
-            assert k not in s, (
-                f"FAIL lookup {lookup_id}: invented field {k} ({reason})"
-            )
+            assert k not in s, f"FAIL lookup {lookup_id}: invented field {k} ({reason})"
     assert coverage.get("not_derived_in_v0"), f"lookup {lookup_id}: empty not_derived"
 
 
@@ -266,9 +261,8 @@ def test_red_p2_dual_worklive_key_shapes_on_sheet(sheets):
         blob = str(sheets[path]).lower()
         if "worklive:" in blob or "worklive/<" in blob or "#sid" in blob:
             return
-    assert False, (
-        "RED: worklive dual-key shapes not surfaced on sheets — "
-        "cold seat still needs source archaeology for lookup 2"
+    raise AssertionError(
+        "RED: worklive dual-key shapes not surfaced on sheets — cold seat still needs source archaeology for lookup 2"
     )
 
 
@@ -286,9 +280,8 @@ def test_red_p7_broken_path_points_at_successor(sheets):
         return
     if "scripts/checkers/check_comprehensibility.py" in blob:
         return
-    assert False, (
-        "RED: broken_path_refs names the ghost but not the successor path — "
-        "lookup 7 still needs a second hop"
+    raise AssertionError(
+        "RED: broken_path_refs names the ghost but not the successor path — lookup 7 still needs a second hop"
     )
 
 

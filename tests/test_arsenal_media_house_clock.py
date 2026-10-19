@@ -9,6 +9,7 @@ The references here are independent of the code under test: a decode with no see
 stream sits at the video's first file time + k / fps) and ffprobe's own stream and format start times. OBS MP4 starts
 every stream at 0, so none of this differs on Daniel's recordings.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,10 +23,18 @@ from PIL import Image
 from arsenal.media import cut, edit, ff, frames, probe, sheet, shots
 
 FPS = 30
-TS_START = 1.4                       # the mpegts muxer's default: the container clock starts 1.4 s in
-FAST = {"id": "test_x264", "width": "source", "height": "source", "fps": "source", "fit": "pad", "loudness": "none",
-        "vcodec": ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "18", "-pix_fmt", "yuv420p"],
-        "acodec": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"], "container": "mp4"}
+TS_START = 1.4  # the mpegts muxer's default: the container clock starts 1.4 s in
+FAST = {
+    "id": "test_x264",
+    "width": "source",
+    "height": "source",
+    "fps": "source",
+    "fit": "pad",
+    "loudness": "none",
+    "vcodec": ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "18", "-pix_fmt", "yuv420p"],
+    "acodec": ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"],
+    "container": "mp4",
+}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -54,12 +63,53 @@ def _make_ts(out: Path, *, video_delay: float = 0.0) -> Path:
     keyframe every 2 s, none at the cut), a noise track; MPEG-TS, so the container clock starts at 1.4 s. The delay
     goes on the first segment only: concat appends the second after it, so the picture stays gapless."""
     delay = ["-itsoffset", f"{video_delay}"] if video_delay else []
-    ff.run(["-v", "error", "-y", *delay, "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=3",
-            "-f", "lavfi", "-i", f"testsrc=s=320x180:r={FPS}:d=5",
-            "-f", "lavfi", "-i", "anoisesrc=d=8.6:c=white:seed=7:a=0.3",
-            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]", "-map", "2:a",
-            "-c:v", "libx264", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0", "-bf", "0", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-f", "mpegts", str(out)])
+    ff.run(
+        [
+            "-v",
+            "error",
+            "-y",
+            *delay,
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc2=s=320x180:r={FPS}:d=3",
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc=s=320x180:r={FPS}:d=5",
+            "-f",
+            "lavfi",
+            "-i",
+            "anoisesrc=d=8.6:c=white:seed=7:a=0.3",
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map",
+            "[v]",
+            "-map",
+            "2:a",
+            "-c:v",
+            "libx264",
+            "-g",
+            "60",
+            "-keyint_min",
+            "60",
+            "-sc_threshold",
+            "0",
+            "-bf",
+            "0",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-ar",
+            "48000",
+            "-f",
+            "mpegts",
+            str(out),
+        ]
+    )
     return out
 
 
@@ -72,7 +122,7 @@ def media(tmp_path_factory):
     d = tmp_path_factory.mktemp("house_clock")
     ts = _make_ts(d / "clock.ts")
     late = _make_ts(d / "late picture.ts", video_delay=0.5)
-    mkv = d / "clock 1.4.mkv"             # the editor imports MKV, not TS: the same packets, the same 1.4 s clock
+    mkv = d / "clock 1.4.mkv"  # the editor imports MKV, not TS: the same packets, the same 1.4 s clock
     ff.run(["-v", "error", "-y", "-copyts", "-i", str(ts), "-map", "0", "-c", "copy", str(mkv)])
     return {"dir": d, "ts": ts, "late": late, "mkv": mkv}
 
@@ -86,8 +136,10 @@ def test_the_fixtures_are_what_they_claim(media):
     for key, v0 in (("ts", 0.021), ("late", 0.521), ("mkv", 0.021)):
         c = _clocks(media[key])
         assert c.f0 == pytest.approx(TS_START, abs=0.01), key
-        assert c.v0 == pytest.approx(v0, abs=0.005) and c.a0 == pytest.approx(0.0, abs=1e-6), key
-    assert "mpegts" in _clocks(media["ts"]).format and "matroska" in _clocks(media["mkv"]).format
+        assert c.v0 == pytest.approx(v0, abs=0.005), key
+        assert c.a0 == pytest.approx(0.0, abs=1e-6), key
+    assert "mpegts" in _clocks(media["ts"]).format
+    assert "matroska" in _clocks(media["mkv"]).format
 
 
 # ------------------------------------------------------------------------------------------- references
@@ -101,8 +153,25 @@ def _reference(path, size=None) -> np.ndarray:
     if key not in _REF:
         vf = ["-vf", f"scale={size[0]}:{size[1]}:flags=area"] if size else []
         w, h = size or (320, 180)
-        res = ff.run(["-v", "error", "-i", str(path), "-map", "0:v:0", "-fps_mode", "passthrough", *vf,
-                      "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"], binary=True)
+        res = ff.run(
+            [
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-map",
+                "0:v:0",
+                "-fps_mode",
+                "passthrough",
+                *vf,
+                "-pix_fmt",
+                "rgb24",
+                "-f",
+                "rawvideo",
+                "pipe:1",
+            ],
+            binary=True,
+        )
         _REF[key] = np.frombuffer(res.stdout, np.uint8).reshape(-1, h, w, 3)
     return _REF[key]
 
@@ -123,16 +192,52 @@ def _closest(path, img: np.ndarray) -> int:
 
 
 def _decode_all(path) -> np.ndarray:
-    res = ff.run(["-v", "error", "-i", str(path), "-map", "0:v:0", "-fps_mode", "passthrough", "-pix_fmt", "rgb24",
-                  "-f", "rawvideo", "pipe:1"], binary=True)
+    res = ff.run(
+        [
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-map",
+            "0:v:0",
+            "-fps_mode",
+            "passthrough",
+            "-pix_fmt",
+            "rgb24",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ],
+        binary=True,
+    )
     return np.frombuffer(res.stdout, np.uint8).reshape(-1, 180, 320, 3)
 
 
 def _pcm(path, dur: float = 9.0) -> np.ndarray:
     """Track 0 as mono 48 kHz from the start, no seek, each sample placed by its own timestamp (a cut's audio may
     start a partial packet late): sample n sits at the track's first file time + n / 48000."""
-    res = ff.run(["-v", "error", "-i", str(path), "-map", "0:a:0", "-t", f"{dur}", "-af",
-                  "aresample=async=1:first_pts=0", "-ac", "1", "-ar", "48000", "-f", "f32le", "-"], binary=True)
+    res = ff.run(
+        [
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-map",
+            "0:a:0",
+            "-t",
+            f"{dur}",
+            "-af",
+            "aresample=async=1:first_pts=0",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
+            "-",
+        ],
+        binary=True,
+    )
     return np.frombuffer(res.stdout, np.float32)
 
 
@@ -145,13 +250,26 @@ def _lag_ms(a: np.ndarray, b: np.ndarray) -> float:
 
 def _keyframes(path):
     """The keyframes by definition: packet flags K, container pts minus the format start_time."""
-    res = ff.run(["-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags", "-of",
-                  "csv=p=0", str(path)], tool="ffprobe")
+    res = ff.run(
+        [
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "packet=pts_time,flags",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        tool="ffprobe",
+    )
     f0 = _clocks(path).f0
     return sorted(float(p) - f0 for p, _, fl in (ln.partition(",") for ln in res.stdout.split()) if "K" in fl)
 
 
 # ------------------------------------------------------------------------------------------- probe
+
 
 def test_probe_keyframes_are_file_times(clip):
     v0 = _clocks(clip).v0
@@ -159,15 +277,15 @@ def test_probe_keyframes_are_file_times(clip):
     assert _keyframes(clip) == pytest.approx(want, abs=1e-3)
     assert probe.keyframes(clip) == pytest.approx(want, abs=1e-3)
     decoded = [t for t, _ in frames.keyframes(clip, size=(32, 18), hw=None)]
-    assert decoded == pytest.approx(want, abs=1e-3)          # the decoder's own labels agree with the packet scan
+    assert decoded == pytest.approx(want, abs=1e-3)  # the decoder's own labels agree with the packet scan
 
 
 def test_the_sidecar_stores_file_times_and_says_where_the_container_clock_starts(clip):
     c = _clocks(clip)
     sc = probe.probe(clip, keyframes=True)
     assert sc["keyframes"] == pytest.approx(_keyframes(clip), abs=1e-3)
-    assert sc["video"]["start_s"] == pytest.approx(c.v0, abs=1e-3)       # where the first frame sits in the file
-    assert sc["start_s"] == pytest.approx(c.f0, abs=1e-3)                # file time 0 on the container's clock
+    assert sc["video"]["start_s"] == pytest.approx(c.v0, abs=1e-3)  # where the first frame sits in the file
+    assert sc["start_s"] == pytest.approx(c.f0, abs=1e-3)  # file time 0 on the container's clock
     assert sc["clock"] == "file"
 
 
@@ -176,7 +294,7 @@ def test_a_sidecar_written_on_the_container_clock_is_moved_onto_the_file_clock(m
     sc = probe.probe(ts, keyframes=True)
     path = Path(sc["sidecar_path"])
     old = json.loads(path.read_text(encoding="utf-8"))
-    old.pop("clock", None)                                              # what the 2026-10-12 build wrote
+    old.pop("clock", None)  # what the 2026-10-12 build wrote
     old["keyframes"] = [k + old["start_s"] for k in old["keyframes"]]
     old["video"]["start_s"] += old["start_s"]
     path.write_text(json.dumps(old), encoding="utf-8")
@@ -187,6 +305,7 @@ def test_a_sidecar_written_on_the_container_clock_is_moved_onto_the_file_clock(m
 
 
 # ------------------------------------------------------------------------------------------- frames
+
 
 def test_frames_name_every_frame_by_its_file_time(clip):
     got = list(frames.frames(clip, size=(32, 18), hw=None))
@@ -203,9 +322,10 @@ def test_at_times_is_one_clock_before_and_after_the_first_keyframe(clip):
 
 # ------------------------------------------------------------------------------------------- cut
 
+
 def test_cut_plan_speaks_file_time(clip):
     p = cut.plan(clip, 3.0, 5.0)
-    (_, t_pts, _), = list(frames.at_times(clip, [3.0], size=(32, 18)))
+    ((_, t_pts, _),) = list(frames.at_times(clip, [3.0], size=(32, 18)))
     kfs = _keyframes(clip)
     assert p["mode_suggested"] == "smart"
     assert p["start_real"] == pytest.approx(t_pts, abs=1e-4)
@@ -218,7 +338,8 @@ def test_a_cut_holds_the_frames_and_sound_of_its_file_time_range(media, mode):
     ts = media["ts"]
     out = media["dir"] / f"cut_{mode}.mp4"
     res = cut.cut(ts, 3.0, 5.0, out, mode=mode)
-    assert res["mode"] == mode and res["verify"]["ok"], res["verify"]
+    assert res["mode"] == mode, res["verify"]
+    assert res["verify"]["ok"], res["verify"]
     start = res["start_real"]
     k0 = _index_at(ts, start)
     assert _grid(ts)[k0] == pytest.approx(start, abs=1e-4)
@@ -231,11 +352,11 @@ def test_a_cut_holds_the_frames_and_sound_of_its_file_time_range(media, mode):
     for i in (0, len(got) - 1):
         assert _closest(ts, got[i]) == k0 + i, (mode, i)
     if mode == "copy":
-        assert np.array_equal(got[0], _reference(ts)[k0])             # a copied keyframe: the very same pixels
+        assert np.array_equal(got[0], _reference(ts)[k0])  # a copied keyframe: the very same pixels
     c = _clocks(ts)
     src = _pcm(ts)
-    off = int(round((start - c.a0) * 48000))
-    lag = _lag_ms(_pcm(out, 1.5), src[off:off + 72000])
+    off = round((start - c.a0) * 48000)
+    lag = _lag_ms(_pcm(out, 1.5), src[off : off + 72000])
     assert abs(lag) < 2.0, (mode, lag)
 
 
@@ -251,21 +372,25 @@ def test_a_cut_of_a_picture_that_starts_late_starts_on_the_right_frame(media):
 
 # ------------------------------------------------------------------------------------------- sheet
 
+
 def _cell(res: dict, c: dict) -> np.ndarray:
     png = np.asarray(Image.open(res["png"]).convert("RGB"))
-    return png[c["y"]:c["y"] + c["h"], c["x"]:c["x"] + c["w"]]
+    return png[c["y"] : c["y"] + c["h"], c["x"] : c["x"] + c["w"]]
 
 
 def _regrab(src, c: dict) -> tuple:
-    (_t, t_pts, img), = list(frames.at_times(src, [c["pts"]], crop=c.get("crop"), size=tuple(c["size"])))
+    ((_t, t_pts, img),) = list(frames.at_times(src, [c["pts"]], crop=c.get("crop"), size=tuple(c["size"])))
     return t_pts, img
 
 
 def test_sheet_cells_are_labelled_with_file_times_and_regrab_bit_identical(clip, media):
     times = [0.3, 3.0, 6.05]
-    res = sheet.sheet([(clip, t) for t in times] + [{"src": str(clip), "t": 4.2, "crop": (0.25, 0.25, 0.5, 0.5)}],
-                      cell_w=160, out=media["dir"] / f"sheet_{Path(clip).stem}.png")
-    for c, t in zip(res["cells"], times + [4.2]):
+    res = sheet.sheet(
+        [(clip, t) for t in times] + [{"src": str(clip), "t": 4.2, "crop": (0.25, 0.25, 0.5, 0.5)}],
+        cell_w=160,
+        out=media["dir"] / f"sheet_{Path(clip).stem}.png",
+    )
+    for c, t in zip(res["cells"], [*times, 4.2], strict=False):
         k = _index_at(clip, t)
         assert c["pts"] == pytest.approx(_grid(clip)[k], abs=1e-4), t
         t_pts, img = _regrab(clip, c)
@@ -276,7 +401,7 @@ def test_sheet_cells_are_labelled_with_file_times_and_regrab_bit_identical(clip,
     assert np.array_equal(_cell(res, full), _reference(clip, full["size"])[_index_at(clip, 3.0)])
 
 
-@pytest.mark.parametrize("ratio", [0.0, 100.0])            # one process per keyframe, or one keyframe-only pass
+@pytest.mark.parametrize("ratio", [0.0, 100.0])  # one process per keyframe, or one keyframe-only pass
 def test_video_sheet_keyframe_cells_are_the_keyframes_on_the_file_clock(clip, media, monkeypatch, ratio):
     monkeypatch.setattr(sheet, "SCAN_MAX_RATIO", ratio)
     vs = sheet.video_sheet(clip, n=4, cols=4, cell_w=160, out=media["dir"] / f"vs_{Path(clip).stem}_{ratio}.png")
@@ -289,9 +414,9 @@ def test_video_sheet_keyframe_cells_are_the_keyframes_on_the_file_clock(clip, me
 
 def test_filmstrip_slots_and_waveform_on_the_file_clock(clip, media):
     strip = sheet.filmstrip(clip, 2.0, 6.0, n=4, width=640, out=media["dir"] / f"strip_{Path(clip).stem}.png")
-    for c, mid in zip(strip["cells"], (2.5, 3.5, 4.5, 5.5)):
+    for c, mid in zip(strip["cells"], (2.5, 3.5, 4.5, 5.5), strict=False):
         assert c["pts"] == pytest.approx(_grid(clip)[_index_at(clip, mid)], abs=1e-4), mid
-        png = np.asarray(Image.open(strip["png"]).convert("RGB"))[c["y"]:c["y"] + c["h"], c["x"]:c["x"] + c["w"]]
+        png = np.asarray(Image.open(strip["png"]).convert("RGB"))[c["y"] : c["y"] + c["h"], c["x"] : c["x"] + c["w"]]
         assert np.array_equal(png, _regrab(clip, c)[1]), mid
     assert strip["waveform"]["samples"] == pytest.approx(4 * 48000, abs=2048)
 
@@ -305,17 +430,20 @@ def test_a_filmstrip_from_the_files_start_draws_the_sound_where_it_is(media):
 
 # ------------------------------------------------------------------------------------------- shots
 
+
 def test_a_shot_change_is_found_at_its_file_time(media):
     late = media["late"]
     res = shots.shots(late, detector="spike")
     v0 = _clocks(late).v0
     (found,) = res["cuts"]
-    assert found["t"] == pytest.approx(v0 + 3.0, abs=1 / FPS + 1e-3)       # 3.0 s into the picture
+    assert found["t"] == pytest.approx(v0 + 3.0, abs=1 / FPS + 1e-3)  # 3.0 s into the picture
     assert res["video_start_s"] == pytest.approx(v0, abs=1e-3)
-    assert res["shots"][0][0] == 0.0 and res["shots"][-1][1] == pytest.approx(res["duration_s"])
+    assert res["shots"][0][0] == 0.0
+    assert res["shots"][-1][1] == pytest.approx(res["duration_s"])
 
 
 # ------------------------------------------------------------------------------------------- the editor
+
 
 @pytest.fixture(scope="module")
 def imported(media):
@@ -329,6 +457,7 @@ def test_the_page_gets_file_times_and_the_container_start_it_converts_by(media, 
     currentTime counts on the container clock, so the page needs container_start_s to convert (measured on
     Chrome 154: a source whose container clock starts at 1.4 s opens at currentTime 1.4)."""
     from arsenal.media import editapi
+
     c = _clocks(media["mkv"])
     view = editapi.media_view(imported)
     assert view["container_start_s"] == pytest.approx(c.f0, abs=1e-3)
@@ -346,14 +475,14 @@ def test_the_page_gets_file_times_and_the_container_start_it_converts_by(media, 
 
 def test_the_render_shows_the_frame_and_sound_the_page_names(media, imported, tmp_path):
     mkv = media["mkv"]
-    doc, _ = edit.add_clip(edit.new_project("clock", settings={"fps": FPS, "width": 320, "height": 180}),
-                           imported, src_in=3.0, src_out=4.5)
+    doc, _ = edit.add_clip(
+        edit.new_project("clock", settings={"fps": FPS, "width": 320, "height": 180}), imported, src_in=3.0, src_out=4.5
+    )
     res = edit.render(edit.save(doc), FAST, out=tmp_path / "clock.mp4")
     out = Path(res["path"])
     got = _decode_all(out)
     assert _closest(mkv, got[0]) == _index_at(mkv, 3.0)
     c = _clocks(mkv)
     src = _pcm(mkv)
-    off = int(round((3.0 - c.a0) * 48000))
-    assert abs(_lag_ms(_pcm(out, 1.4), src[off:off + 67200])) < 2.0
-
+    off = round((3.0 - c.a0) * 48000)
+    assert abs(_lag_ms(_pcm(out, 1.4), src[off : off + 67200])) < 2.0

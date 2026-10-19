@@ -35,10 +35,14 @@ rather than the simpler string-returning shape:
 
 Pure: environment reads only, no store, no imports beyond os. Safe on the hot capture path.
 """
+
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 #: Checked in order. AKASHIC_SESSION_ID is the harness override (a runner lane, a test) and
 #: wins because it is set deliberately; DSH_SESSION_ID is the DSH harness's own id and
@@ -63,15 +67,14 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 #: 2026-10-01) already clears the Claude vars at ingress. That is the right fix in the right
 #: place and it protects only sessions launched after it; Rill's predates it. A launcher cleans
 #: the environment, and a resolver must not be fooled when it was not cleaned.
-ENV_VARS = ("AKASHIC_SESSION_ID", "DSH_SESSION_ID",
-            "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")
+ENV_VARS = ("AKASHIC_SESSION_ID", "DSH_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")
 
 PAYLOAD = "payload"
 ENV = "env"
 UNKNOWN = "unknown"
 
 
-def ambient_session_id() -> Tuple[str, str]:
+def ambient_session_id() -> tuple[str, str]:
     """The session id visible in this process's environment, and where it came from.
 
     Returns ``(id, "env")`` or ``("", "unknown")``. Never truncates, never guesses, never
@@ -87,7 +90,7 @@ def ambient_session_id() -> Tuple[str, str]:
     for var in ENV_VARS:
         try:
             v = str(os.environ.get(var) or "").strip()
-        except Exception:                                                 # noqa: BLE001
+        except Exception:  # noqa: BLE001
             continue
         if v:
             return v, ENV
@@ -111,12 +114,12 @@ def ambient_session_var() -> str:
         try:
             if str(os.environ.get(var) or "").strip():
                 return var
-        except Exception:                                                 # noqa: BLE001
+        except Exception:  # noqa: BLE001
             continue
     return ""
 
 
-def session_of(payload: Optional[Mapping[str, Any]] = None) -> Tuple[str, str]:
+def session_of(payload: Mapping[str, Any] | None = None) -> tuple[str, str]:
     """Resolve a session for a call, payload first. Returns ``(id, source)``.
 
     Use this wherever a payload MIGHT be available (a hook). Use `ambient_session_id` where
@@ -125,7 +128,7 @@ def session_of(payload: Optional[Mapping[str, Any]] = None) -> Tuple[str, str]:
     """
     try:
         sid = str((payload or {}).get("session_id") or "").strip()
-    except Exception:                                                     # noqa: BLE001
+    except Exception:  # noqa: BLE001
         sid = ""
     if sid:
         return sid, PAYLOAD

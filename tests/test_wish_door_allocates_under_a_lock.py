@@ -36,14 +36,13 @@ that is deliberate, and its comment says why: "a capture mechanism that refuses 
 with an ambiguous id". The loud warning stays. These pins only require that a NEW collision cannot
 be created by two concurrent filings.
 """
+
 import os
 import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-
-import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 SEED = """# Wishes
@@ -66,8 +65,9 @@ def _file_wish(ledger, body, agent="t-seat"):
     CROSS-PROCESS lock: threads in one interpreter would pass under a threading.Lock that
     does nothing for the actual failure mode."""
     env = {**os.environ, "AKASHIC_WISHLIST_FILE": str(ledger), "PYTHONUTF8": "1"}
-    return subprocess.run([sys.executable, "agent_cli.py", "wish", agent, body],
-                          capture_output=True, text=True, cwd=str(REPO), env=env)
+    return subprocess.run(
+        [sys.executable, "agent_cli.py", "wish", agent, body], capture_output=True, text=True, cwd=str(REPO), env=env
+    )
 
 
 def _ids(ledger):
@@ -110,9 +110,13 @@ def test_the_door_still_files_when_the_ledger_already_collides(tmp_path):
     mechanism that refuses is worse than one with an ambiguous id, so a pre-existing collision must
     still warn loudly and still file."""
     led = tmp_path / "WISHLIST.md"
-    led.write_text(SEED.replace("- [ ] W02 (01-01, seed) - the second wish.",
-                                "- [ ] W02 (01-01, seed) - the second wish.\n"
-                                "- [ ] W02 (01-02, seed) - a collided twin."), encoding="utf-8")
+    led.write_text(
+        SEED.replace(
+            "- [ ] W02 (01-01, seed) - the second wish.",
+            "- [ ] W02 (01-01, seed) - the second wish.\n- [ ] W02 (01-02, seed) - a collided twin.",
+        ),
+        encoding="utf-8",
+    )
     r = _file_wish(led, "filed despite the collision")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "COLLID" in (r.stdout + r.stderr).upper(), "the collision warning went quiet"
@@ -124,7 +128,8 @@ def test_the_door_imports_the_house_lock(tmp_path):
     says WHICH primitive is missing rather than only that a race came back."""
     src = (REPO / "agent_cli.py").read_text(encoding="utf-8")
     start = src.index("def cmd_wish(")
-    body = src[start:start + 4000]
-    assert "filelock" in body or "exclusive" in body, \
-        "cmd_wish does not reach for core.foundation.filelock.exclusive, the cross-process lock " \
+    body = src[start : start + 4000]
+    assert "filelock" in body or "exclusive" in body, (
+        "cmd_wish does not reach for core.foundation.filelock.exclusive, the cross-process lock "
         "ledger.py, remote_relay.py, task_ledger.py and college.py already use"
+    )

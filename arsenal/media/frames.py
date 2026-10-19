@@ -10,19 +10,26 @@ keyframe-only 325x realtime.
 
 crop = (x, y, w, h) in source pixels, or all four <= 1.0 as fractions of the frame; applied before scaling, so a HUD
 crop never pulls a full-size array into Python. size = (w, h), or (w, None) to keep the aspect (rounded to even).
-pix_fmt: 'rgb24' (default), 'bgr24' (OpenCV), 'gray'. hw: 'd3d11va' or None; pixel-exact comparisons decode in
-software (hw=None) because d3d11va differs by up to 7 luma levels (ff.KNOWN_BAD). Never 'vulkan' for HEVC here.
+pix_fmt: 'rgb24' (default), 'bgr24' (OpenCV), 'gray'. hw: 'd3d11va' (the default on Windows, ff.DEFAULT_HW) or None
+(the default elsewhere); pixel-exact comparisons decode in software (hw=None) because d3d11va differs by up to 7 luma
+levels (ff.KNOWN_BAD). Never 'vulkan' for HEVC here.
 """
+
 from __future__ import annotations
 
 import os
+import queue
 import re
 import threading
-import queue
 from pathlib import Path
-from typing import Iterator, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING
 
 from . import ff
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
+
+    import numpy as np
 
 _CHANNELS = {"bgr24": 3, "rgb24": 3, "gray": 1}
 _PTS = re.compile(rb"pts_time:\s*([-0-9.]+)")
@@ -37,18 +44,30 @@ _INDEXED = ("mov", "mp4", "m4a", "3gp", "3g2", "mj2", "matroska", "webm", "avi")
 def video_info(path) -> dict:
     """{w, h, fps, start, duration, format, format_start} of the first video stream (one ffprobe call). `start` is
     the stream's start_time; `format_start` the container's, which the file clock counts from."""
-    j = ff.probe_json(path, entries=("-select_streams", "v:0", "-show_entries",
-                                     "stream=width,height,avg_frame_rate,start_time"
-                                     ":format=duration,start_time,format_name"))
+    j = ff.probe_json(
+        path,
+        entries=(
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,avg_frame_rate,start_time:format=duration,start_time,format_name",
+        ),
+    )
     if not j.get("streams"):
         raise ff.MediaError(f"no video stream in {path}")
     s = j["streams"][0]
     fmt = j.get("format") or {}
     num, _, den = str(s.get("avg_frame_rate") or "0/1").partition("/")
     fps = float(num) / float(den or 1) if float(den or 1) else 0.0
-    return {"w": int(s["width"]), "h": int(s["height"]), "fps": fps, "start": float(s.get("start_time") or 0.0),
-            "duration": float(fmt.get("duration") or 0.0), "format": str(fmt.get("format_name") or ""),
-            "format_start": float(fmt.get("start_time") or 0.0)}
+    return {
+        "w": int(s["width"]),
+        "h": int(s["height"]),
+        "fps": fps,
+        "start": float(s.get("start_time") or 0.0),
+        "duration": float(fmt.get("duration") or 0.0),
+        "format": str(fmt.get("format_name") or ""),
+        "format_start": float(fmt.get("start_time") or 0.0),
+    }
 
 
 def _indexed(info: dict) -> bool:
@@ -61,6 +80,7 @@ _kf_cache: dict = {}
 def _keyframe_at_or_before(path, t: float) -> float:
     """The last keyframe at or before file time t (probe.keyframes speaks the file clock)."""
     from . import probe
+
     st = os.stat(path)
     key = (str(Path(path).resolve()), st.st_size, st.st_mtime_ns)
     if key not in _kf_cache:
@@ -81,7 +101,7 @@ def _origin(info: dict, point: float) -> float:
     return max(point, info["start"] - info["format_start"])
 
 
-def _seek(path, info: dict, start: float) -> Tuple[List[str], float, float]:
+def _seek(path, info: dict, start: float) -> tuple[list[str], float, float]:
     """Input-seek args, the seek point (output t=0 is _origin(info, point)), and the first time to keep.
 
     Indexed containers: an accurate -ss (ffmpeg decodes from the keyframe and discards up to start). Others: seek to
@@ -95,29 +115,29 @@ def _seek(path, info: dict, start: float) -> Tuple[List[str], float, float]:
     return (["-noaccurate_seek", "-ss", f"{point:.6f}"] if point > 0 else []), point, start
 
 
-def resolve_crop(crop, w: int, h: int) -> Optional[Tuple[int, int, int, int]]:
+def resolve_crop(crop, w: int, h: int) -> tuple[int, int, int, int] | None:
     """Pixels stay pixels; four values all <= 1.0 are fractions of (w, h). Clamped to the frame, sizes made even."""
     if not crop:
         return None
     x, y, cw, ch = (float(v) for v in crop)
     if max(x, y, cw, ch) <= 1.0:
         x, y, cw, ch = x * w, y * h, cw * w, ch * h
-    x, y = int(round(x)), int(round(y))
-    cw, ch = int(round(cw)), int(round(ch))
+    x, y = round(x), round(y)
+    cw, ch = round(cw), round(ch)
     if cw <= 0 or ch <= 0 or x < 0 or y < 0 or x + cw > w or y + ch > h:
         raise ff.MediaError(f"crop {crop} falls outside the {w}x{h} frame")
     return x, y, cw, ch
 
 
-def _out_size(info: dict, crop, size) -> Tuple[int, int]:
+def _out_size(info: dict, crop, size) -> tuple[int, int]:
     base_w, base_h = (crop[2], crop[3]) if crop else (info["w"], info["h"])
     if not size:
         return base_w, base_h
     sw, sh = size
     if sw and not sh:
-        sh = max(2, int(round(base_h * sw / base_w / 2)) * 2)
+        sh = max(2, round(base_h * sw / base_w / 2) * 2)
     elif sh and not sw:
-        sw = max(2, int(round(base_w * sh / base_h / 2)) * 2)
+        sw = max(2, round(base_w * sh / base_h / 2) * 2)
     return int(sw), int(sh)
 
 
@@ -130,7 +150,7 @@ def _vf(crop, size, fps) -> str:
         chain.append(f"scale={size[0]}:{size[1]}:flags=area")
     if fps:
         chain.append(f"fps={fps}")
-    chain.append("showinfo")            # per-frame pts_time on stderr -> exact timestamps
+    chain.append("showinfo")  # per-frame pts_time on stderr -> exact timestamps
     return ",".join(chain)
 
 
@@ -139,16 +159,19 @@ def _vf(crop, size, fps) -> str:
 _PTS_WAIT_S = 60.0
 
 
-def _stream(args: List[str], w: int, h: int, ch: int, t_offset: float) -> Iterator[Tuple[float, "np.ndarray"]]:
+def _stream(args: list[str], w: int, h: int, ch: int, t_offset: float) -> Iterator[tuple[float, np.ndarray]]:
     import subprocess
-    import numpy as np
-    argv = ff.argv_for(args)
-    proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            creationflags=ff._NO_WINDOW)
-    times: "queue.Queue[Optional[float]]" = queue.Queue()
-    tail: List[bytes] = []
 
-    def read_stderr() -> None:     # showinfo lines carry the pts; the rest is kept for the error message
+    import numpy as np
+
+    argv = ff.argv_for(args)
+    proc = subprocess.Popen(
+        argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=ff._NO_WINDOW
+    )
+    times: queue.Queue[float | None] = queue.Queue()
+    tail: list[bytes] = []
+
+    def read_stderr() -> None:  # showinfo lines carry the pts; the rest is kept for the error message
         for line in iter(proc.stderr.readline, b""):
             m = _PTS.search(line)
             if m:
@@ -170,10 +193,13 @@ def _stream(args: List[str], w: int, h: int, ch: int, t_offset: float) -> Iterat
             try:
                 t = times.get(timeout=_PTS_WAIT_S)
             except queue.Empty:
-                raise ff.MediaError(f"frame {got} arrived with no timestamp after {_PTS_WAIT_S:.0f} s: ffmpeg wrote "
-                                    f"more frames than its filter saw (duplicated output frames)", argv=argv)
+                raise ff.MediaError(
+                    f"frame {got} arrived with no timestamp after {_PTS_WAIT_S:.0f} s: ffmpeg wrote "
+                    f"more frames than its filter saw (duplicated output frames)",
+                    argv=argv,
+                ) from None
             got += 1
-            if t is None:              # showinfo printed no pts for it: a decoder hiccup, never a frame with t=None
+            if t is None:  # showinfo printed no pts for it: a decoder hiccup, never a frame with t=None
                 continue
             img = np.frombuffer(buf, np.uint8).reshape((h, w, ch) if ch > 1 else (h, w))
             yield round(t + t_offset, 6), img
@@ -188,14 +214,22 @@ def _stream(args: List[str], w: int, h: int, ch: int, t_offset: float) -> Iterat
         raise ff.MediaError(f"ffmpeg gave no frames (exit {rc}): {msg}", argv=argv)
 
 
-def _hw(hw: Optional[str]) -> List[str]:
+def _hw(hw: str | None) -> list[str]:
     if hw == "vulkan":
         raise ff.MediaError(ff.KNOWN_BAD["vulkan_hevc_decode"])
     return ["-hwaccel", hw] if hw else []
 
 
-def frames(path, start: float = 0.0, dur: Optional[float] = None, fps: Optional[float] = None, crop=None,
-           size=None, pix_fmt: str = "rgb24", hw: Optional[str] = "d3d11va") -> Iterator[Tuple[float, "np.ndarray"]]:
+def frames(
+    path,
+    start: float = 0.0,
+    dur: float | None = None,
+    fps: float | None = None,
+    crop=None,
+    size=None,
+    pix_fmt: str = "rgb24",
+    hw: str | None = ff.DEFAULT_HW,
+) -> Iterator[tuple[float, np.ndarray]]:
     """Every frame of [start, start+dur) (or resampled to fps), as (seconds on the file clock, array).
 
     The file clock counts from the file's start (what a player shows, what ffmpeg's -ss means); on a container whose
@@ -209,8 +243,19 @@ def frames(path, start: float = 0.0, dur: Optional[float] = None, fps: Optional[
         args += ["-t", f"{(start - point) + dur:.6f}"]
     # passthrough: one output frame per filtered frame, so every frame has exactly one showinfo line (a duplicating
     # output once paired frames with the wrong timestamps, and could stall the reader)
-    args += ["-map", "0:v:0", "-fps_mode", "passthrough", "-vf", _vf(c, (w, h) if size else None, fps),
-             "-pix_fmt", pix_fmt, "-f", "rawvideo", "-"]
+    args += [
+        "-map",
+        "0:v:0",
+        "-fps_mode",
+        "passthrough",
+        "-vf",
+        _vf(c, (w, h) if size else None, fps),
+        "-pix_fmt",
+        pix_fmt,
+        "-f",
+        "rawvideo",
+        "-",
+    ]
     end = start + dur if dur else None
     for t, img in _stream(args, w, h, _CHANNELS[pix_fmt], _origin(info, point)):
         if t < keep_from - 1e-3:
@@ -220,20 +265,47 @@ def frames(path, start: float = 0.0, dur: Optional[float] = None, fps: Optional[
         yield t, img
 
 
-def keyframes(path, crop=None, size=None, pix_fmt: str = "rgb24",
-              hw: Optional[str] = "d3d11va") -> Iterator[Tuple[float, "np.ndarray"]]:
+def keyframes(
+    path, crop=None, size=None, pix_fmt: str = "rgb24", hw: str | None = ff.DEFAULT_HW
+) -> Iterator[tuple[float, np.ndarray]]:
     """Only the keyframes (no inter-frame decode at all): the cheapest whole-file sampler (~325x realtime)."""
     info = video_info(path)
     c = resolve_crop(crop, info["w"], info["h"])
     w, h = _out_size(info, c, size)
-    args = ["-nostats", "-loglevel", "info", "-skip_frame", "nokey", *_hw(hw), "-i", str(path), "-map", "0:v:0",
-            "-fps_mode", "passthrough", "-vf", _vf(c, (w, h) if size else None, None), "-pix_fmt", pix_fmt,
-            "-f", "rawvideo", "-"]
+    args = [
+        "-nostats",
+        "-loglevel",
+        "info",
+        "-skip_frame",
+        "nokey",
+        *_hw(hw),
+        "-i",
+        str(path),
+        "-map",
+        "0:v:0",
+        "-fps_mode",
+        "passthrough",
+        "-vf",
+        _vf(c, (w, h) if size else None, None),
+        "-pix_fmt",
+        pix_fmt,
+        "-f",
+        "rawvideo",
+        "-",
+    ]
     yield from _stream(args, w, h, _CHANNELS[pix_fmt], _origin(info, 0.0))
 
 
-def at_times(path, times: Sequence[float], crop=None, size=None, pix_fmt: str = "rgb24", hw: Optional[str] = None,
-             max_gap: float = 8.0, past_end: str = "error") -> Iterator[Tuple[float, float, "np.ndarray"]]:
+def at_times(
+    path,
+    times: Sequence[float],
+    crop=None,
+    size=None,
+    pix_fmt: str = "rgb24",
+    hw: str | None = None,
+    max_gap: float = 8.0,
+    past_end: str = "error",
+) -> Iterator[tuple[float, float, np.ndarray]]:
     """The frame showing each requested time, as (t_requested, t_pts, array), in time order.
 
     Times closer than max_gap share one decode window (one process, input-seek to the window start). The frame for t
@@ -264,8 +336,9 @@ def at_times(path, times: Sequence[float], crop=None, size=None, pix_fmt: str = 
         a, b = c[0], c[-1]
         want = list(c)
         last = None
-        for t, img in frames(path, start=max(0.0, a - frame_s), dur=(b - a) + 2.5 * frame_s, crop=crop, size=size,
-                             pix_fmt=pix_fmt, hw=hw):
+        for t, img in frames(
+            path, start=max(0.0, a - frame_s), dur=(b - a) + 2.5 * frame_s, crop=crop, size=size, pix_fmt=pix_fmt, hw=hw
+        ):
             if t is None:
                 continue
             while want and t + 1e-3 >= want[0]:
@@ -273,27 +346,41 @@ def at_times(path, times: Sequence[float], crop=None, size=None, pix_fmt: str = 
             last = (t, img)
             if not want:
                 break
-        if want and last is None:              # the whole window lies past the end: read the file's final frames
-            for t, img in frames(path, start=max(0.0, info["duration"] - 4 * frame_s), crop=crop, size=size,
-                                 pix_fmt=pix_fmt, hw=hw):
+        if want and last is None:  # the whole window lies past the end: read the file's final frames
+            for t, img in frames(
+                path, start=max(0.0, info["duration"] - 4 * frame_s), crop=crop, size=size, pix_fmt=pix_fmt, hw=hw
+            ):
                 last = (t, img)
         for t_req in want:
             if last is not None and t_req <= last[0] + frame_s + 1e-3:
                 yield t_req, last[0], last[1]  # inside the last frame's display interval: it IS the frame shown
             elif past_end == "error":
                 end = f"{last[0] + frame_s:.3f} s" if last is not None else "its start"
-                raise ff.MediaError(f"t={t_req:.3f} s is past the end of {Path(path).name} (frames end at {end}); "
-                                    f"pass past_end='last' or 'skip' to accept that")
+                raise ff.MediaError(
+                    f"t={t_req:.3f} s is past the end of {Path(path).name} (frames end at {end}); "
+                    f"pass past_end='last' or 'skip' to accept that"
+                )
             elif past_end == "last" and last is not None:
                 yield t_req, last[0], last[1]
 
 
-def save(path, times: Sequence[float], out_dir, *, fmt: str = "png", crop=None, size=None,
-         hw: Optional[str] = None, past_end: str = "error") -> dict:
+def save(
+    path,
+    times: Sequence[float],
+    out_dir,
+    *,
+    fmt: str = "png",
+    crop=None,
+    size=None,
+    hw: str | None = None,
+    past_end: str = "error",
+) -> dict:
     """Write the frame at each time to out_dir; returns the house result with a manifest
     [{t_requested, t_pts, crop, file}]."""
     from PIL import Image
+
     from . import receipt
+
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -303,13 +390,19 @@ def save(path, times: Sequence[float], out_dir, *, fmt: str = "png", crop=None, 
         Image.fromarray(img).save(name)
         rows.append({"t_requested": t_req, "t_pts": t_pts, "crop": list(crop) if crop else None, "file": str(name)})
     params = {"times": list(times), "fmt": fmt, "crop": crop, "size": size, "hw": hw, "past_end": past_end}
-    return receipt.result("grab", path, params, {"frames": rows, "out_dir": str(out)},
-                          blind=["with past_end='last', a time past the end gets the final frame; its t_pts says so"])
+    return receipt.result(
+        "grab",
+        path,
+        params,
+        {"frames": rows, "out_dir": str(out)},
+        blind=["with past_end='last', a time past the end gets the final frame; its t_pts says so"],
+    )
 
 
 # =================================================================================================
 # CLI: py -m arsenal.media grab <video> --at 12.5,30 | --span 10:20 [--fps 2] [--crop x,y,w,h] [--size 640x]
 # =================================================================================================
+
 
 def parse_time(s: str) -> float:
     """'75', '75.5', '1:15', '1:15.5', '0:01:15' -> seconds."""
@@ -320,18 +413,20 @@ def parse_time(s: str) -> float:
     return total
 
 
-def _parse_size(s: Optional[str]):
+def _parse_size(s: str | None):
     if not s:
         return None
     w, _, h = s.lower().partition("x")
     return (int(w) if w else None, int(h) if h else None)
 
 
-def cli(verb: str, argv: List[str]) -> int:
+def cli(verb: str, argv: list[str]) -> int:
     import argparse
     import json
-    ap = argparse.ArgumentParser(prog="py -m arsenal.media grab",
-                                 description="grab frames at times or over a span, in one ffmpeg pass")
+
+    ap = argparse.ArgumentParser(
+        prog=f"{ff.pyl()} -m arsenal.media grab", description="grab frames at times or over a span, in one ffmpeg pass"
+    )
     ap.add_argument("video")
     ap.add_argument("--at", help="comma-separated times (s or m:ss)")
     ap.add_argument("--span", help="start:end as m:ss-m:ss or s-s, e.g. 10:00-10:20")
@@ -362,6 +457,15 @@ def cli(verb: str, argv: List[str]) -> int:
         else:
             sh = sheet_mod.sheet([r["file"] for r in res["frames"]], out=str(out / "sheet.png"))
             res["sheet"] = sh.get("png")
-    print(json.dumps({"out_dir": res["out_dir"], "frames": len(res["frames"]), "sheet": res.get("sheet"),
-                      "receipt": res.get("receipt")}, indent=2))
+    print(
+        json.dumps(
+            {
+                "out_dir": res["out_dir"],
+                "frames": len(res["frames"]),
+                "sheet": res.get("sheet"),
+                "receipt": res.get("receipt"),
+            },
+            indent=2,
+        )
+    )
     return 0

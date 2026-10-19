@@ -20,6 +20,7 @@ beat right now." It must be:
 
 Run:  py -m pytest tests/test_expected_silent_attendance.py -v
 """
+
 from __future__ import annotations
 
 import json
@@ -32,7 +33,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from core.comm import liveness as L
+from core.comm import liveness as L  # noqa: E402  # after the sys.path bootstrap
 
 
 class FakeRedis:
@@ -44,6 +45,7 @@ class FakeRedis:
 
     def keys(self, pattern):
         import fnmatch
+
         return [k for k in self.kv if fnmatch.fnmatch(k, pattern)]
 
     def set(self, k, v, ex=None, **kw):
@@ -63,6 +65,7 @@ def fake_bus(monkeypatch):
     # Kill the beat-only probes so the verdict is decided by the NON-BEAT signal alone.
     monkeypatch.setattr(L, "progress_age", lambda *a, **k: None)
     import core.comm.roster as _roster
+
     monkeypatch.setattr(_roster, "roster", lambda *a, **k: [])
     return fake
 
@@ -71,9 +74,11 @@ def _no_presence(monkeypatch):
     # The absence case: no runner lock, no wake seat.
     def _holder(agent):
         return None
+
     def _seats(agent):
         if False:
             yield None
+
     monkeypatch.setattr("core.comm.runner_lock.holder", _holder)
     monkeypatch.setattr("core.comm.wake_seat.iter_seats", _seats)
 
@@ -87,10 +92,13 @@ def absent(monkeypatch):
 # ------------------------------------------------------------------ the new state
 def test_silence_with_a_wake_seat_reads_present_not_down(fake_bus, monkeypatch):
     """The live Vandor shape: no beat on any rung, but an armed wake-seat file EXISTS."""
+
     def _holder(agent):
         return None
+
     def _seats(agent):
         yield ("/tmp/seat-abc", "abc123")
+
     monkeypatch.setattr("core.comm.runner_lock.holder", _holder)
     monkeypatch.setattr("core.comm.wake_seat.iter_seats", _seats)
 
@@ -103,11 +111,14 @@ def test_silence_with_a_wake_seat_reads_present_not_down(fake_bus, monkeypatch):
 
 def test_silence_with_a_held_lock_reads_present_not_down(fake_bus, monkeypatch):
     """The other non-beat presence signal: a held runner lock."""
+
     def _holder(agent):
         return {"pid": 123, "token": "t"}
+
     def _seats(agent):
         if False:
             yield None
+
     monkeypatch.setattr("core.comm.runner_lock.holder", _holder)
     monkeypatch.setattr("core.comm.wake_seat.iter_seats", _seats)
 
@@ -131,10 +142,13 @@ def test_a_beat_still_wins_over_silence(fake_bus, monkeypatch):
     yield the STRONGER verdict ATTENDED."""
     pre = L._worklive_prefix()
     fake_bus.kv[pre + "vandor#abc12345"] = _rec(3.0)
+
     def _holder(agent):
         return None
+
     def _seats(agent):
         yield ("/tmp/seat-abc", "abc123")
+
     monkeypatch.setattr("core.comm.runner_lock.holder", _holder)
     monkeypatch.setattr("core.comm.wake_seat.iter_seats", _seats)
 
@@ -155,6 +169,8 @@ class _V:
     state = "EXPECTED_SILENT"
     reason = "present (lock/wake seat) but no beat now"
     beat_age_s = None
+
+
 def test_awareness_route_renders_expected_silent_as_present(monkeypatch):
     """observe_route is the sweep/orient surface that printed UNATTENDED for Vandor. It
     must render EXPECTED_SILENT as PRESENT (no beat now), never 'down'. It imports
@@ -166,7 +182,6 @@ def test_awareness_route_renders_expected_silent_as_present(monkeypatch):
 
     obs = A.observe_route("vandor")
     assert obs.status == "PRESENT", (
-        f"route status {obs.status!r} -- an idle interactive seat must render PRESENT, "
-        "not UNATTENDED"
+        f"route status {obs.status!r} -- an idle interactive seat must render PRESENT, not UNATTENDED"
     )
     assert "no beat" in obs.summary, obs.summary

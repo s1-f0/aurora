@@ -49,14 +49,15 @@
 // otherwise a private one is started on an ephemeral loopback port for the life of this process.
 //
 // Apache-2.0, written for the house (Vandor, 2026-10-13).
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import {
-  BURST_MS, CHROME_EXE, DEVTOOLS_WAIT_MS, FORBIDDEN_PORTS, PROFILE_ROOT, chromeFlags, guardHolder, judgeRenderer, underState,
+  BURST_MS, CHROME_ENV, DEVTOOLS_WAIT_MS, FORBIDDEN_PORTS, PROFILE_ROOT, chromeFlags, guardHolder, judgeRenderer, killTree,
+  resolveChrome, underState,
 } from "./headless.mjs";
 import { LIVE_OFF_WORDS, LIVE_SWITCH } from "../web/lib/workbench/stage.js";
 
@@ -108,6 +109,16 @@ function connect(wsUrl) {
 }
 
 // ------------------------------------------------------------------------------------------------- the server
+// How to start Aurora's Python here, as core.paths.python_launcher() says: $AKASHIC_PYTHON, else `py` on Windows (the
+// Windows home line's launcher), else `uv run python` when uv is on PATH and the repo has its pyproject, else python3.
+export function pythonCommand({ env = process.env, platform = process.platform } = {}) {
+  const own = String(env.AKASHIC_PYTHON || "").trim();
+  if (own) return own.split(/\s+/);
+  if (platform === "win32") return ["py"];
+  const uv = String(env.PATH || "").split(delimiter).filter(Boolean).some((dir) => existsSync(join(dir, "uv")));
+  return uv && existsSync(join(REPO, "pyproject.toml")) ? ["uv", "run", "python"] : ["python3"];
+}
+
 async function probe(port) {
   try {
     const r = await withTimeout(fetch(`http://127.0.0.1:${port}/health`), 1500, "health");
@@ -132,7 +143,8 @@ async function labServer(port, roots = {}) {
   const code = "import sys\nfrom pathlib import Path\nfrom arsenal.shaders import serve as S\n"
     + `s = S.start_in_thread(0${kwargs ? ", " + kwargs : ""})\nprint(s.base_url, flush=True)\n`
     + "sys.stdin.read()\ns.shutdown()\n";
-  const proc = spawn("py", ["-c", code], { cwd: REPO, stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
+  const [python, ...pre] = pythonCommand();
+  const proc = spawn(python, [...pre, "-c", code], { cwd: REPO, stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
   const base = await withTimeout(new Promise((ok, no) => {
     let buf = "";
     proc.stdout.on("data", (d) => { buf += d; const m = /http:\/\/127\.0\.0\.1:\d+/.exec(buf); if (m) ok(m[0]); });
@@ -147,10 +159,10 @@ async function labServer(port, roots = {}) {
 }
 
 // ------------------------------------------------------------------------------------------------- Chrome
-async function launch() {
+async function launch(exe) {
   const profile = join(PROFILE_ROOT, `labshot-${Date.now()}-${process.pid}`);
   mkdirSync(profile, { recursive: true });
-  const proc = spawn(CHROME_EXE, chromeFlags(profile), { stdio: "ignore", windowsHide: true });
+  const proc = spawn(exe, chromeFlags(profile), { stdio: "ignore", windowsHide: true });
   const exited = new Promise((r) => proc.once("exit", r));
   const portFile = join(profile, "DevToolsActivePort");
   const t0 = Date.now();
@@ -190,7 +202,7 @@ async function launch() {
     if (proc.exitCode === null) {
       try { await withTimeout(cdp.send("Browser.close"), 3000, "Browser.close"); } catch { /* wedged */ }
       const gone = await Promise.race([exited.then(() => true), delay(4000).then(() => false)]);
-      if (!gone) { spawnSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { windowsHide: true, timeout: 15_000 }); await Promise.race([exited, delay(3000)]); }
+      if (!gone) { killTree(proc.pid); await Promise.race([exited, delay(3000)]); }
     }
     page.close(); cdp.close();
     // Chrome's children let go of the profile a moment after the browser exits: try a few times, briefly.
@@ -198,7 +210,7 @@ async function launch() {
       try { rmSync(profile, { recursive: true, force: true }); break; } catch { await delay(300); }
     }
   };
-  const killSync = () => { if (proc.exitCode === null) spawnSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { windowsHide: true, timeout: 15_000 }); };
+  const killSync = () => { if (proc.exitCode === null) killTree(proc.pid); };
   return { proc, page, cdp, version, events, evaluate, close, killSync };
 }
 
@@ -425,7 +437,7 @@ async function withLiveSwitch(browser, fn) {
   }
 }
 
-async function main(opt) {
+async function main(opt, exe) {
   const outDir = resolve(REPO, opt.out);
   if (!underState(outDir)) throw new Error(`--out must be under ${join(REPO, "state")} (gitignored): ${outDir}`);
   mkdirSync(outDir, { recursive: true });
@@ -447,7 +459,7 @@ async function main(opt) {
   let browser = null;
   const unguard = guardHolder({ kill: () => browser && browser.killSync(), release: () => gpu.release() });
   try {
-    browser = await launch();
+    browser = await launch(exe);
     receipt.chrome = browser.version;
     const renderer = await browser.evaluate(`(() => { const c = document.createElement("canvas"); const g = c.getContext("webgl2");
       if (!g) return null; const d = g.getExtension("WEBGL_debug_renderer_info");
@@ -517,6 +529,8 @@ if (process.argv[1] && resolve(process.argv[1]).toLowerCase() === fileURLToPath(
     console.log("usage: node arsenal/shaders/lab_shot.mjs --out state/arsenal/shaders/labshots/<run> [--sizes WxH,...] [--views " + VIEWS.join(",") + "] [--lib DIR --cards DIR] [--subjects ID,... --raise SCALE --dpr N --grow WxH@N]");
     process.exit(2);
   }
-  if (!existsSync(CHROME_EXE)) { console.log(`no Chrome at ${CHROME_EXE}`); process.exit(1); }
-  process.exit(await main(opt));
+  const exe = resolveChrome();
+  if (!exe) { console.log(`no Chrome found: set ${CHROME_ENV}, or install Playwright's Chromium`); process.exit(1); }
+  if (!existsSync(exe)) { console.log(`no Chrome at ${exe}`); process.exit(1); }
+  process.exit(await main(opt, exe));
 }

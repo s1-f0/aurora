@@ -11,14 +11,17 @@ is refused exactly as the page's PUT is: an agent and Daniel never overwrite eac
 Register (Daniel's call; nothing registers it automatically):
     claude mcp add arsenal-media -- py -m arsenal.media.door
 """
+
 from __future__ import annotations
 
 import asyncio
 import importlib
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+
+from .ff import pyl
 
 #: Lists longer than this are cut in tool answers; the receipt keeps everything.
 MAX_ROWS = 40
@@ -34,7 +37,8 @@ mcp = FastMCP(
         "the exact frame keeping every audio track, measure loudness, demux or mix tracks, transcribe with word times, "
         "map League video time to game time from the HUD clock, pin Riot timeline events to frames, measure A/V sync, "
         "export with platform presets. Times are float seconds from the file's start. Originals are never modified. "
-        "Every answer carries `blind` (what the tool cannot see) and a `receipt` path with the full result."),
+        "Every answer carries `blind` (what the tool cannot see) and a `receipt` path with the full result."
+    ),
 )
 
 
@@ -61,6 +65,7 @@ def _lean(obj: Any, depth: int = 0) -> Any:
 
 def _call(module: str, fn: str, *args, **kwargs) -> Any:
     from .ff import MediaError
+
     try:
         res = getattr(importlib.import_module(f"arsenal.media.{module}"), fn)(*args, **kwargs)
     except MediaError as exc:
@@ -77,6 +82,7 @@ async def _run(module: str, fn: str, *args, **kwargs) -> Any:
 # =================================================================================================
 # facts and catalog
 # =================================================================================================
+
 
 @mcp.tool()
 async def media_doctor() -> Any:
@@ -96,18 +102,41 @@ async def media_import(path_or_dir: str, recursive: bool = False, quick: bool = 
     """Import files into the media catalog (never copied). quick=True: facts + catalog row + links only; quick=False
     also builds the analysis proxy, scene cuts, waveform peaks and the League clock map."""
     heavy = not quick
-    return await _run("catalog", "ingest", path_or_dir, recursive=recursive, proxy=heavy, shots=heavy, peaks=heavy,
-                      clock="auto" if heavy else "off")
+    return await _run(
+        "catalog",
+        "ingest",
+        path_or_dir,
+        recursive=recursive,
+        proxy=heavy,
+        shots=heavy,
+        peaks=heavy,
+        clock="auto" if heavy else "off",
+    )
 
 
 @mcp.tool()
-async def media_find(kind: Optional[str] = None, recorded_after: Optional[str] = None,
-                     recorded_before: Optional[str] = None, n_audio: Optional[int] = None,
-                     text: Optional[str] = None, limit: int = 20) -> Any:
+async def media_find(
+    kind: str | None = None,
+    recorded_after: str | None = None,
+    recorded_before: str | None = None,
+    n_audio: int | None = None,
+    text: str | None = None,
+    limit: int = 20,
+) -> Any:
     """Query the media catalog, newest recording first, e.g. kind="league_replay", recorded_after="2026-10-10".
     text matches a substring of the file name or path."""
-    where = {k: v for k, v in {"kind": kind, "recorded_after": recorded_after, "recorded_before": recorded_before,
-                               "n_audio": n_audio, "text": text, "limit": limit}.items() if v is not None}
+    where = {
+        k: v
+        for k, v in {
+            "kind": kind,
+            "recorded_after": recorded_after,
+            "recorded_before": recorded_before,
+            "n_audio": n_audio,
+            "text": text,
+            "limit": limit,
+        }.items()
+        if v is not None
+    }
     return await _run("catalog", "find", **where)
 
 
@@ -121,13 +150,17 @@ async def media_resolve_drop(name: str, size: int, last_modified_ms: int = 0) ->
 # pictures
 # =================================================================================================
 
+
 @mcp.tool()
-async def media_grab(src: str, at: List[float], out_dir: Optional[str] = None, crop: Optional[List[float]] = None,
-                     sheet: bool = True) -> Any:
+async def media_grab(
+    src: str, at: list[float], out_dir: str | None = None, crop: list[float] | None = None, sheet: bool = True
+) -> Any:
     """Frames at exact times (one decode pass). crop = [x, y, w, h] in pixels or fractions <= 1. With sheet=True the
     frames also land on one labelled contact sheet: read that ONE image instead of many."""
-    from .ff import state_dir
     from pathlib import Path
+
+    from .ff import state_dir
+
     out = out_dir or str(state_dir() / "grab" / Path(src).stem)
     res = await _run("frames", "save", src, at, out, crop=tuple(crop) if crop else None)
     if sheet and isinstance(res, dict) and res.get("frames"):
@@ -138,8 +171,9 @@ async def media_grab(src: str, at: List[float], out_dir: Optional[str] = None, c
 
 
 @mcp.tool()
-async def media_sheet(items: List[Any], cols: Optional[int] = None, title: Optional[str] = None,
-                      out: Optional[str] = None) -> Any:
+async def media_sheet(
+    items: list[Any], cols: int | None = None, title: str | None = None, out: str | None = None
+) -> Any:
     """Many images or video moments on one labelled grid. items: image paths, [video, t] pairs, or
     {src, t, crop, label} objects. Kept under 1600 px so it costs one image read."""
     norm = [tuple(i) if isinstance(i, list) else i for i in items]
@@ -147,15 +181,15 @@ async def media_sheet(items: List[Any], cols: Optional[int] = None, title: Optio
 
 
 @mcp.tool()
-async def media_video_sheet(src: str, n: int = 30, start: float = 0.0, end: Optional[float] = None,
-                            out: Optional[str] = None) -> Any:
+async def media_video_sheet(
+    src: str, n: int = 30, start: float = 0.0, end: float | None = None, out: str | None = None
+) -> Any:
     """A whole video (or a span) as n labelled frames on one sheet: the cheapest way to 'watch' it."""
     return await _run("sheet", "video_sheet", src, n=n, start=start, end=end, out=out)
 
 
 @mcp.tool()
-async def media_filmstrip(src: str, t0: float, t1: float, n: int = 8, track: int = 0,
-                          out: Optional[str] = None) -> Any:
+async def media_filmstrip(src: str, t0: float, t1: float, n: int = 8, track: int = 0, out: str | None = None) -> Any:
     """A row of frames over the waveform of the same seconds: ten seconds of video in one image."""
     return await _run("sheet", "filmstrip", src, t0, t1, n=n, track=track, out=out)
 
@@ -171,6 +205,7 @@ async def media_shots(src: str, detector: str = "auto") -> Any:
 # cutting and audio
 # =================================================================================================
 
+
 @mcp.tool()
 async def media_cut_plan(src: str, start: float, end: float) -> Any:
     """What a trim of [start, end) costs: lossless copy (start on a keyframe) or how many seconds a smart cut
@@ -179,7 +214,7 @@ async def media_cut_plan(src: str, start: float, end: float) -> Any:
 
 
 @mcp.tool()
-async def media_cut(src: str, start: float, end: float, out: Optional[str] = None, mode: str = "smart") -> Any:
+async def media_cut(src: str, start: float, end: float, out: str | None = None, mode: str = "smart") -> Any:
     """Trim to the exact frame. mode: copy (lossless, snaps to the keyframe before), smart (re-encodes only up to the
     next keyframe, copies the rest), exact (re-encodes all). Every audio track and its name come along; verified."""
     return await _run("cut", "cut", src, start, end, out, mode=mode)
@@ -195,8 +230,13 @@ async def media_audio(src: str, loudness: bool = True) -> Any:
 
 
 @mcp.tool()
-async def media_mix(src: str, out: str, gains_db: Optional[Dict[str, float]] = None,
-                    mute: Optional[List[int]] = None, loudnorm: Optional[float] = None) -> Any:
+async def media_mix(
+    src: str,
+    out: str,
+    gains_db: dict[str, float] | None = None,
+    mute: list[int] | None = None,
+    loudnorm: float | None = None,
+) -> Any:
     """Mix a file's audio tracks with per-track gain (dB, keyed by track index) and mutes; optional loudnorm target."""
     gains = {int(k): float(v) for k, v in (gains_db or {}).items()}
     return await _run("audio", "mix", src, out, gains_db=gains, mute=tuple(mute or ()), loudnorm=loudnorm)
@@ -209,8 +249,13 @@ async def media_qc(path: str) -> Any:
 
 
 @mcp.tool()
-async def media_words(src: str, track: Optional[int] = None, start: Optional[float] = None,
-                      end: Optional[float] = None, model: str = "small") -> Any:
+async def media_words(
+    src: str,
+    track: int | None = None,
+    start: float | None = None,
+    end: float | None = None,
+    model: str = "small",
+) -> Any:
     """Speech to text with word times (faster-whisper, VAD on: no hallucinated repeats over game audio). Writes
     words.json and a cadence transcript; answers with their paths and counts."""
     span = (start, end) if start is not None and end is not None else None
@@ -221,6 +266,7 @@ async def media_words(src: str, track: Optional[int] = None, start: Optional[flo
 # League
 # =================================================================================================
 
+
 @mcp.tool()
 async def media_clockmap(src: str, hud: str = "auto") -> Any:
     """League HUD clock read on the keyframes: a map from video time to game time, with replay rewinds and 0.25x/0.5x
@@ -229,7 +275,7 @@ async def media_clockmap(src: str, hud: str = "auto") -> Any:
 
 
 @mcp.tool()
-async def media_events(src: str, match_id: str, player: Optional[str] = None) -> Any:
+async def media_events(src: str, match_id: str, player: str | None = None) -> Any:
     """Riot match-v5 timeline events (kills, items, objectives) pinned to every video time that shows them, grouped
     into fight windows. Uses the cached match only; no Riot API call."""
     return await _run("league.events", "pin", src, match_id, player=player)
@@ -239,28 +285,35 @@ async def media_events(src: str, match_id: str, player: Optional[str] = None) ->
 async def media_replay_plan(plan_path: str, plan_id: str) -> Any:
     """Dry-run of one League Replay API take: every request the driver would send, and how long OBS would record. It
     sends nothing (Daniel drives live takes with `py -m arsenal.media replay take`)."""
+
     def plan() -> Any:
         from .league import replay_api as ra
+
         rows = {str(r.get("plan_id")): r for r in ra.load_plan(plan_path)}
         if plan_id not in rows:
             return {"error": f"no take {plan_id!r} (have: {', '.join(rows)})"}
         api = ra.ReplayApi(dry_run=True)
         take = ra.plan_take(rows[plan_id])
         res = ra.run_take(api, take, confirm=lambda msg: None)
-        return {"take": {k: v for k, v in take.items() if k != "steps"}, "requests": res["log"],
-                "roll_s": res["waited_s"]}
+        return {
+            "take": {k: v for k, v in take.items() if k != "steps"},
+            "requests": res["log"],
+            "roll_s": res["waited_s"],
+        }
+
     return await asyncio.to_thread(plan)
 
 
 @mcp.tool()
-async def media_avsync(a: str, b: Optional[str] = None, a_track: int = 0, b_track: Optional[int] = None) -> Any:
+async def media_avsync(a: str, b: str | None = None, a_track: int = 0, b_track: int | None = None) -> Any:
     """Offset (ms) and drift (ms/min) between two recordings of the same moment, or between two tracks of one file."""
     return await _run("avsync", "offset", a, b, a_track=a_track, b_track=b_track)
 
 
 @mcp.tool()
-async def media_export(src: str, preset: str, out: str, start: Optional[float] = None,
-                       end: Optional[float] = None, dry_run: bool = False) -> Any:
+async def media_export(
+    src: str, preset: str, out: str, start: float | None = None, end: float | None = None, dry_run: bool = False
+) -> Any:
     """Export with a platform preset (youtube_4k60, youtube_4k60_fast, shorts_1080x1920, proxy_edit, alpha_webm,
     alpha_webp_anim, ...) plus a loudness/duration QC receipt. dry_run=True returns the ffmpeg argv only."""
     return await _run("export", "export", src, preset, out, start=start, end=end, dry_run=dry_run)
@@ -269,6 +322,7 @@ async def media_export(src: str, preset: str, out: str, start: Optional[float] =
 # =================================================================================================
 # the editor's projects (the same files the web page edits)
 # =================================================================================================
+
 
 @mcp.tool()
 async def media_edit_projects() -> Any:
@@ -284,17 +338,21 @@ async def media_edit_show(pid: str) -> Any:
 
 
 @mcp.tool()
-async def media_edit_apply(pid: str, op: str, args: Dict[str, Any], rev: int) -> Any:
+async def media_edit_apply(pid: str, op: str, args: dict[str, Any], rev: int) -> Any:
     """Change a project as the web page does, one writer at a time. rev must be the revision you read: if Daniel saved
     in between, this is refused with the current document. ops: add_clip {media_id, src_in?, src_out?, at?},
     move {clip_id, at}, trim {clip_id, src_in?, src_out?}, split {clip_id, t}, remove {clip_id},
     set_lane_gain {lane, gain_db?, mute?, solo?}, set_clip_track_gain {clip_id, src_track, gain_db?, mute?}."""
+
     def apply() -> Any:
         from . import edit
+
         doc = edit.load(pid)
         if doc.get("rev") != rev:
-            return {"error": f"stale revision {rev}: the project is at rev {doc.get('rev')}; read it again",
-                    "project": doc}
+            return {
+                "error": f"stale revision {rev}: the project is at rev {doc.get('rev')}; read it again",
+                "project": doc,
+            }
         a = dict(args)
         if op == "add_clip":
             media = edit.get_media(a.pop("media_id"))
@@ -314,9 +372,10 @@ async def media_edit_apply(pid: str, op: str, args: Dict[str, Any], rev: int) ->
         else:
             return {"error": f"unknown op {op!r}"}
         return edit.save(doc)
+
     try:
         return json.loads(json.dumps(_lean(await asyncio.to_thread(apply)), default=str))
-    except Exception as exc:          # EditError / Conflict carry their own words; the page shows the same ones
+    except Exception as exc:  # EditError / Conflict carry their own words; the page shows the same ones
         current = getattr(exc, "current", None)
         return {"error": f"{type(exc).__name__}: {exc}", **({"project": current} if current else {})}
 
@@ -325,15 +384,19 @@ async def media_edit_apply(pid: str, op: str, args: Dict[str, Any], rev: int) ->
 async def media_edit_render(pid: str, preset: str = "youtube_4k60_fast") -> Any:
     """Render a project to a new file under E:\\Video Output E\\aurora-edits\\<project>\\ with a QC line. Blocking: a
     long timeline takes a while (about 6x realtime at the proxy preset)."""
+
     def render() -> Any:
         from . import edit
+
         return edit.render(edit.load(pid), preset)
+
     return json.loads(json.dumps(_lean(await asyncio.to_thread(render)), default=str))
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     import argparse
-    ap = argparse.ArgumentParser(prog="py -m arsenal.media.door", description="the video toolbox as MCP tools")
+
+    ap = argparse.ArgumentParser(prog=f"{pyl()} -m arsenal.media.door", description="the video toolbox as MCP tools")
     ap.add_argument("--http", type=int, default=None, metavar="PORT", help="serve streamable HTTP instead of stdio")
     a = ap.parse_args(argv)
     if a.http:

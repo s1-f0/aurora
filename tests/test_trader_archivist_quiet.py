@@ -1,10 +1,10 @@
 """The daily archivist must not need a visible console to leave a receipt."""
+
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 import sys
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -13,7 +13,8 @@ def test_archivist_records_output_and_errors_without_console(tmp_path, monkeypat
     spec = importlib.util.spec_from_file_location(
         "trader_archivist_quiet_test", ROOT / "scripts" / "trader_archivist.py"
     )
-    assert spec and spec.loader
+    assert spec
+    assert spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))

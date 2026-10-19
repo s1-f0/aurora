@@ -65,9 +65,11 @@ Install the weekly task (idempotent, not admin)::
 
     powershell -ExecutionPolicy Bypass -File scripts\\ops\\install_wishlist_triage_task.ps1
 """
+
 from __future__ import annotations
 
 import sys
+from datetime import UTC
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -92,14 +94,26 @@ WISH_HEAD_RE = r"^- \[ \] (W\d+) \((\d{2})-(\d{2})[,)]?\s*(.*)$"
 # A path-shaped token inside free prose. Either a known top dir followed by a slash, or any
 # slash-bearing token ending in a real extension. Deliberately conservative: a false path would
 # manufacture a LAND MISSING finding, which is worse than declining to check.
-TOP_DIRS = ("core/", "scripts/", "docs/", "tests/", "design/", "agent/", "arsenal/",
-            "security/", "state/", "research/", "charters/")
-PATH_RE = r"(?:(?:%s)[\w./-]+|[\w./-]+\.(?:py|md|json|ps1|js|yml|yaml|frag))" % "|".join(
-    d.replace("/", r"/") for d in TOP_DIRS)
+TOP_DIRS = (
+    "core/",
+    "scripts/",
+    "docs/",
+    "tests/",
+    "design/",
+    "agent/",
+    "arsenal/",
+    "security/",
+    "state/",
+    "research/",
+    "charters/",
+)
+PATH_RE = r"(?:(?:{})[\w./-]+|[\w./-]+\.(?:py|md|json|ps1|js|yml|yaml|frag))".format(
+    "|".join(d.replace("/", r"/") for d in TOP_DIRS)
+)
 
-GIT_BUDGET = 70          # subprocess calls are the cost here, not tokens
+GIT_BUDGET = 70  # subprocess calls are the cost here, not tokens
 SHORTLIST_PER_BUCKET = 3
-DISCORD_LIMIT = 1800     # Discord caps a message at 2000; leave room for the frame
+DISCORD_LIMIT = 1800  # Discord caps a message at 2000; leave room for the frame
 
 
 def main() -> int:
@@ -107,6 +121,7 @@ def main() -> int:
     # Scheduler there is no console and CPython sets sys.stdout to None, so print() succeeds and
     # discards -- which would silently void the entire report, every week, forever.
     from core.infrastructure.background_stdio import repair_background_stdio
+
     log = repair_background_stdio("wishlist-triage")
 
     import argparse
@@ -115,24 +130,22 @@ def main() -> int:
     import re
     import subprocess
     import time
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     ap = argparse.ArgumentParser(description="Weekly wishlist triage: propose, never close.")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="print the report; write no receipt and post nothing")
+    ap.add_argument("--dry-run", action="store_true", help="print the report; write no receipt and post nothing")
     ap.add_argument("--no-send", action="store_true", help="write the receipt but do not post")
     ap.add_argument("--budget", type=int, default=GIT_BUDGET, help="max git calls")
     args = ap.parse_args()
 
     started = time.time()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"[wishlist-triage] {stamp} starting" + (f" (log: {log})" if log else ""))
 
     # Env override for the output dir -- the guard the neighbour task lacks, so a test run cannot
     # grow rows in the real state plane.
-    out_dir = Path(os.environ.get("AKASHIC_WISHLIST_TRIAGE_DIR",
-                                  str(ROOT / "state" / "wishlist" / "triage-receipts")))
+    out_dir = Path(os.environ.get("AKASHIC_WISHLIST_TRIAGE_DIR", str(ROOT / "state" / "wishlist" / "triage-receipts")))
 
     wishlist = ROOT / "docs" / "WISHLIST.md"
     if not wishlist.exists():
@@ -167,9 +180,9 @@ def main() -> int:
         # The door writes MM-DD with no year. Assume the most recent occurrence: if that date is in
         # the future, it belongs to last year.
         try:
-            filed = datetime(now.year, int(mm), int(dd), tzinfo=timezone.utc)
+            filed = datetime(now.year, int(mm), int(dd), tzinfo=UTC)
             if filed > now + timedelta(days=1):
-                filed = datetime(now.year - 1, int(mm), int(dd), tzinfo=timezone.utc)
+                filed = datetime(now.year - 1, int(mm), int(dd), tzinfo=UTC)
         except ValueError:
             unparsed.append(wid)
             if m:
@@ -184,21 +197,33 @@ def main() -> int:
             tok = tok.rstrip(".,;")
             if "/" in tok or tok.endswith((".py", ".md", ".json", ".ps1")):
                 paths.append(tok)
-        wishes.append(dict(id=wid, filed=filed, seat=seat.strip(), land=land,
-                           paths=sorted(set(paths)), headline=_headline(body)))
+        wishes.append(
+            {
+                "id": wid,
+                "filed": filed,
+                "seat": seat.strip(),
+                "land": land,
+                "paths": sorted(set(paths)),
+                "headline": _headline(body),
+            }
+        )
 
     # The arithmetic must CLOSE, and it must say so. An identity is checkable; a pile of counters
     # is not. If this ever fails to balance, the instrument is lying about its own population.
     balanced = len(found) == len(wishes) + len(unparsed)
-    print(f"[wishlist-triage] found {len(found)} == taken {len(wishes)} "
-          f"({n_strict} strict + {n_fallback} fallback) + unparsed {len(unparsed)}"
-          f"{'' if balanced else '  <-- DOES NOT BALANCE'}")
+    print(
+        f"[wishlist-triage] found {len(found)} == taken {len(wishes)} "
+        f"({n_strict} strict + {n_fallback} fallback) + unparsed {len(unparsed)}"
+        f"{'' if balanced else '  <-- DOES NOT BALANCE'}"
+    )
     if unparsed:
         print(f"[wishlist-triage] unparsed: {', '.join(unparsed)}")
 
     if not wishes:
-        print("[wishlist-triage] parsed ZERO open wishes -- the format may have changed. Refusing "
-              "to report a clean sheet on a parse failure.")
+        print(
+            "[wishlist-triage] parsed ZERO open wishes -- the format may have changed. Refusing "
+            "to report a clean sheet on a parse failure."
+        )
         return 1
 
     # --------------------------------------------------- high-water mark
@@ -213,8 +238,7 @@ def main() -> int:
                     continue
                 rec = json.loads(ln)
                 if rec.get("at"):
-                    prior_hwm = datetime.strptime(rec["at"], "%Y-%m-%dT%H:%M:%SZ").replace(
-                        tzinfo=timezone.utc)
+                    prior_hwm = datetime.strptime(rec["at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
                     hwm_source = f"previous run at {rec['at']}"
                     break
     except (OSError, ValueError, json.JSONDecodeError) as e:
@@ -241,9 +265,14 @@ def main() -> int:
         newest = None
         for p in w["paths"]:
             try:
-                r = subprocess.run(["git", "log", "-1", "--format=%cI", "--", p],
-                                   cwd=str(ROOT), capture_output=True, text=True,
-                                   errors="replace", timeout=20)
+                r = subprocess.run(
+                    ["git", "log", "-1", "--format=%cI", "--", p],
+                    cwd=str(ROOT),
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                    timeout=20,
+                )
                 if r.returncode == 0 and r.stdout.strip():
                     ts = datetime.fromisoformat(r.stdout.strip())
                     newest = ts if newest is None or ts > newest else newest
@@ -254,16 +283,34 @@ def main() -> int:
             w["land_commit"] = newest.strftime("%Y-%m-%d")
             land_moved.append(w)
 
-    shortlisted = {w["id"] for w in (fresh[:SHORTLIST_PER_BUCKET]
-                                     + land_missing[:SHORTLIST_PER_BUCKET]
-                                     + land_moved[:SHORTLIST_PER_BUCKET])}
-    starving = [w for w in sorted(wishes, key=lambda x: x["filed"])
-                if w["id"] not in shortlisted][:SHORTLIST_PER_BUCKET]
+    shortlisted = {
+        w["id"]
+        for w in (
+            fresh[:SHORTLIST_PER_BUCKET] + land_missing[:SHORTLIST_PER_BUCKET] + land_moved[:SHORTLIST_PER_BUCKET]
+        )
+    }
+    starving = [w for w in sorted(wishes, key=lambda x: x["filed"]) if w["id"] not in shortlisted][
+        :SHORTLIST_PER_BUCKET
+    ]
 
     # ----------------------------------------------------------- render
-    report = _render(now, wishes, fresh, land_missing, land_moved, starving,
-                     no_land_path, checked, skipped, hwm_source, SHORTLIST_PER_BUCKET,
-                     len(found), unparsed, n_strict, n_fallback)
+    report = _render(
+        now,
+        wishes,
+        fresh,
+        land_missing,
+        land_moved,
+        starving,
+        no_land_path,
+        checked,
+        skipped,
+        hwm_source,
+        SHORTLIST_PER_BUCKET,
+        len(found),
+        unparsed,
+        n_strict,
+        n_fallback,
+    )
     print(report)
 
     receipt = {
@@ -288,7 +335,7 @@ def main() -> int:
         "land_moved": [w["id"] for w in land_moved],
         "starving": [w["id"] for w in starving],
         "hwm_source": hwm_source,
-        "closed_anything": False,   # structurally; this task holds no write door to the ledger
+        "closed_anything": False,  # structurally; this task holds no write door to the ledger
     }
 
     if args.dry_run:
@@ -298,7 +345,8 @@ def main() -> int:
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / (now.strftime("%Y-%m") + ".jsonl")).open("a", encoding="utf-8").write(
-            json.dumps(receipt, ensure_ascii=False) + "\n")
+            json.dumps(receipt, ensure_ascii=False) + "\n"
+        )
         latest = out_dir.parent / "latest-triage.md"
         latest.write_text(report, encoding="utf-8")
         print(f"[wishlist-triage] receipt -> {out_dir / (now.strftime('%Y-%m') + '.jsonl')}")
@@ -315,14 +363,30 @@ def main() -> int:
 def _headline(body: str) -> str:
     """The bolded first clause if the wish has one, else its opening words."""
     import re
+
     m = re.search(r"\*\*(.+?)\*\*", body)
     s = m.group(1) if m else body
     s = s.split("Trigger:")[0].strip()
     return (s[:150] + "...") if len(s) > 150 else s
 
 
-def _render(now, wishes, fresh, missing, moved, starving, no_land_path, checked, skipped,
-            hwm_source, per_bucket, n_found, unparsed, n_strict, n_fallback) -> str:
+def _render(
+    now,
+    wishes,
+    fresh,
+    missing,
+    moved,
+    starving,
+    no_land_path,
+    checked,
+    skipped,
+    hwm_source,
+    per_bucket,
+    n_found,
+    unparsed,
+    n_strict,
+    n_fallback,
+) -> str:
     """ASCII only, deliberately.
 
     The first live run rendered every em-dash as a replacement character: this host's console is
@@ -331,13 +395,13 @@ def _render(now, wishes, fresh, missing, moved, starving, no_land_path, checked,
     artifact looks correct to whoever checks the artifact. Cheaper to be unambiguous than to chase
     an encoding through three surfaces.
     """
+
     def block(title, items, note, fmt):
         if not items:
             # Checked-and-empty is a real result and must read differently from never-looked.
             return [f"## {title}", "", "_none this pass (checked, genuinely empty)._", ""]
         out = [f"## {title}  ({len(items)})", "", f"_{note}_", ""]
-        for w in items[:per_bucket]:
-            out.append(fmt(w))
+        out.extend(fmt(w) for w in items[:per_bucket])
         if len(items) > per_bucket:
             out.append(f"- ...and {len(items) - per_bucket} more in the same bucket.")
         out.append("")
@@ -345,47 +409,83 @@ def _render(now, wishes, fresh, missing, moved, starving, no_land_path, checked,
 
     pop = f"**{len(wishes)} wishes open.**"
     if unparsed or n_fallback:
-        pop += (f" (population: {n_found} found = {n_strict} strict + {n_fallback} fallback"
-                f" + {len(unparsed)} unparsed"
-                + (f": {', '.join(unparsed)}" if unparsed else "") + ")")
+        pop += (
+            f" (population: {n_found} found = {n_strict} strict + {n_fallback} fallback"
+            f" + {len(unparsed)} unparsed" + (f": {', '.join(unparsed)}" if unparsed else "") + ")"
+        )
 
-    L = [f"# Wishlist triage -- {now.strftime('%Y-%m-%d')}", "",
-         pop, f"Window: {hwm_source}.", "",
-         "This report **proposes**. It has closed nothing and holds no door to do so -- "
-         "curate with `py agent_cli.py wish-curate claude --id W### --as fold|keep|decline`.", ""]
+    from core.paths import cli_command
 
-    L += block("Fresh -- filed since the last pass", fresh,
-               "Most perishable: whoever felt this friction still remembers why.",
-               lambda w: f"- **{w['id']}** ({w['seat']}, {w['filed']:%m-%d}) -- {w['headline']}")
-    L += block("Land missing -- the wish points at a path that is gone", missing,
-               "A QUESTION, not a verdict: misfiled, or the target moved. Either way it cannot "
-               "land where it says.",
-               lambda w: f"- **{w['id']}** -- {w['headline']}\n"
-                         f"    - unresolved: `{'`, `'.join(w['missing'])}`")
-    L += block("Possibly already built -- landing site changed after filing", moved,
-               "A QUESTION, not a verdict. Code moved near where this pointed; someone has to read "
-               "the wish against the code. No parser can decide this.",
-               lambda w: f"- **{w['id']}** -- {w['headline']}\n"
-                         f"    - `Land:` last committed {w['land_commit']}, "
-                         f"wish filed {w['filed']:%Y-%m-%d}")
-    L += block("Starving -- oldest open, not surfaced above", starving,
-               "Included so age alone cannot hide a wish forever.",
-               lambda w: f"- **{w['id']}** ({w['filed']:%Y-%m-%d}) -- {w['headline']}")
+    L = [
+        f"# Wishlist triage -- {now.strftime('%Y-%m-%d')}",
+        "",
+        pop,
+        f"Window: {hwm_source}.",
+        "",
+        (
+            "This report **proposes**. It has closed nothing and holds no door to do so -- "
+            f"curate with `{cli_command()} wish-curate claude --id W### --as fold|keep|decline`."
+        ),
+        "",
+    ]
 
-    L += ["---", "", "### What this pass could NOT see", "",
-          f"- **{no_land_path}** open wishes name no extractable path in `Land:` (it is free "
-          "prose), so the two landing buckets never looked at them. Not clean -- unexamined.",
-          f"- **{checked}** landing sites checked against git; **{skipped}** skipped over budget. "
-          "Skipped means unchecked, not clean.",
-          "- Whether any wish is *satisfied* was not assessed and cannot be by this instrument. "
-          "Both landing buckets are questions for a reader.",
-          "- Only `- [ ] W###` entries are read; older dated prose sections are out of scope.", ""]
+    L += block(
+        "Fresh -- filed since the last pass",
+        fresh,
+        "Most perishable: whoever felt this friction still remembers why.",
+        lambda w: f"- **{w['id']}** ({w['seat']}, {w['filed']:%m-%d}) -- {w['headline']}",
+    )
+    L += block(
+        "Land missing -- the wish points at a path that is gone",
+        missing,
+        "A QUESTION, not a verdict: misfiled, or the target moved. Either way it cannot land where it says.",
+        lambda w: f"- **{w['id']}** -- {w['headline']}\n    - unresolved: `{'`, `'.join(w['missing'])}`",
+    )
+    L += block(
+        "Possibly already built -- landing site changed after filing",
+        moved,
+        "A QUESTION, not a verdict. Code moved near where this pointed; someone has to read "
+        "the wish against the code. No parser can decide this.",
+        lambda w: (
+            f"- **{w['id']}** -- {w['headline']}\n"
+            f"    - `Land:` last committed {w['land_commit']}, "
+            f"wish filed {w['filed']:%Y-%m-%d}"
+        ),
+    )
+    L += block(
+        "Starving -- oldest open, not surfaced above",
+        starving,
+        "Included so age alone cannot hide a wish forever.",
+        lambda w: f"- **{w['id']}** ({w['filed']:%Y-%m-%d}) -- {w['headline']}",
+    )
+
+    L += [
+        "---",
+        "",
+        "### What this pass could NOT see",
+        "",
+        (
+            f"- **{no_land_path}** open wishes name no extractable path in `Land:` (it is free "
+            "prose), so the two landing buckets never looked at them. Not clean -- unexamined."
+        ),
+        (
+            f"- **{checked}** landing sites checked against git; **{skipped}** skipped over budget. "
+            "Skipped means unchecked, not clean."
+        ),
+        (
+            "- Whether any wish is *satisfied* was not assessed and cannot be by this instrument. "
+            "Both landing buckets are questions for a reader."
+        ),
+        "- Only `- [ ] W###` entries are read; older dated prose sections are out of scope.",
+        "",
+    ]
     return "\n".join(L)
 
 
 def _post(report: str, root: Path) -> None:
     """Hand Daniel the short form through the outbound feed, which is a one-way webhook."""
     import subprocess
+
     lines, body = report.splitlines(), []
     size = 0
     for ln in lines:
@@ -397,10 +497,14 @@ def _post(report: str, root: Path) -> None:
         body.append(ln)
         size += len(ln) + 1
     try:
-        r = subprocess.run([sys.executable, "agent_cli.py", "discord", "send",
-                            "--text", "\n".join(body), "--kind", "chat"],
-                           cwd=str(root), capture_output=True, text=True,
-                           errors="replace", timeout=60)
+        r = subprocess.run(
+            [sys.executable, "agent_cli.py", "discord", "send", "--text", "\n".join(body), "--kind", "chat"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=60,
+        )
         out = ((r.stdout or "") + (r.stderr or "")).strip()
         print(f"[wishlist-triage] post rc={r.returncode} {out[:300]}")
     except (OSError, subprocess.SubprocessError) as e:

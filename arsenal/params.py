@@ -25,11 +25,12 @@ The rules (the JS header says the same):
 Python callers get ints back for values on an integer grid (count, bits, a step of 1 from an integer min), so a render can
 bind them to an int uniform without a cast; JSON and the fixture see the same numbers either way.
 """
+
 from __future__ import annotations
 
 import math
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 PARAMS_API = "arsenal.params/v1"
 # The house refusal text for a control locked while recording (the looks registry's REC_BLOCKED; a test keeps them equal).
@@ -37,11 +38,40 @@ REC_REFUSAL_TEXT = "Stop recording to change this."
 
 TYPES = ("range", "choice", "toggle", "colour", "vec")
 CURVES = ("linear", "log", "exp")
-NUMERIC_UNITS = ("ratio", "px", "world", "rad", "turns", "deg", "hz", "sec", "per-sec", "stops", "kelvin", "nm", "db",
-                 "count", "bits")
-_UNIT_SYMBOL = {"ratio": "", "px": "px", "world": "units", "rad": "rad", "turns": "turns", "deg": "°", "hz": "Hz",
-                "sec": "s", "per-sec": "/s", "stops": "stops", "kelvin": "K", "nm": "nm", "db": "dB", "count": "",
-                "bits": "bits"}
+NUMERIC_UNITS = (
+    "ratio",
+    "px",
+    "world",
+    "rad",
+    "turns",
+    "deg",
+    "hz",
+    "sec",
+    "per-sec",
+    "stops",
+    "kelvin",
+    "nm",
+    "db",
+    "count",
+    "bits",
+)
+_UNIT_SYMBOL = {
+    "ratio": "",
+    "px": "px",
+    "world": "units",
+    "rad": "rad",
+    "turns": "turns",
+    "deg": "°",
+    "hz": "Hz",
+    "sec": "s",
+    "per-sec": "/s",
+    "stops": "stops",
+    "kelvin": "K",
+    "nm": "nm",
+    "db": "dB",
+    "count": "",
+    "bits": "bits",
+}
 _TIGHT = {"%", "°", "×", "/s"}
 _SIGNED = {"stops", "db"}
 _INTEGER_UNITS = {"count", "bits"}
@@ -105,7 +135,7 @@ def _fixed(x: float, dec: int) -> str:
     if n == 0:
         return "0." + "0" * d if d else "0"
     digits = str(n).rjust(d + 1, "0")
-    body = digits[:len(digits) - d] + "." + digits[len(digits) - d:] if d else digits
+    body = digits[: len(digits) - d] + "." + digits[len(digits) - d :] if d else digits
     return ("-" if x < 0 else "") + body
 
 
@@ -167,13 +197,22 @@ def normalize_descriptor(d: dict) -> dict:
         vals = [{"value": (o or {}).get("value"), "label": (o or {}).get("label")} for o in d["values"]]
     order = d.get("order")
     return {
-        "id": d.get("id"), "group": d.get("group") if d.get("group") is not None else "params",
-        "label": d.get("label") if d.get("label") is not None else d.get("id"), "type": t,
-        "unit": d.get("unit") if d.get("unit") is not None else _implied_unit(t), "range": rng,
-        "default": _clone(d.get("default")), "curve": d.get("curve") if d.get("curve") is not None else "linear",
-        "values": vals, "help": d.get("help") if d.get("help") is not None else "", "recBlocked": bool(d.get("recBlocked")),
-        "order": order if _is_num(order) else 0, "uniform": d.get("uniform"), "derived": d.get("derived"),
-        "cost": bool(d.get("cost")), "source": dict(d["source"]) if isinstance(d.get("source"), dict) else None,
+        "id": d.get("id"),
+        "group": d.get("group") if d.get("group") is not None else "params",
+        "label": d.get("label") if d.get("label") is not None else d.get("id"),
+        "type": t,
+        "unit": d.get("unit") if d.get("unit") is not None else _implied_unit(t),
+        "range": rng,
+        "default": _clone(d.get("default")),
+        "curve": d.get("curve") if d.get("curve") is not None else "linear",
+        "values": vals,
+        "help": d.get("help") if d.get("help") is not None else "",
+        "recBlocked": bool(d.get("recBlocked")),
+        "order": order if _is_num(order) else 0,
+        "uniform": d.get("uniform"),
+        "derived": d.get("derived"),
+        "cost": bool(d.get("cost")),
+        "source": dict(d["source"]) if isinstance(d.get("source"), dict) else None,
     }
 
 
@@ -210,7 +249,7 @@ def _quantise(x, lo, hi, grid):
     if v > hi and step is not None:
         v = _round_to(v - step, dec)
     if step is None:
-        v = _clamp(v, lo, hi)   # an end past 9 decimals: rounding must not leave the range
+        v = _clamp(v, lo, hi)  # an end past 9 decimals: rounding must not leave the range
     return v + 0  # never -0.0
 
 
@@ -238,8 +277,12 @@ def _same_choice(a, b) -> bool:
 
 def _same_value(a, b) -> bool:
     if isinstance(a, list) or isinstance(b, list):
-        return isinstance(a, list) and isinstance(b, list) and len(a) == len(b) and all(
-            _same_scalar(x, y) for x, y in zip(a, b))
+        return (
+            isinstance(a, list)
+            and isinstance(b, list)
+            and len(a) == len(b)
+            and all(_same_scalar(x, y) for x, y in zip(a, b, strict=False))
+        )
     return _same_scalar(a, b)
 
 
@@ -269,7 +312,11 @@ def validate_value(d: dict, value=_MISSING) -> dict:
     if value is _MISSING:
         return {"value": _default_of(d), "problem": None}
     if t == "toggle":
-        return {"value": value, "problem": None} if isinstance(value, bool) else fallback("type", f"{label} must be on or off.")
+        return (
+            {"value": value, "problem": None}
+            if isinstance(value, bool)
+            else fallback("type", f"{label} must be on or off.")
+        )
     if t == "choice":
         for o in d.get("values") or []:
             if _same_choice(o.get("value"), value):
@@ -285,27 +332,36 @@ def validate_value(d: dict, value=_MISSING) -> dict:
             return fallback("type", f"{label} must be {n} numbers.")
         lo, hi = _bounds(d)
         g = _grid(d)
-        nums = [float(x) for x in value]   # the doubles the JS twin holds (2**60 + 1 is 2**60 there)
+        nums = [float(x) for x in value]  # the doubles the JS twin holds (2**60 + 1 is 2**60 there)
         out = [_quantise(x, lo, hi, g) for x in nums]
         if any(x < lo - _EPS or x > hi + _EPS for x in nums):
             if t == "colour":
-                message = (f"{label} channels must be from {_num_text(lo)} to {_num_text(hi)}; "
-                           f"using {', '.join(_num_text(x) for x in out)}.")
+                message = (
+                    f"{label} channels must be from {_num_text(lo)} to {_num_text(hi)}; "
+                    f"using {', '.join(_num_text(x) for x in out)}."
+                )
             else:
                 scalar = {**d, "type": "range"}
-                message = (f"{label} must be from {format_value(scalar, lo)} to {format_value(scalar, hi)}; "
-                           f"using {format_value(d, out)}.")
+                message = (
+                    f"{label} must be from {format_value(scalar, lo)} to {format_value(scalar, hi)}; "
+                    f"using {format_value(d, out)}."
+                )
             return {"value": out, "problem": _problem(d.get("id"), "range", message)}
         return {"value": out, "problem": None}
     if not _is_num(value):
         return fallback("type", f"{label} must be a number.")
-    value = float(value)   # the double the JS twin holds (2**60 + 1 is 2**60 there)
+    value = float(value)  # the double the JS twin holds (2**60 + 1 is 2**60 there)
     lo, hi = _bounds(d)
     out = _quantise(value, lo, hi, _grid(d))
     if value < lo - _EPS or value > hi + _EPS:
-        return {"value": out, "problem": _problem(
-            d.get("id"), "range",
-            f"{label} must be from {format_value(d, lo)} to {format_value(d, hi)}; using {format_value(d, out)}.")}
+        return {
+            "value": out,
+            "problem": _problem(
+                d.get("id"),
+                "range",
+                f"{label} must be from {format_value(d, lo)} to {format_value(d, hi)}; using {format_value(d, out)}.",
+            ),
+        }
     return {"value": out, "problem": None}
 
 
@@ -320,13 +376,13 @@ def validate(descriptors, values) -> dict:
     elif not isinstance(src, dict):
         lead.append(_problem("", "values", "Settings must be an object of names and values."))
         src = {}
-    out: Dict[str, Any] = {}
-    per: List[Optional[dict]] = [None] * len(items)
+    out: dict[str, Any] = {}
+    per: list[dict | None] = [None] * len(items)
     for i, d in enumerate(items):
         if d.get("derived"):
             out[d["id"]] = None
             continue
-        r = validate_value(d, src[d["id"]] if d["id"] in src else _MISSING)
+        r = validate_value(d, src.get(d["id"], _MISSING))
         out[d["id"]] = r["value"]
         per[i] = r["problem"]
     for i, d in enumerate(items):
@@ -339,11 +395,15 @@ def validate(descriptors, values) -> dict:
             continue
         out[d["id"]] = _default_of(d)
         label = d.get("label") if d.get("label") is not None else d["id"]
-        per[i] = _problem(d["id"], "derived", f"{label} could not be worked out from {d['derived']}; using its default.")
+        per[i] = _problem(
+            d["id"], "derived", f"{label} could not be worked out from {d['derived']}; using its default."
+        )
     known = {d["id"] for d in items}
-    # Sorted by UTF-16 code units, as JavaScript's sort() orders them (by code point "Ａ" would come before "😀").
-    unknown = [_problem(k, "unknown", f"{k} is not a setting here.")
-               for k in sorted((k for k in src if k not in known), key=_utf16_key)]
+    # Sorted by UTF-16 code units, as JavaScript's sort() orders them (by code point "Ａ" would come before "😀").  # noqa: RUF003  # the fullwidth letter is the example: it sorts apart by code unit and by code point
+    unknown = [
+        _problem(k, "unknown", f"{k} is not a setting here.")
+        for k in sorted((k for k in src if k not in known), key=_utf16_key)
+    ]
     problems = lead + [p for p in per if p] + unknown
     return {"ok": not problems, "values": out, "problems": problems}
 
@@ -368,7 +428,7 @@ def _tokenize(src: str):
         if c in " \t":
             i += 1
             continue
-        if len(out) == MAX_TOKENS:   # a token past the cap starts here
+        if len(out) == MAX_TOKENS:  # a token past the cap starts here
             raise _ExprError(f"longer than {MAX_TOKENS} tokens")
         m = _TOK_NUM.match(src, i)
         if m:
@@ -501,14 +561,23 @@ def _run(node, env):
     else:
         xs = [_run(a, env) for a in node[2]]
         f = node[1]
-        v = (min(xs) if f == "min" else max(xs) if f == "max" else _clamp(xs[0], xs[1], xs[2]) if f == "clamp"
-             else abs(xs[0]) if f == "abs" else float(math.floor(xs[0])))
+        v = (
+            min(xs)
+            if f == "min"
+            else max(xs)
+            if f == "max"
+            else _clamp(xs[0], xs[1], xs[2])
+            if f == "clamp"
+            else abs(xs[0])
+            if f == "abs"
+            else float(math.floor(xs[0]))
+        )
     if not _is_num(v):
         raise _ExprError("not a finite number")
     return float(v)
 
 
-_PARSED: Dict[str, Any] = {}
+_PARSED: dict[str, Any] = {}
 
 
 def _evaluate(src: str, env: dict) -> float:
@@ -516,26 +585,26 @@ def _evaluate(src: str, env: dict) -> float:
         if src not in _PARSED:
             _PARSED[src] = _parse_expr(src)
         return _run(_PARSED[src], env)
-    except (_ExprError, OverflowError, TypeError, RecursionError):   # RecursionError: belt and braces under the cap
+    except (_ExprError, OverflowError, TypeError, RecursionError):  # RecursionError: belt and braces under the cap
         return math.nan
 
 
 # ------------------------------------------------------------------------------------------- descriptor check --
-def check_descriptors(descriptors) -> List[dict]:
+def check_descriptors(descriptors) -> list[dict]:
     """What is wrong with the descriptors themselves -> [{id, code, message}]. Codes per descriptor, in this order: id or
     duplicate, type, unit, range, curve, values, default, derived, uniform (the JS twin keeps the same order)."""
     if not isinstance(descriptors, list):
         return [_problem("", "descriptors", "Descriptors must be a list.")]
-    out: List[dict] = []
+    out: list[dict] = []
     seen, uniforms = set(), set()
-    by_id: Dict[str, dict] = {}
+    by_id: dict[str, dict] = {}
     for d in descriptors:
         if isinstance(d, dict) and isinstance(d.get("id"), str) and d["id"] not in by_id:
             by_id[d["id"]] = d
     for d in descriptors:
         pid = d["id"] if isinstance(d, dict) and isinstance(d.get("id"), str) else ""
 
-        def add(code, message):
+        def add(code, message, pid=pid):
             out.append(_problem(pid, code, message))
 
         if not isinstance(d, dict):
@@ -562,8 +631,13 @@ def check_descriptors(descriptors) -> List[dict]:
         r = d.get("range")
         step = r.get("step") if isinstance(r, dict) else None
         # min below max as the doubles JSON.parse makes: 2**60 and 2**60 + 1 are one number to the JS twin
-        shape_ok = (isinstance(r, dict) and _is_num(r.get("min")) and _is_num(r.get("max"))
-                    and _as_double(r["min"]) < _as_double(r["max"]) and (step is None or (_is_num(step) and step > 0)))
+        shape_ok = (
+            isinstance(r, dict)
+            and _is_num(r.get("min"))
+            and _is_num(r.get("max"))
+            and _as_double(r["min"]) < _as_double(r["max"])
+            and (step is None or (_is_num(step) and step > 0))
+        )
         range_ok = False
         if numeric:
             if shape_ok:
@@ -583,13 +657,22 @@ def check_descriptors(descriptors) -> List[dict]:
         values_ok = True
         if t == "choice":
             vs = d.get("values")
-            values_ok = (isinstance(vs, list) and len(vs) > 0
-                         and all(isinstance(o, dict) and isinstance(o.get("label"), str)
-                                 and (isinstance(o.get("value"), str) or _is_num(o.get("value"))) for o in vs)
-                         and all(next(j for j, p in enumerate(vs) if _same_choice(p.get("value"), o.get("value"))) == i
-                                 for i, o in enumerate(vs))
-                         # distinct as URL text too: "1" and 1 both write x=1, and the URL brings back only the first
-                         and len({codec_text(d, o.get("value")) for o in vs}) == len(vs))
+            values_ok = (
+                isinstance(vs, list)
+                and len(vs) > 0
+                and all(
+                    isinstance(o, dict)
+                    and isinstance(o.get("label"), str)
+                    and (isinstance(o.get("value"), str) or _is_num(o.get("value")))
+                    for o in vs
+                )
+                and all(
+                    next(j for j, p in enumerate(vs) if _same_choice(p.get("value"), o.get("value"))) == i
+                    for i, o in enumerate(vs)
+                )
+                # distinct as URL text too: "1" and 1 both write x=1, and the URL brings back only the first
+                and len({codec_text(d, o.get("value")) for o in vs}) == len(vs)
+            )
             if not values_ok:
                 add("values", f"{pid} needs a list of distinct choices, each a value and a label.")
         if not _default_ok(d, range_ok, values_ok):
@@ -657,7 +740,9 @@ def _choices_of(p: dict):
     out = []
     for i, c in enumerate(p["choices"]):
         if isinstance(c, dict):
-            out.append({"value": c.get("value"), "label": str(c["label"] if c.get("label") is not None else c.get("value"))})
+            out.append(
+                {"value": c.get("value"), "label": str(c["label"] if c.get("label") is not None else c.get("value"))}
+            )
         elif isinstance(c, str):
             out.append({"value": i, "label": c})
         else:
@@ -672,10 +757,11 @@ def _namespace_expr(src: str, names, inst: str) -> str:
             j += 1
         nxt = src[j] if j < len(src) else ""
         return f"{inst}.{m.group(0)}" if m.group(0) in names and nxt != "(" else m.group(0)
+
     return _TOK_ID.sub(swap, src)
 
 
-def params_from_module(header: dict, instance_id: Optional[str] = None) -> List[dict]:
+def params_from_module(header: dict, instance_id: str | None = None) -> list[dict]:
     """Descriptors for a recipe's `params`, one per entry argument in header order. With an instance id every uniform is
     namespaced (u_<instance>_<name>) and every id is <instance>.<name>, so two instances of one recipe never share a
     slider; with None a single-instance surface binds short names (u_<name>, or the uniform its header declares)."""
@@ -703,25 +789,32 @@ def params_from_module(header: dict, instance_id: Optional[str] = None) -> List[
         derived = p.get("derived") if isinstance(p.get("derived"), str) and p.get("derived") else None
         if derived and inst:
             derived = _namespace_expr(derived, names, inst)
-        out.append({
-            "id": f"{inst}.{name}" if inst else name,
-            "group": f"{inst}.{group}" if inst else group,
-            "label": p.get("label") if p.get("label") is not None else name,
-            "type": t,
-            "unit": p.get("unit") if p.get("unit") is not None else _implied_unit(t),
-            "range": rng,
-            "default": _clone(p.get("default")),
-            "curve": p.get("curve") if p.get("curve") is not None else "linear",
-            "values": _choices_of(p) if t == "choice" else None,
-            "help": p.get("help") if p.get("help") is not None else "",
-            "recBlocked": bool(p.get("recBlocked")),
-            "order": i,
-            "uniform": f"u_{inst}_{name}" if inst else (p["uniform"] if isinstance(p.get("uniform"), str) else f"u_{name}"),
-            "derived": derived,
-            "cost": bool(p.get("cost")),
-            "source": {"module": header.get("name") if isinstance(header.get("name"), str) else None,
-                       "param": name, "instance": inst},
-        })
+        out.append(
+            {
+                "id": f"{inst}.{name}" if inst else name,
+                "group": f"{inst}.{group}" if inst else group,
+                "label": p.get("label") if p.get("label") is not None else name,
+                "type": t,
+                "unit": p.get("unit") if p.get("unit") is not None else _implied_unit(t),
+                "range": rng,
+                "default": _clone(p.get("default")),
+                "curve": p.get("curve") if p.get("curve") is not None else "linear",
+                "values": _choices_of(p) if t == "choice" else None,
+                "help": p.get("help") if p.get("help") is not None else "",
+                "recBlocked": bool(p.get("recBlocked")),
+                "order": i,
+                "uniform": f"u_{inst}_{name}"
+                if inst
+                else (p["uniform"] if isinstance(p.get("uniform"), str) else f"u_{name}"),
+                "derived": derived,
+                "cost": bool(p.get("cost")),
+                "source": {
+                    "module": header.get("name") if isinstance(header.get("name"), str) else None,
+                    "param": name,
+                    "instance": inst,
+                },
+            }
+        )
     return out
 
 
@@ -783,7 +876,7 @@ def format_parts(d: dict, value) -> dict:
 
 
 def format_value(d: dict, value) -> str:
-    """"40%", "+1.5 stops", "0.25, -0.50 units", "#ffbc89", "On", "ACES fit"."""
+    """ "40%", "+1.5 stops", "0.25, -0.50 units", "#ffbc89", "On", "ACES fit"."""
     parts = format_parts(d, value)
     text, unit = parts["text"], parts["unit"]
     if not unit:
@@ -823,7 +916,7 @@ def value_to_position(d: dict, v: float) -> float:
 
 # ------------------------------------------------------------------------------------------------ the URL codec --
 def _utf8(ch: str) -> bytes:
-    if 0xD800 <= ord(ch) <= 0xDFFF:   # a lone surrogate: what TextEncoder writes for it
+    if 0xD800 <= ord(ch) <= 0xDFFF:  # a lone surrogate: what TextEncoder writes for it
         ch = "�"
     return ch.encode("utf-8")
 
@@ -844,8 +937,8 @@ def _unesc(s: str) -> str:
     hexdigits = "0123456789abcdefABCDEF"
     while i < len(s):
         c = s[i]
-        if c == "%" and len(s[i + 1:i + 3]) == 2 and all(h in hexdigits for h in s[i + 1:i + 3]):
-            buf.append(int(s[i + 1:i + 3], 16))
+        if c == "%" and len(s[i + 1 : i + 3]) == 2 and all(h in hexdigits for h in s[i + 1 : i + 3]):
+            buf.append(int(s[i + 1 : i + 3], 16))
             i += 3
             continue
         if c == "+":
@@ -889,11 +982,11 @@ def _read_text(d: dict, text: str):
 def _to_number(text: str):
     x = float(text)
     if x == 0 and text.startswith("-"):
-        return -0.0   # Number("-0") is -0 in the JS twin; int(-0.0) would lose the sign
-    return int(x) if math.isfinite(x) and x == int(x) and abs(x) < 2 ** 53 and re.fullmatch(r"[+-]?[0-9]+", text) else x
+        return -0.0  # Number("-0") is -0 in the JS twin; int(-0.0) would lose the sign
+    return int(x) if math.isfinite(x) and x == int(x) and abs(x) < 2**53 and re.fullmatch(r"[+-]?[0-9]+", text) else x
 
 
-def encode(descriptors, values, all: bool = False) -> str:  # noqa: A002 -- the JS twin's option name
+def encode(descriptors, values, all: bool = False) -> str:  # noqa: A002  # the JS twin's option name
     """The validated values as a query string ("intensity=1.5&layers=30"); only non-default values unless all=True."""
     items = descriptors if isinstance(descriptors, list) else []
     r = validate(items, values)
@@ -915,7 +1008,7 @@ def decode(descriptors, query) -> dict:
     q = query if isinstance(query, str) else ""
     if q.startswith("?"):
         q = q[1:]
-    seen: Dict[str, str] = {}
+    seen: dict[str, str] = {}
     for part in q.split("&"):
         if not part:
             continue

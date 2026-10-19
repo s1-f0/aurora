@@ -45,6 +45,7 @@ RUN (needs the piano server on http://127.0.0.1:8793 -- the page and the lab are
 Re-run an id whenever its module's look changes; output is deterministic for a given module and lab.
 Every asset is checked to be under 40 KB and is written by Pillow with no EXIF/XMP chunks.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -65,28 +66,41 @@ OUT_DIR = ROOT / "arsenal" / "web" / "assets" / "instrument-art"
 BRAVE = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
 BASE = "http://127.0.0.1:8793"
 ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"]
-OUT_W, OUT_H = 496, 220          # 2x the 248x110 art box
-SS = 3                           # wireframe supersampling
-PSS = 2                          # preview supersampling
-GREY = 0.25                      # linear grey of the second matte pass (under the bloom threshold)
+OUT_W, OUT_H = 496, 220  # 2x the 248x110 art box
+SS = 3  # wireframe supersampling
+PSS = 2  # preview supersampling
+GREY = 0.25  # linear grey of the second matte pass (under the bloom threshold)
 MAX_BYTES = 40 * 1024
-CHORD = [49, 56, 65, 70, 75]     # the lab's D-flat 6/9 (piano-lab-instruments.js CHORDS), struck on /piano for "page"
+CHORD = [49, 56, 65, 70, 75]  # the lab's D-flat 6/9 (piano-lab-instruments.js CHORDS), struck on /piano for "page"
 
-ALL = ["page", "keylab88mk3", "concert-grand", "upright", "suitcase-ep", "vintage-synth", "glass-piano", "aether",
-       "solstice", "nocturne", "light-kimi-aurora", "light-deepseek-orrery", "light-vandor-ornithopter",
-       "light-vandor-abyssal"]
+ALL = [
+    "page",
+    "keylab88mk3",
+    "concert-grand",
+    "upright",
+    "suitcase-ep",
+    "vintage-synth",
+    "glass-piano",
+    "aether",
+    "solstice",
+    "nocturne",
+    "light-kimi-aurora",
+    "light-deepseek-orrery",
+    "light-vandor-ornithopter",
+    "light-vandor-abyssal",
+]
 
 # ---------------------------------------------------------------------------------------------- the camera table --
 # ONE table for both kinds. yaw: degrees round the instrument from the front (+ = from the treble/right side), elev:
 # degrees above it, fov: lens. The crop is then fitted to the drawing: at most 88 % of the box wide, its lowest line on
 # a shared baseline 7.3 % (8 CSS px) above the box bottom, so the list has one ground line.
 CAMERAS = {
-    "*":                        {"yaw": 66, "elev": 13, "fov": 20},     # the five grands share this exactly
-    "page":                     {"yaw": 10, "elev": 34, "fov": 20},     # the player's side, nearly square on
-    "keylab88mk3":              {"yaw": 34, "elev": 20, "fov": 20},
-    "light-kimi-aurora":        {"yaw": -16, "elev": 8, "fov": 20},
-    "light-deepseek-orrery":    {"yaw": -36, "elev": 16, "fov": 20},   # the bass side, as the lab hero
-    "light-vandor-abyssal":     {"yaw": -26, "elev": 7, "fov": 20},
+    "*": {"yaw": 66, "elev": 13, "fov": 20},  # the five grands share this exactly
+    "page": {"yaw": 10, "elev": 34, "fov": 20},  # the player's side, nearly square on
+    "keylab88mk3": {"yaw": 34, "elev": 20, "fov": 20},
+    "light-kimi-aurora": {"yaw": -16, "elev": 8, "fov": 20},
+    "light-deepseek-orrery": {"yaw": -36, "elev": 16, "fov": 20},  # the bass side, as the lab hero
+    "light-vandor-abyssal": {"yaw": -26, "elev": 7, "fov": 20},
 }
 
 # Line weights in OUTPUT pixels (2.0 = one CSS pixel at 1x) and opacity, per role and edge class. The weight hierarchy
@@ -98,12 +112,28 @@ STYLES = {
     "keys": {"contour": {"w": 1.15, "a": 0.62}, "crease": {"w": 1.0, "a": 0.5}, "boundary": {"w": 1.0, "a": 0.5}},
     "detail": {"*": {"w": 0.95, "a": 0.34}},
     "rail": {"*": {"w": 1.3, "a": 0.85}},
-    "light": {"*": {"w": 1.0, "a": 0.55}, "strand": {"w": 0.9, "a": 0.4}, "lit": {"w": 1.7, "a": 1.0},
-              "rail": {"w": 1.0, "a": 0.32}, "arm": {"w": 0.8, "a": 0.3}, "braid": {"w": 1.2, "a": 0.75}},
+    "light": {
+        "*": {"w": 1.0, "a": 0.55},
+        "strand": {"w": 0.9, "a": 0.4},
+        "lit": {"w": 1.7, "a": 1.0},
+        "rail": {"w": 1.0, "a": 0.32},
+        "arm": {"w": 0.8, "a": 0.3},
+        "braid": {"w": 1.2, "a": 0.75},
+    },
 }
 
-DEFAULT = {"after": 0.6, "vel": 110, "crease": 32, "marginX": 0.06, "marginTop": 0.05, "marginBottom": 0.073,
-           "outline": 0.9, "fill": 0.07, "fitRoles": ["body", "plate", "keys", "detail", "light"], "exposure": 1.0}
+DEFAULT = {
+    "after": 0.6,
+    "vel": 110,
+    "crease": 32,
+    "marginX": 0.06,
+    "marginTop": 0.05,
+    "marginBottom": 0.073,
+    "outline": 0.9,
+    "fill": 0.07,
+    "fitRoles": ["body", "plate", "keys", "detail", "light"],
+    "exposure": 1.0,
+}
 
 PRESETS = {
     "page": {"source": "page", "fill": 0.05},
@@ -112,28 +142,55 @@ PRESETS = {
     # plate is its own, brighter role, so it is told from the concert grand by more than its colour
     "glass-piano": {"xray": {"body": 0.35, "plate": 0.6, "detail": 0.22}, "plate": True, "exposure": 1.4},
     "light-deepseek-orrery": {
-        "additive": True, "lightInFit": True, "centerline": True, "litAttr": "aGlow", "fill": 0.05,
+        "additive": True,
+        "lightInFit": True,
+        "centerline": True,
+        "litAttr": "aGlow",
+        "fill": 0.05,
         # the unlit curtain dim and fading hard as it rises, the five struck strands bright, the motes as dots
         "fade": {"light": {"k": 10, "strand": 0.0, "lit": 0.45, "pow": 0.55}},
-        "styles": {"rail": {"*": {"w": 1.0, "a": 0.0}}, "light": {"boundary": {"w": 1, "a": 0},
-                                                                 "strand": {"w": 0.8, "a": 0.2},
-                                                                 "lit": {"w": 2.3, "a": 1.0}}},
-        "dots": {"min": 0.04, "px": [2.2, 3.8], "a": [0.22, 0.75]}},
+        "styles": {
+            "rail": {"*": {"w": 1.0, "a": 0.0}},
+            "light": {"boundary": {"w": 1, "a": 0}, "strand": {"w": 0.8, "a": 0.2}, "lit": {"w": 2.3, "a": 1.0}},
+        },
+        "dots": {"min": 0.04, "px": [2.2, 3.8], "a": [0.22, 0.75]},
+    },
     "light-kimi-aurora": {
-        "proxy": "aurora", "lightProxy": True, "lightInFit": True, "fill": 0.05,
+        "proxy": "aurora",
+        "lightProxy": True,
+        "lightInFit": True,
+        "fill": 0.05,
         # the emitter rail is the module's RAIL_Y (light-kimi-aurora.js), where the spectral hammers dive from
         # every band a soft ribbon as wide as the module makes it (broad in the bass, fine in the treble), widened so
         # it reads at card size; the unstruck ones a faint curtain, the struck ones bright with a hot core line
-        "aurora": {"railY": 16.5, "ghostSoft": 0.14, "ghostWiden": 2.4, "ghostTop": 0.2, "ghostStrand": 0.0,
-                   "litSoft": 0.8, "litWiden": 3.4, "litTop": 0.4},
+        "aurora": {
+            "railY": 16.5,
+            "ghostSoft": 0.14,
+            "ghostWiden": 2.4,
+            "ghostTop": 0.2,
+            "ghostStrand": 0.0,
+            "litSoft": 0.8,
+            "litWiden": 3.4,
+            "litTop": 0.4,
+        },
         "styles": {"light": {"lit": {"w": 2.6, "a": 1.0}}},
-        "fade": {"light": {"k": 10, "lit": 0.35, "strand": 0.1, "pow": 0.8}}},
+        "fade": {"light": {"k": 10, "lit": 0.35, "strand": 0.1, "pow": 0.8}},
+    },
     "light-vandor-abyssal": {
-        "proxy": "abyssal", "lightProxy": True, "lightInFit": True, "fill": 0.05,
-        "styles": {"body": {"contour": {"w": 1.9, "a": 0.95}, "crease": {"w": 1.0, "a": 0.45},
-                            "boundary": {"w": 1.5, "a": 0.85}},
-                   "light": {"strand": {"w": 0.75, "a": 0.26}, "lit": {"w": 1.9, "a": 1.0}, "arm": {"w": 0.85, "a": 0.32}}},
-        "beads": {"px": [2.2, 4.6], "a": [0.35, 1.0]}},
+        "proxy": "abyssal",
+        "lightProxy": True,
+        "lightInFit": True,
+        "fill": 0.05,
+        "styles": {
+            "body": {
+                "contour": {"w": 1.9, "a": 0.95},
+                "crease": {"w": 1.0, "a": 0.45},
+                "boundary": {"w": 1.5, "a": 0.85},
+            },
+            "light": {"strand": {"w": 0.75, "a": 0.26}, "lit": {"w": 1.9, "a": 1.0}, "arm": {"w": 0.85, "a": 0.32}},
+        },
+        "beads": {"px": [2.2, 4.6], "a": [0.35, 1.0]},
+    },
 }
 
 # Things that are stage, not instrument, and would print a rectangle into the preview's matte (by object name).
@@ -148,12 +205,24 @@ def params_for(iid: str) -> dict:
     styles = json.loads(json.dumps(STYLES))
     for role, v in (p.pop("styles", None) or {}).items():
         styles.setdefault(role, {}).update(v)
-    for role, xa in (p.pop("xray", None) or {}).items():   # a transparent instrument: hidden lines show, as through glass
+    for role, xa in (
+        p.pop("xray", None) or {}
+    ).items():  # a transparent instrument: hidden lines show, as through glass
         for st in styles.get(role, {}).values():
             st["xray"] = xa
             st["xw"] = min(st["w"], 1.1)
-    p.update({"width": OUT_W, "height": OUT_H, "ss": SS, "pss": PSS, "grey": GREY, "styles": styles,
-              "previewHide": PREVIEW_HIDE.get(iid, []), "source": p.get("source", "lab")})
+    p.update(
+        {
+            "width": OUT_W,
+            "height": OUT_H,
+            "ss": SS,
+            "pss": PSS,
+            "grey": GREY,
+            "styles": styles,
+            "previewHide": PREVIEW_HIDE.get(iid, []),
+            "source": p.get("source", "lab"),
+        }
+    )
     return p
 
 
@@ -682,8 +751,10 @@ async (P) => {
 """
 
 LAB_RIG = "lab._rig = { THREE, scene, camera, renderer, composer, bloom, floor, state };\n"
-PAGE_RIG = ("\nwindow.__pianoRig = { THREE, scene, camera, renderer, composer, bloom, floor, keys, pageBody, lacquer, felt,"
-            " railLine };\n")
+PAGE_RIG = (
+    "\nwindow.__pianoRig = { THREE, scene, camera, renderer, composer, bloom, floor, keys, pageBody, lacquer, felt,"
+    " railLine };\n"
+)
 
 
 def patched(url: str, anchor: str | None, inject: str) -> str:
@@ -705,6 +776,7 @@ def wire_mask(r: dict, p: dict) -> Image.Image:
     """Lines (alpha) over a thin outer silhouette stroke and a faint body fill, both grown from the footprint, then
     box-downsampled from the supersampled render so every edge is anti-aliased by coverage. White RGB + alpha."""
     from scipy import ndimage
+
     lines = np.asarray(decode(r["png"]).convert("RGBA").getchannel("A"), dtype=np.float32) / 255
     foot = np.asarray(decode(r["footprint"]).convert("RGBA").getchannel("A"), dtype=np.float32) / 255 > 0.5
     a = lines
@@ -733,13 +805,21 @@ def preview_image(shots: list[str], feather=0.025) -> Image.Image:
     black, grey = (np.asarray(decode(s).convert("RGB"), dtype=np.float32) / 255 for s in shots)
     lb, lg = srgb_to_lin(black), srgb_to_lin(grey)
     bg = np.maximum(np.median(lg[:4, :4].reshape(-1, 3), axis=0), 1e-3)
-    a = 1 - np.clip((lg - lb) / bg, 0, 1).mean(axis=2)          # coverage, in linear light
-    a = np.clip(np.maximum(a, black.max(axis=2)), 0, 1)          # additive light (bloom, glow) kept as light
-    small = lambda arr: np.asarray(Image.fromarray(arr.astype(np.float32)).resize((OUT_W, OUT_H), Image.BOX), dtype=np.float32)
+    a = 1 - np.clip((lg - lb) / bg, 0, 1).mean(axis=2)  # coverage, in linear light
+    a = np.clip(np.maximum(a, black.max(axis=2)), 0, 1)  # additive light (bloom, glow) kept as light
+
+    def small(arr):
+        return np.asarray(Image.fromarray(arr.astype(np.float32)).resize((OUT_W, OUT_H), Image.BOX), dtype=np.float32)
+
     sa = np.clip(small(a), 0, 1)
     pm = np.minimum(np.stack([np.clip(small(black[..., c]), 0, 1) for c in range(3)], axis=2), sa[..., None])
-    sm = lambda x: (lambda y: y * y * (3 - 2 * y))(np.clip(x, 0, 1))
-    xs = (np.arange(OUT_W) + 0.5) / OUT_W; ys = (np.arange(OUT_H) + 0.5) / OUT_H
+
+    def sm(x):
+        y = np.clip(x, 0, 1)
+        return y * y * (3 - 2 * y)
+
+    xs = (np.arange(OUT_W) + 0.5) / OUT_W
+    ys = (np.arange(OUT_H) + 0.5) / OUT_H
     mask = np.outer(sm(ys / feather) * sm((1 - ys) / feather), sm(xs / feather) * sm((1 - xs) / feather))
     sa, pm = sa * mask, pm * mask[..., None]
     sa[sa < 2 / 255] = 0
@@ -754,7 +834,7 @@ def save_wire(img: Image.Image, path: Path) -> int:
 
 
 def save_preview(img: Image.Image, path: Path) -> int:
-    for q, aq in ((74, 72), (66, 64), (56, 56), (46, 48)):   # step down until it fits the budget
+    for q, aq in ((74, 72), (66, 64), (56, 56), (46, 48)):  # step down until it fits the budget
         img.save(path, "WEBP", quality=q, alpha_quality=aq, method=6)
         if path.stat().st_size <= MAX_BYTES:
             break
@@ -763,8 +843,10 @@ def save_preview(img: Image.Image, path: Path) -> int:
 
 # ---------------------------------------------------------------------------------------------- driving pages --
 def open_lab(ctx, iid: str, lab_js: str):
-    ctx.route(re.compile(r".*/web/piano-lab-instruments\.js(\?.*)?$"),
-              lambda route: route.fulfill(status=200, content_type="text/javascript", body=lab_js))
+    ctx.route(
+        re.compile(r".*/web/piano-lab-instruments\.js(\?.*)?$"),
+        lambda route: route.fulfill(status=200, content_type="text/javascript", body=lab_js),
+    )
     page = ctx.new_page()
     page.goto(f"{BASE}/web/piano-lab-instruments.html?id={iid}&view=hero&demo=0", wait_until="load")
     page.wait_for_function("() => window.__lab && (window.__lab.ready || window.__lab.error)", timeout=180000)
@@ -776,28 +858,36 @@ def open_lab(ctx, iid: str, lab_js: str):
 
 def open_page_keys(ctx, piano_js: str):
     """/piano with the Page keys instrument, the chord struck with the pedal down and the page clock held."""
-    ctx.route(re.compile(r".*/web/piano\.js(\?.*)?$"),
-              lambda route: route.fulfill(status=200, content_type="text/javascript", body=piano_js))
+    ctx.route(
+        re.compile(r".*/web/piano\.js(\?.*)?$"),
+        lambda route: route.fulfill(status=200, content_type="text/javascript", body=piano_js),
+    )
     page = ctx.new_page()
     page.goto(f"{BASE}/piano", wait_until="load")
     page.wait_for_function("() => window.__piano && window.__piano.ready && window.__pianoRig", timeout=180000)
     # the page boots into its saved/default look (an instrument may still be loading when ready flips): let it land,
     # then put the built-in back -- that restores the lacquer body the instrument hid
-    page.wait_for_function("() => { const l = window.__piano.looks(); return l.ready && !l.instrumentLoading; }",
-                           timeout=180000)
+    page.wait_for_function(
+        "() => { const l = window.__piano.looks(); return l.ready && !l.instrumentLoading; }", timeout=180000
+    )
     page.evaluate("""async () => { const P = window.__piano;
         P.setSmoothPreview(false);
         if ((P.looks().instrument || 'page') !== 'page') await P.selectInstrument('page', false); }""")
-    page.wait_for_function("""() => { const l = window.__piano.looks();
+    page.wait_for_function(
+        """() => { const l = window.__piano.looks();
         return l.instrument === 'page' && !l.instrumentLoading && window.__pianoRig.pageBody.every((o) => o.visible); }""",
-                           timeout=120000)
-    page.evaluate("""(chord) => { const P = window.__piano;
+        timeout=120000,
+    )
+    page.evaluate(
+        """(chord) => { const P = window.__piano;
         P.jam.clock.hold();
         for (let i = 0; i < 2; i++) P.jam.clock.frame(0.1);
         P.midiMessage([0xB0, 64, 127]);
         chord.forEach((m, i) => P.midiMessage([0x90, m, 110 - i * 2]));
         for (let i = 0; i < 6; i++) P.jam.clock.frame(0.1);   // 0.6 s on, as the lab's snapshot (the page clamps dt at 0.1)
-        P.setRenderPaused(true); }""", CHORD)
+        P.setRenderPaused(true); }""",
+        CHORD,
+    )
     hero = page.evaluate("() => window.__piano.snapshot()")
     sounding = page.evaluate("() => window.__piano.stats().sounding")
     return page, hero, sounding
@@ -805,6 +895,7 @@ def open_page_keys(ctx, piano_js: str):
 
 def run(ids, kinds, out: Path, work: Path | None):
     from playwright.sync_api import sync_playwright
+
     out.mkdir(parents=True, exist_ok=True)
     if work:
         work.mkdir(parents=True, exist_ok=True)
@@ -826,7 +917,7 @@ def run(ids, kinds, out: Path, work: Path | None):
                         p["sounding"] = sounding
                     else:
                         page, hero = open_lab(ctx, iid, lab_js), None
-                    page.on("pageerror", lambda e: errs.append(str(e)[:300]))
+                    page.on("pageerror", lambda e: errs.append(str(e)[:300]))  # noqa: B023  # ctx (and this page) closes before the loop rebinds errs
                     r = page.evaluate(CARD_JS, p)
                 finally:
                     ctx.close()
@@ -834,15 +925,32 @@ def run(ids, kinds, out: Path, work: Path | None):
                     problems.append(f"{iid}: {r['error']}")
                     print(iid, "ERROR", r["error"], flush=True)
                     continue
-                rec = {k: r[k] for k in ("ms", "counts", "occluders", "items", "triTotal", "dots", "softs", "proxy",
-                                         "skipped", "sounding", "camera", "box")}
+                rec = {
+                    k: r[k]
+                    for k in (
+                        "ms",
+                        "counts",
+                        "occluders",
+                        "items",
+                        "triTotal",
+                        "dots",
+                        "softs",
+                        "proxy",
+                        "skipped",
+                        "sounding",
+                        "camera",
+                        "box",
+                    )
+                }
                 if "wire" in kinds:
                     rec["wire_bytes"] = save_wire(wire_mask(r, p), out / f"{iid}.wire.webp")
                 if "preview" in kinds and r.get("previews"):
                     rec["preview_bytes"] = save_preview(preview_image(r["previews"]), out / f"{iid}.preview.webp")
-                for k in ("wire_bytes", "preview_bytes"):
-                    if rec.get(k, 0) > MAX_BYTES:
-                        problems.append(f"{iid}: {k} {rec[k]} over {MAX_BYTES}")
+                problems.extend(
+                    f"{iid}: {k} {rec[k]} over {MAX_BYTES}"
+                    for k in ("wire_bytes", "preview_bytes")
+                    if rec.get(k, 0) > MAX_BYTES
+                )
                 if work:
                     h = hero or r.get("hero")
                     if h:
@@ -851,8 +959,11 @@ def run(ids, kinds, out: Path, work: Path | None):
                 rec["page_errors"] = errs
                 rec["seconds"] = round(time.time() - t0, 1)
                 report[iid] = rec
-                print(iid, json.dumps({k: rec.get(k) for k in ("seconds", "wire_bytes", "preview_bytes", "proxy", "dots")}),
-                      flush=True)
+                print(
+                    iid,
+                    json.dumps({k: rec.get(k) for k in ("seconds", "wire_bytes", "preview_bytes", "proxy", "dots")}),
+                    flush=True,
+                )
         finally:
             br.close()
     if work:

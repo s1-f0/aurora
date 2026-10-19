@@ -47,8 +47,10 @@ Run::
 
     py -m pytest tests/test_the_eye_waits_instead_of_crashing.py -q
 """
+
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 import sys
 import threading
@@ -70,14 +72,16 @@ def test_the_connection_sets_a_busy_timeout():
     transaction for 40-85 s, so the default is a guaranteed crash rather than a timeout.
     """
     import core.eye.index as ix
+
     src = Path(ix.__file__).read_text(encoding="utf-8", errors="replace")
     i = src.index("def _connect")
-    block = src[i:i + 1200].lower()
+    block = src[i : i + 1200].lower()
     assert "busy_timeout" in block or "timeout=" in block, (
         "_connect sets journal_mode=WAL and leaves busy_timeout at sqlite's 5s default, while an "
         "ingest holds its write transaction for 40-85s. Measured 2026-10-07: a second ingest "
         "starting 17s into a 51.8s pass died with 'OperationalError: database is locked' and the "
-        "scheduled task reported LastTaskResult: 1.")
+        "scheduled task reported LastTaskResult: 1."
+    )
 
 
 def test_a_second_writer_waits_rather_than_raising():
@@ -88,10 +92,11 @@ def test_a_second_writer_waits_rather_than_raising():
     production shape: the scheduled pass is the long writer and the hand-run is the second one.
     """
     import core.eye.index as ix
+
     db = ROOT / "state" / "eye" / "_busy_probe.db"
     if db.exists():
         db.unlink()
-    hold_seconds = 7.0          # > sqlite's 5s default, << the 40-85s a real pass takes
+    hold_seconds = 7.0  # > sqlite's 5s default, << the 40-85s a real pass takes
     errors: list = []
     started = threading.Event()
 
@@ -103,8 +108,8 @@ def test_a_second_writer_waits_rather_than_raising():
             started.set()
             time.sleep(hold_seconds)
             con.commit()
-        except Exception as e:                                             # noqa: BLE001
-            errors.append("holder: %s: %s" % (type(e).__name__, e))
+        except Exception as e:  # noqa: BLE001  # recorded and asserted on below, never swallowed
+            errors.append(f"holder: {type(e).__name__}: {e}")
         finally:
             con.close()
 
@@ -124,20 +129,16 @@ def test_a_second_writer_waits_rather_than_raising():
     except sqlite3.OperationalError as e:
         waited = time.time() - t0
         t.join(timeout=30)
-        try:
+        with contextlib.suppress(OSError):
             db.unlink()
-        except OSError:
-            pass
         pytest.fail(
-            "the second writer raised %r after only %.1fs while the first held the write for %.0fs. "
+            f"the second writer raised {str(e)!r} after only {waited:.1f}s while the first held the write for {hold_seconds:.0f}s. "
             "It must WAIT. This is the exact failure the registered eye-ingest task hit on its first "
             "real scheduler run (LastTaskResult: 1, receipt error 'database is locked')."
-            % (str(e), waited, hold_seconds))
+        )
     t.join(timeout=30)
-    try:
+    with contextlib.suppress(OSError):
         db.unlink()
-    except OSError:
-        pass
     assert not errors, errors
 
 
@@ -146,6 +147,7 @@ def test_wal_is_still_on():
     """RATCHET. WAL is what lets the read verbs keep working during an ingest; a busy timeout is an
     addition to it, never a replacement for it."""
     import core.eye.index as ix
+
     db = ROOT / "state" / "eye" / "_wal_probe.db"
     if db.exists():
         db.unlink()
@@ -154,11 +156,9 @@ def test_wal_is_still_on():
         mode = con.execute("PRAGMA journal_mode").fetchone()[0]
     finally:
         con.close()
-        try:
+        with contextlib.suppress(OSError):
             db.unlink()
-        except OSError:
-            pass
-    assert str(mode).lower() == "wal", "journal_mode is %r, not WAL" % (mode,)
+    assert str(mode).lower() == "wal", f"journal_mode is {mode!r}, not WAL"
 
 
 def test_the_task_wrapper_still_records_a_failure_rather_than_swallowing_it():
@@ -168,9 +168,8 @@ def test_the_task_wrapper_still_records_a_failure_rather_than_swallowing_it():
     receipt, and returned non-zero -- under `pyw`, with no console. That behaviour is why this defect
     has a measurement instead of a shrug, and it must not be traded away while fixing the lock.
     """
-    src = (ROOT / "scripts" / "ops" / "eye_ingest_task.py").read_text(
-        encoding="utf-8", errors="replace")
+    src = (ROOT / "scripts" / "ops" / "eye_ingest_task.py").read_text(encoding="utf-8", errors="replace")
     assert "repair_background_stdio" in src, "the task no longer repairs its dead stdio"
     assert '"error"' in src or "'error'" in src, (
-        "the task no longer records the error text in its receipt, so a crash becomes an exit code "
-        "nobody sees")
+        "the task no longer records the error text in its receipt, so a crash becomes an exit code nobody sees"
+    )

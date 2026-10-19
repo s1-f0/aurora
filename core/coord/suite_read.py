@@ -19,13 +19,14 @@ clause), stdout-swallow-confident-zero (attribution_organ_swallows_stdout_confid
 pipe-holding orphans (timeout_py_launcher_orphans_python_exe). This module contains none of
 those paths by construction.
 """
+
 from __future__ import annotations
 
 import glob
 import os
 import sys
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core.coord import suite_baseline as sb
 
@@ -38,8 +39,7 @@ SUITE_LOG_GLOB = os.path.join("state", "suite-run-*.log")
 # ---------------------------------------------------------------------------
 # suite diff -- project the existing delta/verdicts compute, no new logic
 # ---------------------------------------------------------------------------
-def diff(nodes: List[str], *, now_sha: Optional[str] = None,
-         full_suite: bool = False) -> Dict[str, Any]:
+def diff(nodes: list[str], *, now_sha: str | None = None, full_suite: bool = False) -> dict[str, Any]:
     """Render the delta + per-node verdicts for a failure list.
 
     Pure projection over suite_baseline.delta()/verdicts(); returns their union plus a stable
@@ -60,18 +60,18 @@ def diff(nodes: List[str], *, now_sha: Optional[str] = None,
     }
 
 
-def render_diff(res: Dict[str, Any]) -> str:
+def render_diff(res: dict[str, Any]) -> str:
     """Stable text for `suite diff`. UNKNOWN is printed with its 'next' text, never as an
     accusation, and never contributes to a nonzero exit (see cmd-level contract)."""
-    lines: List[str] = []
+    lines: list[str] = []
     counts = res["counts"]
-    prov = (f"baseline @{res['baseline_sha']} vs HEAD @{res['head_sha']}"
-            if res["has_baseline"] else "NO baseline recorded")
+    prov = (
+        f"baseline @{res['baseline_sha']} vs HEAD @{res['head_sha']}" if res["has_baseline"] else "NO baseline recorded"
+    )
     stale = "  [STALE: attribution limited]" if res["stale"] else "  [current]"
     lines.append(f"# {sum(counts.values())} failure(s) -- {prov}{stale}")
     for verdict in ("YOURS", "UNKNOWN", "LIKELY_INHERITED", "INHERITED"):
-        hits = sorted(n for n, row in res["by_node"].items()
-                      if row["verdict"] == verdict)
+        hits = sorted(n for n, row in res["by_node"].items() if row["verdict"] == verdict)
         if not hits:
             continue
         lines.append(f"\n{verdict} ({len(hits)}): {sb.VERDICT_NEXT[verdict]}")
@@ -85,45 +85,45 @@ def render_diff(res: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # suite triage -- attribute failures to lanes via classify()
 # ---------------------------------------------------------------------------
-def triage(nodes: List[str]) -> Dict[str, str]:
+def triage(nodes: list[str]) -> dict[str, str]:
     """node_id -> owning lane task id ('' = unclassified). Pure projection."""
     return sb.classify(nodes)
 
 
-def render_triage(lanes: Dict[str, str]) -> str:
-    tally: Dict[str, int] = {}
+def render_triage(lanes: dict[str, str]) -> str:
+    tally: dict[str, int] = {}
     for lane in lanes.values():
         key = lane or "unowned"
         tally[key] = tally.get(key, 0) + 1
     lines = [f"{k}:{v}" for k, v in sorted(tally.items())]
     out = ["# suite triage (node -> owning lane)"]
     out.append("  " + ", ".join(lines) if lines else "  no lanes classified")
-    for node in sorted(lanes):
-        out.append(f"  {node}  ({lanes[node] or 'unowned'})")
+    out.extend(f"  {node}  ({lanes[node] or 'unowned'})" for node in sorted(lanes))
     return "\n".join(out)
 
 
 # ---------------------------------------------------------------------------
 # suite rerun-failing -- surface pytest's OWN lastfailed cache, or the baseline's list
 # ---------------------------------------------------------------------------
-def _pytest_cache_dir(root: Optional[str] = None) -> str:
+def _pytest_cache_dir(root: str | None = None) -> str:
     root = root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(root, ".pytest_cache", "v", "cache")
 
 
-def lastfailed_nodes(root: Optional[str] = None) -> List[str]:
+def lastfailed_nodes(root: str | None = None) -> list[str]:
     """FAILED node ids from pytest's own lastfailed cache (the record of record for 'what broke
     last'). Returns [] and NEVER raises: a missing cache is 'no prior run', not an error."""
     cache = os.path.join(_pytest_cache_dir(root), "lastfailed")
     try:
         with open(cache, encoding="utf-8") as f:
             import json
+
             return sorted(json.load(f).keys())
     except Exception:
         return []
 
 
-def rerun_command(nodes: List[str], *, run: bool = False) -> Tuple[int, str]:
+def rerun_command(nodes: list[str], *, run: bool = False) -> tuple[int, str]:
     """Build (and, with run=True, execute) the exact failing-node selector.
 
     Exit code = pytest's own exit code (the gate is the process exit, never a pipe). The
@@ -131,7 +131,7 @@ def rerun_command(nodes: List[str], *, run: bool = False) -> Tuple[int, str]:
     """
     if not nodes:
         return 0, "[suite rerun-failing] no prior failing nodes (empty lastfailed cache)"
-    args = [sys.executable, "-m", "pytest", "-q"] + nodes
+    args = [sys.executable, "-m", "pytest", "-q", *nodes]
     cmd = " ".join(args)
     if not run:
         return 0, f"[suite rerun-failing] (dry) {cmd}\n  add --run to execute"
@@ -139,7 +139,7 @@ def rerun_command(nodes: List[str], *, run: bool = False) -> Tuple[int, str]:
     return code, f"[suite rerun-failing] exit {code}: {cmd}"
 
 
-def _run_pytest(args: List[str], timeout: Optional[int] = None) -> int:
+def _run_pytest(args: list[str], timeout: int | None = None) -> int:
     """Spawn pytest with the FULL output captured to a file (the record), not a pipe we own.
 
     The file is written regardless of the process exit; we return only the exit code. stdout and
@@ -155,8 +155,7 @@ def _run_pytest(args: List[str], timeout: Optional[int] = None) -> int:
     os.makedirs("state", exist_ok=True)
     log = os.path.join("state", f"suite-run-{int(time.time())}-{uuid.uuid4().hex[:6]}.log")
     with open(log, "w", encoding="utf-8") as fh:
-        r = subprocess.run(args, stdout=fh, stderr=subprocess.STDOUT,
-                           stdin=subprocess.DEVNULL, timeout=timeout)
+        r = subprocess.run(args, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=timeout)
     print(f"[suite] full run logged to {log}", file=sys.stderr)
     return r.returncode
 
@@ -167,7 +166,7 @@ def _run_pytest(args: List[str], timeout: Optional[int] = None) -> int:
 STALE_AFTER_S = 300  # a suite log this old (with no growth) is 'finished', not 'live'
 
 
-def tail(lines: int = 20, stale_after_s: float = STALE_AFTER_S) -> Tuple[bool, str]:
+def tail(lines: int = 20, stale_after_s: float = STALE_AFTER_S) -> tuple[bool, str]:
     """Return (running, rendered_tail) over the newest suite log.
 
     `running` is an HONEST guess, never a confident zero and never a confident live: 'still

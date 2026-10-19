@@ -65,6 +65,7 @@ Run::
 
     py -m pytest tests/test_the_eye_does_not_silently_discard_a_plane.py -q
 """
+
 from __future__ import annotations
 
 import ast
@@ -82,8 +83,7 @@ sys.path.insert(0, str(ROOT))
 INDEX_PY = ROOT / "core" / "eye" / "index.py"
 #: Where a workflow run writes its orchestration record. Not repo-relative: this plane lives in the
 #: harness's own tree, which is part of why nothing in the repo was watching it.
-JOURNAL_GLOB = str(Path.home() / ".claude" / "projects" / "*" / "*" / "subagents" / "workflows"
-                   / "*" / "journal.jsonl")
+JOURNAL_GLOB = str(Path.home() / ".claude" / "projects" / "*" / "*" / "subagents" / "workflows" / "*" / "journal.jsonl")
 
 
 def _journals() -> list:
@@ -101,12 +101,15 @@ def _code_of(func_name: str) -> str:
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == func_name:
             body = node.body
-            if (body and isinstance(body[0], ast.Expr)
-                    and isinstance(getattr(body[0], "value", None), ast.Constant)
-                    and isinstance(body[0].value.value, str)):
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(getattr(body[0], "value", None), ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
                 body = body[1:]
             return "\n".join(ast.unparse(s) for s in body)
-    raise AssertionError("no function named %r in %s" % (func_name, INDEX_PY))
+    raise AssertionError(f"no function named {func_name!r} in {INDEX_PY}")
 
 
 # ------------------------------------------------------------------ the defect
@@ -117,17 +120,17 @@ def test_session_ids_do_not_collide_across_the_workflow_journals():
     that the live plane has a shape no fixture had.
     """
     from core.eye.index import session_id_for
+
     paths = _journals()
     if not paths:
         pytest.skip("no workflow journals on this box (measured 90 on 2026-10-07)")
     ids = collections.Counter(session_id_for(p) for p in paths)
     worst, n = ids.most_common(1)[0]
     assert len(ids) == len(paths), (
-        "%d journal(s) collapse to %d distinct session id(s) -- %r is claimed by %d files, so "
-        "_take()'s `seen` dedup discards %d of them before ingest opens any. The parent directory "
-        "name gives %d distinct ids for the same files."
-        % (len(paths), len(ids), worst, n, len(paths) - len(ids),
-           len({os.path.basename(os.path.dirname(p)) for p in paths})))
+        f"{len(paths)} journal(s) collapse to {len(ids)} distinct session id(s) -- {worst!r} is claimed by {n} files, so "
+        f"_take()'s `seen` dedup discards {len(paths) - len(ids)} of them before ingest opens any. The parent directory "
+        f"name gives {len({os.path.basename(os.path.dirname(p)) for p in paths})} distinct ids for the same files."
+    )
 
 
 def test_genericness_is_derived_not_a_hand_enumerated_list():
@@ -140,13 +143,13 @@ def test_genericness_is_derived_not_a_hand_enumerated_list():
     list when it needs the answer.
     """
     code = _code_of("session_id_for")
-    literal_set = ("_GENERIC_TRANSCRIPT_STEMS" in code
-                   and "derive" not in code.lower() and "collide" not in code.lower())
+    literal_set = "_GENERIC_TRANSCRIPT_STEMS" in code and "derive" not in code.lower() and "collide" not in code.lower()
     assert not literal_set, (
         "session_id_for decides genericness by membership in a hand-maintained literal set. "
         "'journal' is not in it, which is why 89 of 90 workflow journals were discarded silently. "
         "core/trust/private_plane.py states the rule this violates: markers are DERIVED, NEVER "
-        "DECLARED -- a hand-maintained denylist rots the moment someone adds a file.")
+        "DECLARED -- a hand-maintained denylist rots the moment someone adds a file."
+    )
 
 
 def test_the_corpus_report_states_how_many_files_it_DROPPED():
@@ -165,20 +168,21 @@ def test_the_corpus_report_states_how_many_files_it_DROPPED():
     by prose.
     """
     from core.eye.index import corpus_coverage
+
     cov = corpus_coverage()
     numeric = {k: v for k, v in cov.items() if isinstance(v, int)}
-    dropped = [k for k in numeric
-               if any(t in k.lower() for t in ("drop", "shadow", "collid", "discard", "found"))]
+    dropped = [k for k in numeric if any(t in k.lower() for t in ("drop", "shadow", "collid", "discard", "found"))]
     assert dropped, (
-        "corpus_coverage() returns no INTEGER count of files removed by dedup -- only %r and the "
-        "descriptive string %r, which names the policy and measures nothing. A plane deleted at "
+        "corpus_coverage() returns no INTEGER count of files removed by dedup -- only {!r} and the "
+        "descriptive string {!r}, which names the policy and measures nothing. A plane deleted at "
         "enumeration therefore reads exactly like a plane that does not exist. Found-vs-taken is "
-        "the honest denominator." % (sorted(numeric), cov.get("dedup")))
+        "the honest denominator.".format(sorted(numeric), cov.get("dedup"))
+    )
     total_dropped = sum(cov[k] for k in dropped)
     assert total_dropped >= 89, (
-        "the drop count reports %d, but 89 workflow journals collapse into one session id on this "
+        f"the drop count reports {total_dropped}, but 89 workflow journals collapse into one session id on this "
         "box alone -- so the number exists and is not measuring the collision."
-        % total_dropped)
+    )
 
 
 def test_a_file_recorded_as_ingested_that_yielded_nothing_is_reported():
@@ -192,7 +196,7 @@ def test_a_file_recorded_as_ingested_that_yielded_nothing_is_reported():
     """
     src = INDEX_PY.read_text(encoding="utf-8", errors="replace")
     i = src.index("def ingest")
-    block = src[i:i + 9000].lower()
+    block = src[i : i + 9000].lower()
     for token in ("yielded", "no_events", "zero_event", "empty_yield", "barren", "silent_file"):
         if token in block:
             break
@@ -200,7 +204,8 @@ def test_a_file_recorded_as_ingested_that_yielded_nothing_is_reported():
         pytest.fail(
             "ingest() counts files and unparsed lines but never notices a file that parsed "
             "cleanly and produced no events. Measured: journal.jsonl, 26 lines recorded in "
-            "ingest_state, 0 rows in events, reported inside 'unparsed 0'.")
+            "ingest_state, 0 rows in events, reported inside 'unparsed 0'."
+        )
 
 
 # ------------------------------------------------------------------ the plane itself
@@ -212,13 +217,15 @@ def test_every_workflow_journal_is_reachable_by_a_distinct_address():
     addressable only as a single file called "journal".
     """
     from core.eye.index import session_id_for
+
     paths = _journals()
     if not paths:
         pytest.skip("no workflow journals on this box (measured 90 on 2026-10-07)")
     ids = {session_id_for(p) for p in paths}
     assert len(ids) >= len(paths), (
-        "only %d of %d workflow journals have a distinct address. 870 agent results, 13.12 MB of "
-        "returned verdict text, 0 of them searchable." % (len(ids), len(paths)))
+        f"only {len(ids)} of {len(paths)} workflow journals have a distinct address. 870 agent results, 13.12 MB of "
+        "returned verdict text, 0 of them searchable."
+    )
 
 
 # ------------------------------------------------------------------ ratchets: keep what works
@@ -234,15 +241,15 @@ def test_the_dsh_plane_still_resolves_to_one_address_per_session():
     cheaper, and it cannot drift from what DSH actually writes.
     """
     from core.eye.index import session_id_for
-    files = sorted(glob.glob(str(Path.home() / ".dsh" / "sessions" / "**" / "session.jsonl*"),
-                             recursive=True))
+
+    files = sorted(glob.glob(str(Path.home() / ".dsh" / "sessions" / "**" / "session.jsonl*"), recursive=True))
     if not files:
         pytest.skip("no DSH plane on this box (measured 25 transcripts on 2026-10-07)")
     ids = {session_id_for(p) for p in files}
     assert len(ids) == len(files), (
-        "%d DSH transcripts collapse to %d address(es). They are all named session.jsonl.zstd, so "
+        f"{len(files)} DSH transcripts collapse to {len(ids)} address(es). They are all named session.jsonl.zstd, so "
         "resolving them by stem makes line 12 of one session and line 12 of another the same row."
-        % (len(files), len(ids)))
+    )
 
 
 def test_a_readable_but_unique_stem_is_not_treated_as_generic():
@@ -257,11 +264,21 @@ def test_a_readable_but_unique_stem_is_not_treated_as_generic():
     parent-is-id -> stem) cannot quietly collapse back to two steps.
     """
     from core.eye.index import session_id_for
+
     a = session_id_for(Path("/tmp/corpus/session_alpha.jsonl"))
     b = session_id_for(Path("/tmp/corpus/session_beta.jsonl"))
-    assert a == "session_alpha" and b == "session_beta" and a != b, (
-        "two distinct readable session names resolved to %r and %r -- a non-id directory must not "
-        "become the address, or distinct sessions merge" % (a, b))
+    assert a == "session_alpha", (
+        f"two distinct readable session names resolved to {a!r} and {b!r} -- a non-id directory must not "
+        "become the address, or distinct sessions merge"
+    )
+    assert b == "session_beta", (
+        f"two distinct readable session names resolved to {a!r} and {b!r} -- a non-id directory must not "
+        "become the address, or distinct sessions merge"
+    )
+    assert a != b, (
+        f"two distinct readable session names resolved to {a!r} and {b!r} -- a non-id directory must not "
+        "become the address, or distinct sessions merge"
+    )
 
 
 def test_claude_code_uuid_stems_are_unchanged():
@@ -269,11 +286,13 @@ def test_claude_code_uuid_stems_are_unchanged():
     changing the id of an already-indexed session re-keys 55,470 rows. A UUID stem names its own
     session and must keep resolving to itself."""
     from core.eye.index import session_id_for
+
     uuid = "428ba6c4-2217-4008-a2be-ecd9901cc3b2"
-    got = session_id_for(Path("/c/Users/L5/.claude/projects/E--/%s.jsonl" % uuid))
+    got = session_id_for(Path(f"/c/Users/L5/.claude/projects/E--/{uuid}.jsonl"))
     assert got == uuid, (
-        "session_id_for changed the address of a normal Claude Code transcript (%r). The 55,470 "
-        "rows already indexed are keyed on these ids." % got)
+        f"session_id_for changed the address of a normal Claude Code transcript ({got!r}). The 55,470 "
+        "rows already indexed are keyed on these ids."
+    )
 
 
 def test_the_compressed_suffix_handling_survives():
@@ -281,9 +300,9 @@ def test_the_compressed_suffix_handling_survives():
     as a non-identifier at all. Uses a UUID directory because that is what DSH actually writes --
     the lesson from the pin above."""
     from core.eye.index import session_id_for
+
     got = session_id_for(Path("/tmp/session-7968a54a-40ff-4256-90e8-6173d40aa338/session.jsonl.zstd"))
-    assert got == "session-7968a54a-40ff-4256-90e8-6173d40aa338", (
-        "compressed-suffix handling regressed: got %r" % got)
+    assert got == "session-7968a54a-40ff-4256-90e8-6173d40aa338", f"compressed-suffix handling regressed: got {got!r}"
 
 
 def test_no_existing_address_moves():
@@ -296,7 +315,9 @@ def test_no_existing_address_moves():
     which already has rows resolves differently. Measured 0 of 1,997 when the fix landed.
     """
     import sqlite3
-    from core.eye.index import session_id_for, _corpus_roots
+
+    from core.eye.index import _corpus_roots, session_id_for
+
     db = ROOT / "state" / "eye" / "eye.db"
     if not db.is_file():
         pytest.skip("no eye.db on this box")
@@ -319,8 +340,10 @@ def test_no_existing_address_moves():
         stem = name[:-6] if name.lower().endswith(".jsonl") else Path(name).stem
         return (p.parent.name or stem) if stem.lower() in legacy_generic else stem
 
-    moved = [(old_rule(p), session_id_for(p)) for p in files
-             if old_rule(p) in known and session_id_for(p) != old_rule(p)]
+    moved = [
+        (old_rule(p), session_id_for(p)) for p in files if old_rule(p) in known and session_id_for(p) != old_rule(p)
+    ]
     assert not moved, (
-        "%d file(s) with rows already in `events` would resolve to a NEW address, re-keying their "
-        "history silently. First few: %r" % (len(moved), moved[:5]))
+        f"{len(moved)} file(s) with rows already in `events` would resolve to a NEW address, re-keying their "
+        f"history silently. First few: {moved[:5]!r}"
+    )

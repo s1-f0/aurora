@@ -38,15 +38,17 @@ def test_measure_capture_latency():
     screen()
     stats = _measure(_cap, n=50)
     print("\n--- [latency] capture.screen() (mss one-shot, 4K) ---")
-    print(f"n={stats['n']}  p50={stats['p50']:.2f}ms  p95={stats['p95']:.2f}ms  "
-          f"min={stats['min']:.2f}  max={stats['max']:.2f}")
+    print(
+        f"n={stats['n']}  p50={stats['p50']:.2f}ms  p95={stats['p95']:.2f}ms  "
+        f"min={stats['min']:.2f}  max={stats['max']:.2f}"
+    )
     print(f"§5 bar: <100ms p95  ->  {'PASS' if stats['p95'] < 100 else 'FAIL'}")
     # This probe REPORTS; the bar assert belongs to the bench harness, not here.
     assert True
 
 
 def test_measure_l0_l3_latency():
-    from core.screenspace import peek, delta
+    from core.screenspace import delta, peek
 
     def _l0():
         peek(level="L0")
@@ -60,6 +62,5 @@ def test_measure_l0_l3_latency():
     print("\n--- [latency] L0 pulse / L3 delta (gen-clock, server-side) ---")
     print(f"L0 peek:   p50={s0['p50']:.3f}ms  p95={s0['p95']:.3f}ms")
     print(f"L3 delta:  p50={s3['p50']:.3f}ms  p95={s3['p95']:.3f}ms")
-    print(f"§5 bar: <5ms server-side  ->  "
-          f"{'PASS' if s0['p95'] < 5 and s3['p95'] < 5 else 'FAIL (or needs cache, F2)'}")
+    print(f"§5 bar: <5ms server-side  ->  {'PASS' if s0['p95'] < 5 and s3['p95'] < 5 else 'FAIL (or needs cache, F2)'}")
     assert True

@@ -34,18 +34,20 @@ unmatchable rather than blamed on the gate. An ambiguous trigger is reported as 
 silently depressing a number nobody can explain. In every case the instrument says what it cannot
 know instead of quietly folding it into what it can.
 """
+
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.recall import bench  # noqa: E402
+from core.recall import bench
 
 
 def _fake(reachable):
     def fn(*, path=None, command=None, limit=5, **kw):
         got = list(reachable.get(path or command or "", []))
         return {"lessons": [{"source": s, "text": "x"} for s in got[:limit]], "verbs": []}
+
     return fn
 
 
@@ -71,8 +73,9 @@ def _score(k=5):
 
 
 def test_the_result_carries_a_recall_at_1_cap():
-    assert "ambiguity" in (_score().get("ceiling") or {}), \
+    assert "ambiguity" in (_score().get("ceiling") or {}), (
         "recall@1 was reported with no statement of the cap trigger ambiguity puts on it"
+    )
 
 
 def test_the_cap_counts_the_largest_shared_answer_per_trigger_group():
@@ -91,7 +94,8 @@ def test_moments_sharing_one_trigger_AND_one_answer_are_not_penalised():
     assert a["distinct_triggers"] == 3
     assert a["best_possible_at_1"] > a["distinct_triggers"], (
         "the cap charged a group that agrees on its answer; it must count the largest shared "
-        "answer per trigger, not the number of triggers")
+        "answer per trigger, not the number of triggers"
+    )
 
 
 def test_the_contending_groups_are_NAMED():
@@ -107,8 +111,8 @@ def test_a_set_with_no_shared_triggers_reports_no_cap():
     """RATCHET. The common case must read as uncapped, not as 100% of something."""
     clean = [m for m in MOMENTS if m["id"] in ("B1", "C1", "Z1")]
     a = bench.score(clean, _fake(REACHABLE), k=5)["ceiling"]["ambiguity"]
-    assert a["cap_at_1"] == 1.0 and not a["contended"], \
-        "a set with no contended trigger reported a cap anyway"
+    assert a["cap_at_1"] == 1.0, "a set with no contended trigger reported a cap anyway"
+    assert not a["contended"], "a set with no contended trigger reported a cap anyway"
 
 
 def test_recall_at_1_never_exceeds_its_own_cap():
@@ -121,5 +125,6 @@ def test_recall_at_1_never_exceeds_its_own_cap():
 
 def test_the_cap_is_shown_in_the_rendered_report():
     out = bench.render(_score(), {"seeded": len(MOMENTS), "target": 40})
-    assert "AMBIGUOUS" in out.upper() or "CAP" in out.upper(), \
+    assert "AMBIGUOUS" in out.upper() or "CAP" in out.upper(), (
         "the cap is computed but never shown, so recall@1 still reads as uncapped"
+    )

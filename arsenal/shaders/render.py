@@ -33,78 +33,88 @@ and every receipt and contact sheet names the shader, its author and its licence
 for a corpus subject whatever else is given (an id, a file under the corpus, or a shader JSON with a Shadertoy id), and
 for any other subject unless --allow-tracked says so; the driver checks every job's out_dir again (headless.mjs).
 """
+
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 
 from . import cli
 from . import corpus as C
 from . import serve as S
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-STATE_ROOT = ROOT / "state"      # gitignored; headless.mjs STATE_ROOT. Pictures of a corpus shader never leave it
+STATE_ROOT = ROOT / "state"  # gitignored; headless.mjs STATE_ROOT. Pictures of a corpus shader never leave it
 STATE = STATE_ROOT / "arsenal" / "shaders"
 RENDERS = STATE / "renders"
 CHECKS = STATE / "check"
-RUNS = STATE / "runs"            # each run's plans and the driver's own results, kept as evidence
+RUNS = STATE / "runs"  # each run's plans and the driver's own results, kept as evidence
 HEADLESS = HERE / "headless.mjs"
 
 RENDER_API = "arsenal.shader-render/v1"
 CHECK_API = "arsenal.shader-check/v1"
 FILMSTRIP_API = "arsenal.shader-filmstrip/v1"
-PLAN_API = "arsenal.shader-headless-plan/v1"     # headless.mjs PLAN_API
-RESULT_API = "arsenal.shader-headless/v1"        # headless.mjs RESULT_API
+PLAN_API = "arsenal.shader-headless-plan/v1"  # headless.mjs PLAN_API
+RESULT_API = "arsenal.shader-headless/v1"  # headless.mjs RESULT_API
 
 DEFAULT_PAGE = "render.html"
 DEFAULT_T = [0.0, 2.0, 4.0]
 DEFAULT_SIZE = (480, 270)
-DEFAULT_FPS = 60                 # Shadertoy's rate, and toy-runtime.js DEFAULT_FPS (see TIME above)
-CHECK_T = [0.0]                  # one frame: frame 0 is the cheapest true test of compile, link and draw
+DEFAULT_FPS = 60  # Shadertoy's rate, and toy-runtime.js DEFAULT_FPS (see TIME above)
+CHECK_T = [0.0]  # one frame: frame 0 is the cheapest true test of compile, link and draw
 CHECK_SIZE = (320, 180)
 FILMSTRIP_SIZE = (320, 180)
 FILMSTRIP_COLS = 4
 MAX_TIMES = 64
 MAX_SIDE = 2048
 MAX_FPS = 120
-RENDER_TIMEOUT_S = 120           # one job's deadline in the driver; the page's own watchdog fires 5 s before it
+RENDER_TIMEOUT_S = 120  # one job's deadline in the driver; the page's own watchdog fires 5 s before it
 CHECK_TIMEOUT_S = 30
 FILMSTRIP_TIMEOUT_S = 150
 # A job's deadline never exceeds what a burst leaves it: headless.mjs BURST_MS (170 s) less SHUTDOWN_MARGIN_MS (15 s),
 # less a few seconds of Chrome start. A longer ask would only be cut short by the driver's budget.
 BURST_CAP_S = 150
-BURST_GAP_S = 12                 # between bursts: longer than a waiter's 10 s (+20% jitter) poll, so it gets its turn
+BURST_GAP_S = 12  # between bursts: longer than a waiter's 10 s (+20% jitter) poll, so it gets its turn
 # The driver's last-resort kill (driver_limit_s): past the lock wait asked for, a waiter can still be in one jam-lane
 # poll (60 s) and one jam scan (up to 30 s); then a whole burst (170 s) and the slowest shutdown (about 30 s).
 DRIVER_SLACK_S = 150
-EXIT_REFUSED, EXIT_LOCK = 3, 4   # headless.mjs EXIT codes
+EXIT_REFUSED, EXIT_LOCK = 3, 4  # headless.mjs EXIT codes
+KILL_GRACE_S = 5  # POSIX: SIGTERM lets the driver kill its Chrome and free the lock (guardHolder); SIGKILL after this
 STATUSES = ("done", "timeout", "error", "deferred", "refused")
-FLAT_SPREAD = 3                  # a frame whose luma spans fewer levels than this is one flat colour (often black)
+FLAT_SPREAD = 3  # a frame whose luma spans fewer levels than this is one flat colour (often black)
 PAGE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,80}\.html")
 
 # A renderer string names SwiftShader and no hardware: the twin of judgeRenderer in headless.mjs (same pattern, same order).
 # The Direct3D names take a version suffix ("Direct3D11", "D3D12"); a bare \bdirect3d\b would miss "Direct3D11".
-HARDWARE_HINT = re.compile(r"\b(amd|radeon|ati|nvidia|geforce|quadro|rtx|intel|iris|uhd graphics|adreno|mali|apple m\d|"
-                           r"direct3d\d*|d3d\d+)\b", re.I)
+HARDWARE_HINT = re.compile(
+    r"\b(amd|radeon|ati|nvidia|geforce|quadro|rtx|intel|iris|uhd graphics|adreno|mali|apple m\d|"
+    r"direct3d\d*|d3d\d+)\b",
+    re.I,
+)
 
 
 class NotSoftwareRenderer(RuntimeError):
     """The browser would draw on hardware. Nothing renders, by house rule (AMD TDR history)."""
 
 
-def judge_renderer(renderer) -> Tuple[bool, Optional[str]]:
+def judge_renderer(renderer) -> tuple[bool, str | None]:
     if not isinstance(renderer, str) or not renderer.strip():
         return False, "no renderer string (no WebGL2 context, or WEBGL_debug_renderer_info is unavailable)"
     if not re.search(r"swiftshader", renderer, re.I):
@@ -123,7 +133,7 @@ def assert_software_renderer(renderer) -> str:
 
 
 # --------------------------------------------------------------------------------------------- argument parsing
-def parse_times(text: str) -> List[float]:
+def parse_times(text: str) -> list[float]:
     """'0,1.5,4' -> [0.0, 1.5, 4.0]. Each t is a finite number >= 0; at most MAX_TIMES of them."""
     parts = [p.strip() for p in str(text).split(",") if p.strip()]
     if not parts:
@@ -142,7 +152,7 @@ def parse_times(text: str) -> List[float]:
     return out
 
 
-def parse_size(text: str) -> Tuple[int, int]:
+def parse_size(text: str) -> tuple[int, int]:
     """'480x270' -> (480, 270). Each side 1..MAX_SIDE."""
     m = re.fullmatch(r"\s*(\d+)\s*[xX*]\s*(\d+)\s*", str(text))
     if not m:
@@ -159,6 +169,7 @@ def _arg(fn):
             return fn(text)
         except (ValueError, S.BindRefused) as exc:
             raise argparse.ArgumentTypeError(str(exc)) from None
+
     wrapped.__name__ = fn.__name__
     return wrapped
 
@@ -168,7 +179,7 @@ def parse_port(text: str) -> int:
         port = int(text)
     except ValueError:
         raise ValueError(f"not a port: {text!r}") from None
-    S.validate_bind(S.HOST, port)   # refuses 8793 (Daniel's server) and anything outside 0..65535
+    S.validate_bind(S.HOST, port)  # refuses 8793 (Daniel's server) and anything outside 0..65535
     return port
 
 
@@ -185,7 +196,7 @@ def parse_page(text: str) -> str:
     return text
 
 
-def filmstrip_times(frames: int, to: float) -> List[float]:
+def filmstrip_times(frames: int, to: float) -> list[float]:
     """frames evenly spaced from 0 to `to`, both ends included."""
     if frames < 1 or frames > MAX_TIMES:
         raise ValueError(f"frames must be 1..{MAX_TIMES}")
@@ -202,12 +213,12 @@ SHADERTOY_ID = re.compile(r"[A-Za-z0-9]{6}")
 
 @dataclass
 class Source:
-    key: str                     # a corpus id, or local-<stem> for a file
-    kind: str                    # corpus | json | frag
+    key: str  # a corpus id, or local-<stem> for a file
+    kind: str  # corpus | json | frag
     path: Path
-    src: str                     # the URL path the page fetches the shader JSON from
+    src: str  # the URL path the page fetches the shader JSON from
     meta: dict = field(default_factory=dict)
-    corpus_copy: bool = False    # a file that is someone's published shader (see is_corpus_file)
+    corpus_copy: bool = False  # a file that is someone's published shader (see is_corpus_file)
 
     @property
     def corpus_subject(self) -> bool:
@@ -235,11 +246,24 @@ def _slug(text: str) -> str:
 def wrap_frag(code: str, name: str) -> dict:
     """A Shadertoy-style fragment (mainImage) as the one-pass shader JSON the runtime reads."""
     if not re.search(r"\bvoid\s+mainImage\s*\(", code):
-        raise ValueError("a .frag here must define mainImage(out vec4 fragColor, in vec2 fragCoord), Shadertoy style; "
-                         "house sketches (u_res, u_time) render through scripts/vfx_render.py")
-    return {"ver": "0.1", "info": {"id": "local", "name": name, "username": "local", "description": "", "tags": []},
-            "renderpass": [{"name": "Image", "type": "image", "code": code, "inputs": [],
-                            "outputs": [{"id": "4dfGRr", "channel": 0}], "description": ""}]}
+        raise ValueError(
+            "a .frag here must define mainImage(out vec4 fragColor, in vec2 fragCoord), Shadertoy style; "
+            "house sketches (u_res, u_time) render through scripts/vfx_render.py"
+        )
+    return {
+        "ver": "0.1",
+        "info": {"id": "local", "name": name, "username": "local", "description": "", "tags": []},
+        "renderpass": [
+            {
+                "name": "Image",
+                "type": "image",
+                "code": code,
+                "inputs": [],
+                "outputs": [{"id": "4dfGRr", "channel": 0}],
+                "description": "",
+            }
+        ],
+    }
 
 
 def unwrap_json(obj) -> dict:
@@ -253,7 +277,7 @@ def unwrap_json(obj) -> dict:
     return obj
 
 
-def stage_job(shader: dict, key: str, jobs_dir: Optional[Path] = None) -> str:
+def stage_job(shader: dict, key: str, jobs_dir: Path | None = None) -> str:
     """Write a loose shader where the lab server's /jobs/ route serves it; returns that URL path.
     jobs_dir defaults to serve.JOBS read at CALL time, so a test can point it elsewhere."""
     jobs_dir = Path(jobs_dir) if jobs_dir is not None else S.JOBS
@@ -264,7 +288,7 @@ def stage_job(shader: dict, key: str, jobs_dir: Optional[Path] = None) -> str:
     return f"/jobs/{name}"
 
 
-def resolve_source(arg: str, corpus: Optional[Path] = None) -> Source:
+def resolve_source(arg: str, corpus: Path | None = None) -> Source:
     """A corpus id (or a name that matches exactly one shader), a .json shader, or a .frag with mainImage."""
     corpus = Path(corpus) if corpus is not None else C.CORPUS  # read at call time, like corpus.py does
     p = Path(arg)
@@ -286,15 +310,20 @@ def resolve_source(arg: str, corpus: Optional[Path] = None) -> Source:
         more = f": {', '.join(hits[:8])}" if hits else ""
         raise LookupError(f"{arg!r} names {len(hits)} corpus shaders{more}; give an id, a .json or a .frag")
     sid = hits[0]
-    return Source(key=sid, kind="corpus", path=corpus / "shaders" / sid / "shader.json",
-                  src=f"/corpus/{sid}/shader.json", meta=C.load_meta(sid, corpus))
+    return Source(
+        key=sid,
+        kind="corpus",
+        path=corpus / "shaders" / sid / "shader.json",
+        src=f"/corpus/{sid}/shader.json",
+        meta=C.load_meta(sid, corpus),
+    )
 
 
 class OutDirRefused(ValueError):
     """An output directory a picture may not go to (see THE LICENCE LINE)."""
 
 
-def out_dir_refusal(out: Path, source: Source, allow_tracked: bool = False) -> Optional[str]:
+def out_dir_refusal(out: Path, source: Source, allow_tracked: bool = False) -> str | None:
     """None when `out` may hold this source's pictures, else why not. Anything at or under <repo>/state/ is fine.
     Elsewhere: never for a corpus subject (other people's work), and for our own shader only with --allow-tracked.
     STATE_ROOT is read at call time, so a test can stand a temp state/ in for the real one."""
@@ -303,11 +332,15 @@ def out_dir_refusal(out: Path, source: Source, allow_tracked: bool = False) -> O
     if target.is_relative_to(root):
         return None
     if source.corpus_subject:
-        return (f"refused: {target} is outside {root}. Pictures of a corpus shader ({source.key}, someone else's work) "
-                "stay under state/, which git ignores; --allow-tracked does not apply to them")
+        return (
+            f"refused: {target} is outside {root}. Pictures of a corpus shader ({source.key}, someone else's work) "
+            "stay under state/, which git ignores; --allow-tracked does not apply to them"
+        )
     if not allow_tracked:
-        return (f"refused: {target} is outside {root}; pass --allow-tracked to write pictures of your own shader "
-                "there (never a corpus shader's)")
+        return (
+            f"refused: {target} is outside {root}; pass --allow-tracked to write pictures of your own shader "
+            "there (never a corpus shader's)"
+        )
     return None
 
 
@@ -325,12 +358,27 @@ def leaves_state(out: Path) -> bool:
     return not Path(out).resolve().is_relative_to(Path(STATE_ROOT).resolve())
 
 
-def page_url(base: str, page: str, src: str, times: Sequence[float], size: Tuple[int, int], fps: int,
-             budget_ms: int, parity: bool = True) -> str:
+def page_url(
+    base: str,
+    page: str,
+    src: str,
+    times: Sequence[float],
+    size: tuple[int, int],
+    fps: int,
+    budget_ms: int,
+    parity: bool = True,
+) -> str:
     """The render page's query, as the contract names it (src, t, w, h, fps, media) plus the page watchdog's budget,
     and parity=0 only when asked (render.js then compiles without the runtime's GPU-parity shims)."""
-    params = {"src": base + src, "t": ",".join(f"{t:g}" for t in times), "w": size[0], "h": size[1], "fps": fps,
-              "media": f"{base}/corpus/media/", "budget": budget_ms}
+    params = {
+        "src": base + src,
+        "t": ",".join(f"{t:g}" for t in times),
+        "w": size[0],
+        "h": size[1],
+        "fps": fps,
+        "media": f"{base}/corpus/media/",
+        "budget": budget_ms,
+    }
     if not parity:
         params["parity"] = 0
     return f"{base}/lab/{page}?" + urlencode(params, safe="/:,")
@@ -344,37 +392,77 @@ class Job:
     out_dir: Path
     prefix: str
     timeout_ms: int
-    size: Tuple[int, int]
+    size: tuple[int, int]
     screenshot: bool = False
     allow_tracked: bool = False  # out_dir lies outside state/, as --allow-tracked allowed for a non-corpus subject
 
     def plan_row(self) -> dict:
-        return {"key": self.key, "url": self.url, "out_dir": str(self.out_dir), "prefix": self.prefix,
-                "timeout_ms": self.timeout_ms, "w": self.size[0], "h": self.size[1], "screenshot": self.screenshot,
-                "allow_tracked": bool(self.allow_tracked)}
+        return {
+            "key": self.key,
+            "url": self.url,
+            "out_dir": str(self.out_dir),
+            "prefix": self.prefix,
+            "timeout_ms": self.timeout_ms,
+            "w": self.size[0],
+            "h": self.size[1],
+            "screenshot": self.screenshot,
+            "allow_tracked": bool(self.allow_tracked),
+        }
 
 
 def build_plan(label: str, jobs: Sequence[Job], lock_wait_ms: int) -> dict:
     return {"api": PLAN_API, "label": label, "lock_wait_ms": int(lock_wait_ms), "jobs": [j.plan_row() for j in jobs]}
 
 
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # it exists; we may not signal it
+        return True
+    return True
+
+
 def _kill_tree(pid: int) -> None:
-    """taskkill /T on the driver we started: node and the Chrome it launched, and nothing else."""
-    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=30)
+    """End the driver we started: node and the Chrome it launched, and nothing else. Windows: taskkill /T /F, which
+    follows the process tree. POSIX: _run_burst starts the driver in a session of its own, so its process group is node
+    and the Chrome it launches (headless.mjs does not detach Chrome) and nothing else. The group goes: SIGTERM first,
+    which the driver answers by killing its Chrome before it frees the GPU lock (headless.mjs guardHolder), then SIGKILL
+    for whatever is still there KILL_GRACE_S later."""
+    if sys.platform == "win32":
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=30)
+        return
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + KILL_GRACE_S
+    while time.monotonic() < deadline and _group_alive(pid):
+        time.sleep(0.1)
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(pid, signal.SIGKILL)
 
 
 def driver_limit_s(lock_wait_ms: int) -> float:
-    """Seconds after which a driver that has not exited is killed (taskkill /T on it): a wedged driver, never a burst
+    """Seconds after which a driver that has not exited is killed (_kill_tree on it): a wedged driver, never a burst
     that keeps its rules (see DRIVER_SLACK_S)."""
     return lock_wait_ms / 1000 + BURST_CAP_S + DRIVER_SLACK_S
 
 
-def _run_burst(plan: dict, run_dir: Path, n: int, lock_wait_ms: int, quiet: bool) -> Tuple[int, dict]:
+def _run_burst(plan: dict, run_dir: Path, n: int, lock_wait_ms: int, quiet: bool) -> tuple[int, dict]:
     plan_path, result_path = run_dir / f"plan-{n}.json", run_dir / f"result-{n}.json"
     plan_path.write_text(json.dumps(plan, indent=1), encoding="utf-8")
-    proc = subprocess.Popen(["node", str(HEADLESS), "--plan", str(plan_path), "--result", str(result_path)],
-                            cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(
+        ["node", str(HEADLESS), "--plan", str(plan_path), "--result", str(result_path)],
+        cwd=str(ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        start_new_session=sys.platform != "win32",  # POSIX: the group _kill_tree ends (Windows ignores it)
+    )
     limit_s = driver_limit_s(lock_wait_ms)
     timer = threading.Timer(limit_s, _kill_tree, args=(proc.pid,))
     timer.daemon = True
@@ -390,7 +478,11 @@ def _run_burst(plan: dict, run_dir: Path, n: int, lock_wait_ms: int, quiet: bool
     try:
         result = json.loads(result_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        result = {"api": RESULT_API, "jobs": [], "error": f"the driver wrote no result (exit {code}, limit {limit_s:.0f} s)"}
+        result = {
+            "api": RESULT_API,
+            "jobs": [],
+            "error": f"the driver wrote no result (exit {code}, limit {limit_s:.0f} s)",
+        }
     result["_path"] = str(result_path)
     return code, result
 
@@ -401,8 +493,15 @@ def run_jobs(jobs: Sequence[Job], label: str, lock_wait_min: float = 10, quiet: 
     run_dir = RUNS / f"{stamp}-{os.getpid()}"
     run_dir.mkdir(parents=True, exist_ok=True)
     lock_wait_ms = int(lock_wait_min * 60_000)
-    merged = {"run_dir": str(run_dir), "software": None, "chrome": None, "rows": {}, "bursts": [], "refused": None,
-              "error": None}
+    merged = {
+        "run_dir": str(run_dir),
+        "software": None,
+        "chrome": None,
+        "rows": {},
+        "bursts": [],
+        "refused": None,
+        "error": None,
+    }
     pending = list(jobs)
     n = 0
     while pending:
@@ -410,16 +509,28 @@ def run_jobs(jobs: Sequence[Job], label: str, lock_wait_min: float = 10, quiet: 
         if n > 1:
             time.sleep(BURST_GAP_S)
         code, result = _run_burst(build_plan(label, pending, lock_wait_ms), run_dir, n, lock_wait_ms, quiet)
-        merged["bursts"].append({"n": n, "exit": code, "result": result.get("_path"), "lock": result.get("lock"),
-                                 "timings": result.get("timings"), "jobs": len(pending),
-                                 "chrome_launches": (result.get("chrome") or {}).get("launches")})
+        merged["bursts"].append(
+            {
+                "n": n,
+                "exit": code,
+                "result": result.get("_path"),
+                "lock": result.get("lock"),
+                "timings": result.get("timings"),
+                "jobs": len(pending),
+                "chrome_launches": (result.get("chrome") or {}).get("launches"),
+            }
+        )
         merged["software"] = merged["software"] or result.get("software")
         merged["chrome"] = merged["chrome"] or (result.get("chrome") or {}).get("version")
         rows = {r.get("key"): r for r in result.get("jobs") or []}
         deferred = []
         for job in pending:
-            row = rows.get(job.key) or {"key": job.key, "url": job.url, "status": "error",
-                                        "error": result.get("error") or f"the driver returned no row (exit {code})"}
+            row = rows.get(job.key) or {
+                "key": job.key,
+                "url": job.url,
+                "status": "error",
+                "error": result.get("error") or f"the driver returned no row (exit {code})",
+            }
             if row.get("status") == "deferred" and code not in (EXIT_REFUSED, EXIT_LOCK):
                 deferred.append(job)
             merged["rows"][job.key] = row
@@ -439,12 +550,13 @@ def run_jobs(jobs: Sequence[Job], label: str, lock_wait_min: float = 10, quiet: 
 
 
 # -------------------------------------------------------------------------------------------------- frame facts
-def frame_facts(path: Optional[str]) -> dict:
+def frame_facts(path: str | None) -> dict:
     """{mean_luma, flat} for a PNG we wrote: a decodable image, and whether it is one flat colour (a black frame, say)."""
     if not path:
         return {"mean_luma": None, "flat": None}
     try:
         from PIL import Image, ImageStat
+
         with Image.open(path) as im:
             lum = im.convert("L")
             lo, hi = lum.getextrema()
@@ -469,7 +581,7 @@ def frame_walk(f: dict) -> dict:
     return {ours: f[theirs] for theirs, ours in names.items() if theirs in f}
 
 
-def first_error(row: dict) -> Optional[str]:
+def first_error(row: dict) -> str | None:
     """The first thing that went wrong for one job: a pass's first log line, the page's first error, the driver's."""
     render = row.get("render") or {}
     for p in (render.get("compile") or {}).get("passes") or []:
@@ -487,16 +599,32 @@ def first_error(row: dict) -> Optional[str]:
 
 # ----------------------------------------------------------------------------------------------------- receipts
 RECEIPT_FIELDS = {
-    "api": str, "id": str, "name": (str, type(None)), "author": (str, type(None)), "license": (str, type(None)),
-    "source": dict, "request": dict, "ok": bool, "status": str, "renderer": (str, type(None)),
-    "software_renderer": bool, "chrome": (str, type(None)), "compile": (dict, type(None)), "frames": list,
-    "substituted": list, "unsupported": list, "errors": list, "timings": dict, "started_at": str, "finished_at": str,
+    "api": str,
+    "id": str,
+    "name": (str, type(None)),
+    "author": (str, type(None)),
+    "license": (str, type(None)),
+    "source": dict,
+    "request": dict,
+    "ok": bool,
+    "status": str,
+    "renderer": (str, type(None)),
+    "software_renderer": bool,
+    "chrome": (str, type(None)),
+    "compile": (dict, type(None)),
+    "frames": list,
+    "substituted": list,
+    "unsupported": list,
+    "errors": list,
+    "timings": dict,
+    "started_at": str,
+    "finished_at": str,
     "driver": dict,
 }
 FRAME_FIELDS = {"t": (int, float), "png": (str, type(None)), "ms": (int, float, type(None)), "bytes": int}
 
 
-def validate_receipt(receipt: dict) -> List[str]:
+def validate_receipt(receipt: dict) -> list[str]:
     """Problems with a render receipt's shape ([] when it is sound)."""
     problems = []
     if not isinstance(receipt, dict):
@@ -524,8 +652,9 @@ def validate_receipt(receipt: dict) -> List[str]:
     return problems
 
 
-def build_receipt(source: Source, request: dict, row: dict, merged: dict, started_at: str,
-                  api: str = RENDER_API) -> dict:
+def build_receipt(
+    source: Source, request: dict, row: dict, merged: dict, started_at: str, api: str = RENDER_API
+) -> dict:
     """One shader's receipt from the driver's row. The renderer is judged again here; a frame counts only if it holds."""
     render = row.get("render") or {}
     renderer = render.get("renderer") or ((merged.get("software") or {}).get("webgl") or {}).get("renderer")
@@ -541,36 +670,72 @@ def build_receipt(source: Source, request: dict, row: dict, merged: dict, starte
         status = "refused"
         errors.append(f"frames not counted: {why}")
     elif status == "done":
-        for f in row.get("frames") or []:
-            frames.append({"t": float(f.get("t") or 0), "png": f.get("file"), "ms": f.get("ms"),
-                           "bytes": int(f.get("bytes") or 0), **frame_walk(f), **frame_facts(f.get("file"))})
+        frames.extend(
+            {
+                "t": float(f.get("t") or 0),
+                "png": f.get("file"),
+                "ms": f.get("ms"),
+                "bytes": int(f.get("bytes") or 0),
+                **frame_walk(f),
+                **frame_facts(f.get("file")),
+            }
+            for f in row.get("frames") or []
+        )
     wanted = len(request.get("t") or [])
-    ok = (status == "done" and software and render.get("ok") is True and len(frames) == wanted
-          and all(f["png"] for f in frames))
+    ok = (
+        status == "done"
+        and software
+        and render.get("ok") is True
+        and len(frames) == wanted
+        and all(f["png"] for f in frames)
+    )
     lic = source.meta.get("license") or {}
     return {
-        "api": api, "id": source.key, "name": source.meta.get("name"), "author": source.meta.get("author"),
-        "license": lic.get("license") if isinstance(lic, dict) else lic, "url": source.meta.get("url"),
+        "api": api,
+        "id": source.key,
+        "name": source.meta.get("name"),
+        "author": source.meta.get("author"),
+        "license": lic.get("license") if isinstance(lic, dict) else lic,
+        "url": source.meta.get("url"),
         "source": {"kind": source.kind, "path": str(source.path), "src": source.src},
-        "request": request, "ok": bool(ok), "status": status,
-        "renderer": renderer, "software_renderer": bool(software), "chrome": merged.get("chrome"),
-        "compile": render.get("compile"), "frames": frames,
-        "substituted": list(render.get("substituted") or []), "unsupported": list(render.get("unsupported") or []),
-        "errors": errors, "first_error": None if ok else first_error(row),
-        "console": (row.get("console") or [])[:20], "screenshot": row.get("screenshot"),
+        "request": request,
+        "ok": bool(ok),
+        "status": status,
+        "renderer": renderer,
+        "software_renderer": bool(software),
+        "chrome": merged.get("chrome"),
+        "compile": render.get("compile"),
+        "frames": frames,
+        "substituted": list(render.get("substituted") or []),
+        "unsupported": list(render.get("unsupported") or []),
+        "errors": errors,
+        "first_error": None if ok else first_error(row),
+        "console": (row.get("console") or [])[:20],
+        "screenshot": row.get("screenshot"),
         "history": render.get("history"),
-        "timings": {"page_wall_ms": row.get("wall_ms"),
-                    "frame_ms": [f["ms"] for f in frames],
-                    "warm_ms": render.get("warmMs"),
-                    "lock_wait_ms": [((b.get("lock") or {}).get("wait_ms")) for b in merged.get("bursts") or []],
-                    "chrome_start_ms": [l.get("start_ms") for b in merged.get("bursts") or []
-                                        for l in (b.get("chrome_launches") or [])]},
-        "started_at": started_at, "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "driver": {"run_dir": merged.get("run_dir"), "bursts": len(merged.get("bursts") or []),
-                   "refused": merged.get("refused"), "error": merged.get("error"),
-                   "gpu_feature_status": (merged.get("software") or {}).get("feature_status")},
-        "note": "a picture of the named author's shader under its licence; it stays under state/" if source.corpus_subject
-                else "a local file",
+        "timings": {
+            "page_wall_ms": row.get("wall_ms"),
+            "frame_ms": [f["ms"] for f in frames],
+            "warm_ms": render.get("warmMs"),
+            "lock_wait_ms": [((b.get("lock") or {}).get("wait_ms")) for b in merged.get("bursts") or []],
+            "chrome_start_ms": [
+                launch.get("start_ms")
+                for b in merged.get("bursts") or []
+                for launch in (b.get("chrome_launches") or [])
+            ],
+        },
+        "started_at": started_at,
+        "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "driver": {
+            "run_dir": merged.get("run_dir"),
+            "bursts": len(merged.get("bursts") or []),
+            "refused": merged.get("refused"),
+            "error": merged.get("error"),
+            "gpu_feature_status": (merged.get("software") or {}).get("feature_status"),
+        },
+        "note": "a picture of the named author's shader under its licence; it stays under state/"
+        if source.corpus_subject
+        else "a local file",
     }
 
 
@@ -587,7 +752,7 @@ def _timeout_ms(ns, default_s: float) -> int:
     return int(min(max(5.0, seconds), BURST_CAP_S) * 1000)
 
 
-def _page_ready(page: str) -> Optional[str]:
+def _page_ready(page: str) -> str | None:
     if not (S.LAB / page).is_file():
         return f"{S.LAB / page} does not exist"
     return None
@@ -595,6 +760,7 @@ def _page_ready(page: str) -> Optional[str]:
 
 class _Lab:
     """The lab server for one verb: an existing one on --port, else a private ephemeral one closed on exit."""
+
     def __init__(self, port: int):
         self.server, self.base = S.base_for(port)
 
@@ -619,8 +785,15 @@ def cmd_render(ns) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     timeout_ms = _timeout_ms(ns, RENDER_TIMEOUT_S)
-    request = {"t": ns.t, "w": ns.size[0], "h": ns.size[1], "fps": ns.fps, "page": ns.page, "timeout_ms": timeout_ms,
-               "parity": ns.parity}
+    request = {
+        "t": ns.t,
+        "w": ns.size[0],
+        "h": ns.size[1],
+        "fps": ns.fps,
+        "page": ns.page,
+        "timeout_ms": timeout_ms,
+        "parity": ns.parity,
+    }
     started = time.strftime("%Y-%m-%dT%H:%M:%S")
     t0 = time.monotonic()
     with _Lab(ns.port) as base:
@@ -634,11 +807,16 @@ def cmd_render(ns) -> int:
     receipt["receipt"] = str(out_dir / "receipt.json")
 
     def human(r):
-        head = (f"{'rendered' if r['ok'] else r['status'].upper()}: {r['id']} \"{r['name']}\" by {r['author']} "
-                f"({r['license']}) in {r['timings']['wall_ms'] / 1000:.1f} s")
+        head = (
+            f'{"rendered" if r["ok"] else r["status"].upper()}: {r["id"]} "{r["name"]}" by {r["author"]} '
+            f"({r['license']}) in {r['timings']['wall_ms'] / 1000:.1f} s"
+        )
         lines = [head, f"  renderer: {r['renderer']}"]
-        lines += [f"  t={f['t']:<6g} {f['ms'] if f['ms'] is not None else '?':>8} ms  {f['png']}"
-                  + ("  (one flat colour)" if f.get("flat") else "") for f in r["frames"]]
+        lines += [
+            f"  t={f['t']:<6g} {f['ms'] if f['ms'] is not None else '?':>8} ms  {f['png']}"
+            + ("  (one flat colour)" if f.get("flat") else "")
+            for f in r["frames"]
+        ]
         if r["substituted"]:
             lines.append(f"  stood in for: {json.dumps(r['substituted'])[:300]}")
         if r["unsupported"]:
@@ -649,17 +827,18 @@ def cmd_render(ns) -> int:
             lines.append(f"  REFUSED: {r['driver']['refused']}")
         lines.append(f"  receipt: {r['receipt']}")
         return "\n".join(lines)
+
     cli._print(receipt, ns.json, human)
     if merged.get("refused"):
         return EXIT_REFUSED
     return 0 if receipt["ok"] else 1
 
 
-def check_ids(ns, corpus: Optional[Path] = None) -> Tuple[List[str], List[str]]:
+def check_ids(ns, corpus: Path | None = None) -> tuple[list[str], list[str]]:
     """(ids to check, ids named but not saved). Explicit ids first, then --set, or --all."""
     corpus = Path(corpus) if corpus is not None else C.CORPUS
     have = set(C.all_ids(corpus))
-    wanted: List[str] = []
+    wanted: list[str] = []
     if ns.all:
         wanted = C.all_ids(corpus)
     else:
@@ -689,26 +868,31 @@ def census_row(meta: dict, row: dict, merged: dict) -> dict:
     # A still's ms covers its whole walk (render.js draws every frame from a reset up to t), so the cost of ONE frame is
     # the ms over the frames walked when the page says how many; the probe page draws each t once.
     walked = [f.get("frames") for f in frames if isinstance(f.get("frames"), int) and f.get("frames") > 0]
-    per_frame = (sum(ms) / sum(walked) if ms and len(walked) == len(ms)
-                 else sum(ms) / len(ms) if ms else None)
+    per_frame = sum(ms) / sum(walked) if ms and len(walked) == len(ms) else sum(ms) / len(ms) if ms else None
     ok = status == "done" and software and render.get("ok") is True and bool(frames)
     passes = (render.get("compile") or {}).get("passes") or []
     lic = meta.get("license") or {}
     return {
-        "id": meta.get("id"), "name": meta.get("name"), "author": meta.get("author"),
+        "id": meta.get("id"),
+        "name": meta.get("name"),
+        "author": meta.get("author"),
         "license": lic.get("license") if isinstance(lic, dict) else lic,
-        "ok": bool(ok), "status": status if (software or status != "done") else "refused",
+        "ok": bool(ok),
+        "status": status if (software or status != "done") else "refused",
         "first_error": None if ok else first_error(row),
         "pass_errors": [{"pass": p.get("name"), "error": pass_error(p)[:300]} for p in passes if not p.get("ok")],
-        "substituted": list(render.get("substituted") or []), "unsupported": list(render.get("unsupported") or []),
+        "substituted": list(render.get("substituted") or []),
+        "unsupported": list(render.get("unsupported") or []),
         "ms_per_frame": round(per_frame, 1) if per_frame is not None else None,
         "ms_per_still": round(sum(ms) / len(ms), 1) if ms else None,
         # One frame drawn after the stills, timed to completion: the per-frame cost without the first draw's compile.
         "warm_ms": render.get("warmMs") if isinstance(render.get("warmMs"), (int, float)) else None,
         "history": render.get("history"),
         "frames_walked": sum(walked) if walked else None,
-        "flat": facts.get("flat"), "mean_luma": facts.get("mean_luma"),
-        "png": frames[0]["file"] if frames else None, "wall_ms": row.get("wall_ms"),
+        "flat": facts.get("flat"),
+        "mean_luma": facts.get("mean_luma"),
+        "png": frames[0]["file"] if frames else None,
+        "wall_ms": row.get("wall_ms"),
     }
 
 
@@ -729,27 +913,68 @@ def cmd_check(ns) -> int:
     t0 = time.monotonic()
     metas = {sid: C.load_meta(sid) for sid in ids}
     with _Lab(ns.port) as base:
-        jobs = [Job(sid, page_url(base, ns.page, f"/corpus/{sid}/shader.json", ns.t, ns.size, ns.fps,
-                                  max(5000, timeout_ms - 5000), ns.parity),
-                    frames_dir, f"{sid}_", timeout_ms, ns.size) for sid in ids]
+        jobs = [
+            Job(
+                sid,
+                page_url(
+                    base,
+                    ns.page,
+                    f"/corpus/{sid}/shader.json",
+                    ns.t,
+                    ns.size,
+                    ns.fps,
+                    max(5000, timeout_ms - 5000),
+                    ns.parity,
+                ),
+                frames_dir,
+                f"{sid}_",
+                timeout_ms,
+                ns.size,
+            )
+            for sid in ids
+        ]
         merged = run_jobs(jobs, f"shader check ({len(ids)})", ns.lock_wait_min, quiet=ns.json)
-    rows = [census_row(metas[sid], merged["rows"].get(sid) or {"status": "error", "error": "no row"}, merged)
-            for sid in ids]
-    count = lambda pred: sum(1 for r in rows if pred(r))  # noqa: E731
+    rows = [
+        census_row(metas[sid], merged["rows"].get(sid) or {"status": "error", "error": "no row"}, merged) for sid in ids
+    ]
+
+    def count(pred):
+        return sum(1 for r in rows if pred(r))
+
     census = {
-        "api": CHECK_API, "started_at": started, "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "wall_ms": round((time.monotonic() - t0) * 1000), "set": ns.set, "all": bool(ns.all),
-        "request": {"t": ns.t, "w": ns.size[0], "h": ns.size[1], "fps": ns.fps, "page": ns.page, "timeout_ms": timeout_ms,
-                    "parity": ns.parity},
-        "renderer": ((merged.get("software") or {}).get("webgl") or {}).get("renderer"), "chrome": merged.get("chrome"),
-        "refused": merged.get("refused"), "error": merged.get("error"), "not_saved": not_saved,
+        "api": CHECK_API,
+        "started_at": started,
+        "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "wall_ms": round((time.monotonic() - t0) * 1000),
+        "set": ns.set,
+        "all": bool(ns.all),
+        "request": {
+            "t": ns.t,
+            "w": ns.size[0],
+            "h": ns.size[1],
+            "fps": ns.fps,
+            "page": ns.page,
+            "timeout_ms": timeout_ms,
+            "parity": ns.parity,
+        },
+        "renderer": ((merged.get("software") or {}).get("webgl") or {}).get("renderer"),
+        "chrome": merged.get("chrome"),
+        "refused": merged.get("refused"),
+        "error": merged.get("error"),
+        "not_saved": not_saved,
         "probe_page": ns.page != DEFAULT_PAGE,  # a stand-in page draws its own picture: it proves the harness only
-        "summary": {"checked": len(rows), "ok": count(lambda r: r["ok"]), "fail": count(lambda r: not r["ok"]),
-                    "timeout": count(lambda r: r["status"] == "timeout"),
-                    "deferred": count(lambda r: r["status"] == "deferred"),
-                    "flat": count(lambda r: r["flat"] is True),
-                    "with_stand_ins": count(lambda r: bool(r["substituted"]))},
-        "bursts": merged.get("bursts"), "frames_dir": str(frames_dir), "shaders": rows,
+        "summary": {
+            "checked": len(rows),
+            "ok": count(lambda r: r["ok"]),
+            "fail": count(lambda r: not r["ok"]),
+            "timeout": count(lambda r: r["status"] == "timeout"),
+            "deferred": count(lambda r: r["status"] == "deferred"),
+            "flat": count(lambda r: r["flat"] is True),
+            "with_stand_ins": count(lambda r: bool(r["substituted"])),
+        },
+        "bursts": merged.get("bursts"),
+        "frames_dir": str(frames_dir),
+        "shaders": rows,
     }
     out = CHECKS / f"{stamp}.json"
     _write_json(out, census)
@@ -757,11 +982,18 @@ def cmd_check(ns) -> int:
 
     def human(c):
         s = c["summary"]
-        lines = [f"checked {s['checked']} shaders in {c['wall_ms'] / 1000:.0f} s on {c['renderer']}"
-                 + (f"  (page {c['request']['page']}: a harness proof, not a verdict on these shaders)"
-                    if c["probe_page"] else ""),
-                 f"  ok {s['ok']}  fail {s['fail']}  (timeout {s['timeout']}, deferred {s['deferred']})  "
-                 f"flat frame {s['flat']}  with stand-in media {s['with_stand_ins']}"]
+        lines = [
+            f"checked {s['checked']} shaders in {c['wall_ms'] / 1000:.0f} s on {c['renderer']}"
+            + (
+                f"  (page {c['request']['page']}: a harness proof, not a verdict on these shaders)"
+                if c["probe_page"]
+                else ""
+            ),
+            (
+                f"  ok {s['ok']}  fail {s['fail']}  (timeout {s['timeout']}, deferred {s['deferred']})  "
+                f"flat frame {s['flat']}  with stand-in media {s['with_stand_ins']}"
+            ),
+        ]
         if c["refused"]:
             lines.append(f"  REFUSED: {c['refused']}")
         if c["error"]:
@@ -776,16 +1008,19 @@ def cmd_check(ns) -> int:
             lines.append(f"  not in the corpus yet: {' '.join(c['not_saved'])}")
         lines.append(f"  census: {c['census']}")
         return "\n".join(lines)
+
     cli._print(census, ns.json, human)
     if merged.get("refused"):
         return EXIT_REFUSED
     return 0
 
 
-def contact_sheet(frames: Sequence[dict], header: str, out: Path, cols: int = FILMSTRIP_COLS,
-                  cell: Tuple[int, int] = FILMSTRIP_SIZE) -> Path:
+def contact_sheet(
+    frames: Sequence[dict], header: str, out: Path, cols: int = FILMSTRIP_COLS, cell: tuple[int, int] = FILMSTRIP_SIZE
+) -> Path:
     """Frames ({t, png}) in a grid under a one-line header naming the shader, its author and its licence."""
     from PIL import Image, ImageDraw, ImageFont
+
     try:
         font = ImageFont.load_default(size=13)
     except TypeError:  # Pillow older than 10.1
@@ -828,32 +1063,55 @@ def cmd_filmstrip(ns) -> int:
         return 2
     frames_dir = base_dir / "filmstrip"
     timeout_ms = _timeout_ms(ns, FILMSTRIP_TIMEOUT_S)
-    request = {"t": times, "w": ns.size[0], "h": ns.size[1], "fps": ns.fps, "page": ns.page, "timeout_ms": timeout_ms,
-               "frames": ns.frames, "to": ns.to}
+    request = {
+        "t": times,
+        "w": ns.size[0],
+        "h": ns.size[1],
+        "fps": ns.fps,
+        "page": ns.page,
+        "timeout_ms": timeout_ms,
+        "frames": ns.frames,
+        "to": ns.to,
+    }
     started = time.strftime("%Y-%m-%dT%H:%M:%S")
     t0 = time.monotonic()
     with _Lab(ns.port) as base:
         url = page_url(base, ns.page, source.src, times, ns.size, ns.fps, max(5000, timeout_ms - 5000), ns.parity)
-        merged = run_jobs([Job(source.key, url, frames_dir, "", timeout_ms, ns.size,
-                               allow_tracked=leaves_state(frames_dir))],
-                          f"shader filmstrip {source.key}", ns.lock_wait_min, quiet=ns.json)
+        merged = run_jobs(
+            [Job(source.key, url, frames_dir, "", timeout_ms, ns.size, allow_tracked=leaves_state(frames_dir))],
+            f"shader filmstrip {source.key}",
+            ns.lock_wait_min,
+            quiet=ns.json,
+        )
     receipt = build_receipt(source, request, merged["rows"][source.key], merged, started, api=FILMSTRIP_API)
     receipt["timings"]["wall_ms"] = round((time.monotonic() - t0) * 1000)
     sheet = None
     if receipt["frames"]:
-        header = (f"{receipt['name']} by {receipt['author']}  |  {receipt['license']}  |  {source.key}  |  "
-                  f"0..{ns.to:g} s, {ns.frames} frames, {ns.fps} fps steps from a reset  |  SwiftShader")[:160]
-        sheet = contact_sheet([{"t": f["t"], "png": f["png"]} for f in receipt["frames"]], header,
-                              base_dir / "filmstrip.png", cols=ns.cols, cell=ns.size)
+        header = (
+            f"{receipt['name']} by {receipt['author']}  |  {receipt['license']}  |  {source.key}  |  "
+            f"0..{ns.to:g} s, {ns.frames} frames, {ns.fps} fps steps from a reset  |  SwiftShader"
+        )[:160]
+        sheet = contact_sheet(
+            [{"t": f["t"], "png": f["png"]} for f in receipt["frames"]],
+            header,
+            base_dir / "filmstrip.png",
+            cols=ns.cols,
+            cell=ns.size,
+        )
     receipt["sheet"] = str(sheet) if sheet else None
     _write_json(base_dir / "filmstrip.json", receipt)
     receipt["receipt"] = str(base_dir / "filmstrip.json")
-    cli._print(receipt, ns.json, lambda r: (
-        f"{'filmstrip' if r['sheet'] else r['status'].upper()}: {r['id']} \"{r['name']}\" by {r['author']}, "
-        f"{len(r['frames'])}/{ns.frames} frames in {r['timings']['wall_ms'] / 1000:.1f} s\n"
-        + (f"  sheet: {r['sheet']}\n" if r["sheet"] else "")
-        + (f"  first error: {r['first_error']}\n" if r["first_error"] else "")
-        + f"  receipt: {r['receipt']}"))
+    cli._print(
+        receipt,
+        ns.json,
+        lambda r: (
+            f'{"filmstrip" if r["sheet"] else r["status"].upper()}: {r["id"]} "{r["name"]}" by {r["author"]}, '
+            f"{len(r['frames'])}/{ns.frames} frames in {r['timings']['wall_ms'] / 1000:.1f} s\n"
+            + (f"  sheet: {r['sheet']}\n" if r["sheet"] else "")
+            + (f"  first error: {r['first_error']}\n" if r["first_error"] else "")
+            + f"  receipt: {r['receipt']}"
+        ),
+    )
     if merged.get("refused"):
         return EXIT_REFUSED
     return 0 if sheet else 1
@@ -865,28 +1123,51 @@ def cmd_serve(ns) -> int:
 
 # ---------------------------------------------------------------------------------------------------- registration
 def _out(p: argparse.ArgumentParser, default: str) -> None:
-    p.add_argument("--out", help=f"directory (default {default}); outside state/ only with --allow-tracked, never for "
-                                 "a corpus shader")
-    p.add_argument("--allow-tracked", action="store_true",
-                   help="let --out lie outside state/ for a shader of your own (.frag or .json, not from the corpus)")
+    p.add_argument(
+        "--out",
+        help=f"directory (default {default}); outside state/ only with --allow-tracked, never for a corpus shader",
+    )
+    p.add_argument(
+        "--allow-tracked",
+        action="store_true",
+        help="let --out lie outside state/ for a shader of your own (.frag or .json, not from the corpus)",
+    )
 
 
 def _common(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--fps", type=_arg(parse_fps), default=DEFAULT_FPS,
-                   help=f"the fixed step used to advance to each t (default {DEFAULT_FPS}, Shadertoy's rate)")
-    p.add_argument("--page", type=_arg(parse_page), default=DEFAULT_PAGE,
-                   help="the lab page to load (render.html; _harness_probe.html proves the harness alone)")
-    p.add_argument("--port", type=_arg(parse_port), default=S.DEFAULT_PORT,
-                   help="reuse a lab server on this port if one runs there (else a private one starts)")
+    p.add_argument(
+        "--fps",
+        type=_arg(parse_fps),
+        default=DEFAULT_FPS,
+        help=f"the fixed step used to advance to each t (default {DEFAULT_FPS}, Shadertoy's rate)",
+    )
+    p.add_argument(
+        "--page",
+        type=_arg(parse_page),
+        default=DEFAULT_PAGE,
+        help="the lab page to load (render.html; _harness_probe.html proves the harness alone)",
+    )
+    p.add_argument(
+        "--port",
+        type=_arg(parse_port),
+        default=S.DEFAULT_PORT,
+        help="reuse a lab server on this port if one runs there (else a private one starts)",
+    )
     p.add_argument("--timeout", type=float, default=None, help=f"seconds one job may take (at most {BURST_CAP_S})")
     p.add_argument("--lock-wait-min", type=float, default=10, help="minutes to wait for the GPU lock")
-    p.add_argument("--no-parity", dest="parity", action="store_false",
-                   help="compile without the runtime's GPU-parity shims (tanh, min/max NaN rules): SwiftShader as is")
+    p.add_argument(
+        "--no-parity",
+        dest="parity",
+        action="store_false",
+        help="compile without the runtime's GPU-parity shims (tanh, min/max NaN rules): SwiftShader as is",
+    )
 
 
 def register_render(sub) -> None:
     p = sub.add_parser("render", help="render a shader to PNGs on SwiftShader, with a receipt")
-    p.add_argument("source", help="a corpus id (or a name matching one shader), a shader .json, or a .frag with mainImage")
+    p.add_argument(
+        "source", help="a corpus id (or a name matching one shader), a shader .json, or a .frag with mainImage"
+    )
     p.add_argument("--t", type=_arg(parse_times), default=list(DEFAULT_T), help="times in seconds, e.g. 0,1.5,4")
     p.add_argument("--size", type=_arg(parse_size), default=DEFAULT_SIZE, help="WIDTHxHEIGHT, default 480x270")
     _out(p, "state/arsenal/shaders/renders/<id>, for the PNGs and receipt.json")
@@ -920,8 +1201,9 @@ def register_filmstrip(sub) -> None:
 
 
 def register_serve(sub) -> None:
-    p = sub.add_parser("serve", help=f"the lab server on {S.HOST} (default port {S.DEFAULT_PORT}; 8793 is refused), "
-                                     f"{S.HEADLESS_ONLY}")
+    p = sub.add_parser(
+        "serve", help=f"the lab server on {S.HOST} (default port {S.DEFAULT_PORT}; 8793 is refused), {S.HEADLESS_ONLY}"
+    )
     p.add_argument("--port", type=_arg(parse_port), default=S.DEFAULT_PORT)
     p.add_argument("--verbose", action="store_true", help="log every request, not only failures")
     p.set_defaults(fn=cmd_serve)

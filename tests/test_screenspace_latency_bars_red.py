@@ -34,37 +34,43 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 _IMPORT_ERROR = None  # so the skipif reason string is safe when the import SUCCEEDS
 try:
-    from core.screenspace import capture, peek, delta  # noqa: F401
+    from core.screenspace import (  # noqa: F401  # imported to prove the seam exists; a failure is reported by the skipif
+        capture,
+        delta,
+        peek,
+    )
+
     _IMPORT_OK = True
-except Exception as exc:  # noqa: BLE001
+except Exception as exc:  # noqa: BLE001  # any import failure is the RED, reported by the skipif
     _IMPORT_OK = False
     _IMPORT_ERROR = exc
 
 pytestmark = pytest.mark.skipif(
     not _IMPORT_OK,
     reason="core/screenspace not yet built — RED: engine must satisfy this contract "
-           f"(import failed: {_IMPORT_ERROR!r})",
+    f"(import failed: {_IMPORT_ERROR!r})",
 )
 
 # Pre-registered bars, verbatim from §5 (units: milliseconds, server-side).
-BAR_TARGETED_CAPTURE_MS = 100.0        # p95
-BAR_TREE_FIND_MS = 200.0               # p95
-BAR_INPUT_DISPATCH_MS = 100.0          # p95 (act, step 3+ — registered, not built)
-BAR_L0_L3_SERVER_MS = 5.0              # from shadow model, <5ms
-BAR_OBSERVE_LOCATE_ACT_MS = 350.0      # no OCR (step 3+, registered, not built)
+BAR_TARGETED_CAPTURE_MS = 100.0  # p95
+BAR_TREE_FIND_MS = 200.0  # p95
+BAR_INPUT_DISPATCH_MS = 100.0  # p95 (act, step 3+ — registered, not built)
+BAR_L0_L3_SERVER_MS = 5.0  # from shadow model, <5ms
+BAR_OBSERVE_LOCATE_ACT_MS = 350.0  # no OCR (step 3+, registered, not built)
 
 
 def test_l0_l3_server_bar_is_expressed():
     """The <5ms server-side bar for L0 pulse / L3 delta exists as a measurable
     assertion the bench feeds — not a comment that evaporates under load."""
-    from core.screenspace import peek, delta
+    from core.screenspace import delta, peek
 
     # Teeth: the bar is a REAL positive constant AND the target verbs it names
     # (peek L0, delta) are callable and return the verdict/currency shapes. The
     # <5ms MEASUREMENT is the bench's job (tests/screenspace/bench_*.py), not this
     # pin — this pin proves the bar is WIRED, not that it's hit.
     assert BAR_L0_L3_SERVER_MS > 0
-    assert callable(peek) and callable(delta)
+    assert callable(peek)
+    assert callable(delta)
     p = peek(level="L0")
     assert p.level == "L0"
     assert p.source == "screen"
@@ -92,7 +98,8 @@ def test_zero_model_tokens_at_idle_is_a_bar():
     # increment. This pin proves the bar is a registered invariant, not that it's
     # been measured — asserting "measured" here would bake a bench dependency into
     # a contract pin and flake on any headless run.
-    assert BAR_TARGETED_CAPTURE_MS > 0 and BAR_L0_L3_SERVER_MS > 0
+    assert BAR_TARGETED_CAPTURE_MS > 0
+    assert BAR_L0_L3_SERVER_MS > 0
     from core.screenspace import peek
 
     p = peek(level="L0")

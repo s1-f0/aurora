@@ -8,7 +8,6 @@ silently become multicast or Broadcast.
 
 from pathlib import Path
 
-
 UI = (Path(__file__).parents[1] / "scripts" / "bifrost_ui.py").read_text(encoding="utf-8")
 
 
@@ -55,7 +54,7 @@ def test_secondary_roster_is_an_explicit_touchable_multiselect():
     assert "event.stopPropagation()" in choose
     render = _between("function renderRosterPop", "renderRecipient();")
     assert '<button type="button"' in render
-    assert 'data-agent=' in render
+    assert "data-agent=" in render
 
 
 def test_picker_is_body_portaled_and_reduced_motion_safe():

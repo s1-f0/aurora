@@ -10823,6 +10823,18 @@ def cmd_roster(args):
         doc["live"] = sum(1 for r in rows if r["state"] == "LIVE")
     if reaped is not None:
         doc["reaped"] = reaped
+
+    def _wake(r) -> str:
+        # S5 (T423): WHO launched this seat's listener decides whether its exit can start a turn
+        # (armed-harness) or only hold presence (armed-daemon). wake_seat's own vocabulary;
+        # 'unarmed' is a measured absence of a seat file, 'unknown' a probe that could not tell.
+        try:
+            from core.comm import wake_seat
+
+            return wake_seat.wake_tag(r["agent"], r.get("full_sid") or r["sid8"])
+        except Exception:  # noqa: BLE001  # fail-soft: a roster row never dies on the wake probe
+            return "unknown"
+
     doc["seat_rows"] = [
         {
             "seat": r["seat"],
@@ -10831,12 +10843,18 @@ def cmd_roster(args):
             "beat_age_s": r["beat_age_s"],
             # T114: a seat can be alive and running the defect already fixed; stale = restart it
             "code": r.get("code_state") or "unknown",
+            "wake": _wake(r),
         }
         for r in rows
     ] or "no seat has ever heartbeat in this namespace"
     # W84: the confession. A roster that cannot name its blind spots is unwedge again.
-    doc["checked"] = f"worklive keys (TTL {WORKLIVE_TTL_S}s, fresh <= {FRESH_S:g}s) and cursor positions"
-    doc["not_checked"] = "process liveness, wake watcher, runner locks, role-queue claims (doctor covers those)"
+    doc["checked"] = (
+        f"worklive keys (TTL {WORKLIVE_TTL_S}s, fresh <= {FRESH_S:g}s), cursor positions, and each seat's "
+        "wake listener (its seat file and origin sidecar)"
+    )
+    doc["not_checked"] = (
+        "process liveness, runner locks, role-queue claims (doctor covers those; its WAKE section grades the wake column)"
+    )
     hints = [f"{cli} doctor"]
     down = next((r["agent"] for r in rows if r["state"] != "LIVE"), None)
     if down:
@@ -10861,6 +10879,10 @@ def _human_roster(console, doc):
             shown = {k: v for k, v in r.items() if k not in ("state", "beat_age_s")}
             if "churning" in shown:  # not churning is the good case: plain text, not a red "no"
                 shown["churning"] = "CHURNING" if shown["churning"] else ""
+            # Only a seat with a seat file earns a wake word (E:'s render_roster rule): a runner
+            # seat never arms a listener, and doctor's WAKE section carries the absence verdict.
+            if shown.get("wake") in ("unarmed", "unknown"):
+                shown["wake"] = ""
             table.append(
                 {
                     "state": f"[{colour.get(r['state'], 'white')}]{r['state']}[/]",
@@ -13375,6 +13397,18 @@ def _emit_find(res, query: str, limit: int) -> int:
     elif res.notes:
         doc["note"] = "; ".join(res.notes)
     doc["total"] = res.count
+    # A REPAIRED NAME IS SAID OUT LOUD (format_result's rule). A name holding a byte that is not
+    # valid UTF-8 comes back repaired with U+FFFD, so it no longer matches a real filename, and a
+    # caller comparing it against a real path must not read the mismatch as absence.
+    repaired = int(getattr(res, "undecodable", 0) or 0)
+    if repaired:
+        doc["undecodable"] = repaired
+        doc["warning"] = (
+            f"{repaired} name(s) contained bytes that are NOT VALID UTF-8 and were REPAIRED with U+FFFD; "
+            "those paths will not match a real filename exactly. Nothing was dropped."
+            if res.paths
+            else f"no decodable matches, but {repaired} name(s) were NOT VALID UTF-8: this is UNCHECKABLE, not an absence"
+        )
     base = _basename(query.strip().lower())
     by_path = {h.path: h for h in res.hits}
     rows = []
@@ -13410,6 +13444,8 @@ def _human_find(console, doc):
                   f"[dim]({out._esc(where)})[/] [{colour}]{'complete' if doc['complete'] else 'BOUNDED'}[/]")  # fmt: skip
     if doc.get("note"):
         console.print(f"[yellow]{out._esc(doc['note'])}[/]")
+    if doc.get("warning"):  # repaired (non-UTF-8) names: never silent
+        console.print(f"[yellow]{out._esc(doc['warning'])}[/]")
     for r in doc["matches"]:
         mark = "[yellow]★[/]" if r["exact"] else " "
         extra = f"  [dim]{out._esc(str(r['modified']))}  {r['size']}[/]" if r.get("modified") else ""

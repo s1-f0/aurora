@@ -14,6 +14,7 @@ Verbatim from the spec's pre-registered acceptance:
   5. `suite tail` on a missing log returns a named non-zero, never a confident zero.
   6. the read doors never write state/coord/suite_baseline.json.
 """
+
 import os
 import sys
 
@@ -21,11 +22,11 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.coord import suite_read as sr
 from core.coord import suite_baseline as sb
+from core.coord import suite_read as sr
 
 
-@pytest.fixture()
+@pytest.fixture
 def baseline_path(tmp_path, monkeypatch):
     p = str(tmp_path / "suite_baseline.json")
     monkeypatch.setattr(sb, "BASELINE_PATH", p)
@@ -59,10 +60,8 @@ def test_p2_stale_baseline_refuses_inherited(baseline_path, monkeypatch):
 
 
 def test_p3_triage_is_deterministic(baseline_path, monkeypatch):
-    monkeypatch.setattr(sb, "_task_files", lambda: {
-        "T067": ["tests/test_t067_1_toolbox_parity.py"]})
-    nodes = ["tests/test_t067_1_toolbox_parity.py::test_d1",
-             "tests/other.py::test_x"]
+    monkeypatch.setattr(sb, "_task_files", lambda: {"T067": ["tests/test_t067_1_toolbox_parity.py"]})
+    nodes = ["tests/test_t067_1_toolbox_parity.py::test_d1", "tests/other.py::test_x"]
     a = sr.render_triage(sr.triage(nodes))
     b = sr.render_triage(sr.triage(nodes))
     assert a == b
@@ -81,13 +80,13 @@ def test_p4_rerun_failing_does_not_mutate_lastfailed(monkeypatch, tmp_path):
     # reference sys.executable, never 'py'
     code2, text2 = sr.rerun_command(["tests/a.py::t1"], run=False)
     assert code2 == 0
-    assert "sys.executable" not in text2 and "pytest" in text2
+    assert "sys.executable" not in text2
+    assert "pytest" in text2
     assert "py " not in text2.lower()
 
 
 def test_p5_tail_missing_log_is_a_named_zero(monkeypatch, tmp_path):
-    monkeypatch.setattr(sr, "SUITE_LOG_GLOB",
-                        os.path.join(str(tmp_path), "suite-run-*.log"))
+    monkeypatch.setattr(sr, "SUITE_LOG_GLOB", os.path.join(str(tmp_path), "suite-run-*.log"))
     running, text = sr.tail()
     assert running is False
     assert "no suite run log" in text  # named, not a confident zero

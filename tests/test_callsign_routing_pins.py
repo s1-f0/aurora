@@ -46,7 +46,7 @@ from core.comm.bus import Bus
 from core.fleet import residents as R
 
 
-@pytest.fixture()
+@pytest.fixture
 def fake_registry(monkeypatch):
     """A known fleet, with the cache pre-warmed so no pin depends on live Redis state."""
     cache = {
@@ -70,13 +70,16 @@ def test_p1_a_ratified_callsign_routes_to_its_agent_id(fake_registry):
 def test_p2_an_agent_id_is_never_shadowed_by_a_callsign(monkeypatch):
     """The fix must not become a worse defect than the one it closes: if someone's callsign
     collides with a real agent id, the REAL SEAT keeps its mail."""
-    monkeypatch.setattr(R, "_ALIAS_CACHE", {
-        "at": time.time(),
-        "alias": {"deepseek": "kimi"},          # a hostile/careless collision
-        "ids": {"claude", "deepseek", "kimi"},
-    })
-    assert R.resolve_agent("deepseek") == "deepseek", (
-        "a callsign must never steal a live seat's address")
+    monkeypatch.setattr(
+        R,
+        "_ALIAS_CACHE",
+        {
+            "at": time.time(),
+            "alias": {"deepseek": "kimi"},  # a hostile/careless collision
+            "ids": {"claude", "deepseek", "kimi"},
+        },
+    )
+    assert R.resolve_agent("deepseek") == "deepseek", "a callsign must never steal a live seat's address"
 
 
 # ---- P3: idempotence, because two seams apply it ---------------------------
@@ -84,7 +87,8 @@ def test_p3_resolution_is_idempotent(fake_registry):
     for name in ("vandor", "claude", "heimdall", "deepseek", "stranger", ""):
         once = R.resolve_agent(name)
         assert R.resolve_agent(once) == once, (
-            f"{name!r} -> {once!r} must be a fixed point; send and send_reply both resolve")
+            f"{name!r} -> {once!r} must be a fixed point; send and send_reply both resolve"
+        )
 
 
 # ---- P4: never a new way to fail -------------------------------------------
@@ -98,27 +102,37 @@ def test_p4_an_unknown_name_passes_through_unchanged(fake_registry):
 def test_p5_a_store_outage_keeps_the_last_good_map(monkeypatch):
     """An empty map is not a safe default -- it un-routes every callsign in the fleet, which
     IS the original defect. Degrade to stale, never to blank."""
-    warm = {"at": time.time() - 10_000,          # stale: forces a rebuild attempt
-            "alias": {"vandor": "claude"}, "ids": {"claude"}}
+    warm = {
+        "at": time.time() - 10_000,  # stale: forces a rebuild attempt
+        "alias": {"vandor": "claude"},
+        "ids": {"claude"},
+    }
     monkeypatch.setattr(R, "_ALIAS_CACHE", dict(warm))
 
     def _boom():
         raise RuntimeError("redis is down")
+
     monkeypatch.setattr(R, "_store", _boom)
 
     assert R.resolve_agent("vandor") == "claude", (
-        "a resolver outage must degrade to the last good answer, not to silence")
+        "a resolver outage must degrade to the last good answer, not to silence"
+    )
 
 
 # ---- P6: a retired name still finds its person -----------------------------
 def test_p6_a_formerly_name_still_routes(monkeypatch):
-    monkeypatch.setattr(R, "_ALIAS_CACHE", {
-        "at": time.time(),
-        "alias": {"vandor": "claude", "fives": "claude"},   # 'fives' superseded
-        "ids": {"claude"},
-    })
+    monkeypatch.setattr(
+        R,
+        "_ALIAS_CACHE",
+        {
+            "at": time.time(),
+            "alias": {"vandor": "claude", "fives": "claude"},  # 'fives' superseded
+            "ids": {"claude"},
+        },
+    )
     assert R.resolve_agent("fives") == "claude", (
-        "supersession is not deletion: mail to a retired name reaches who carried it")
+        "supersession is not deletion: mail to a retired name reaches who carried it"
+    )
 
 
 # ---- P7: the bus seam is attributable --------------------------------------
@@ -128,9 +142,10 @@ def test_p7_the_bus_records_the_name_that_was_typed(fake_registry):
     assert to == "claude"
     assert meta["addressed_as"] == "Vandor", (
         "a callsign send is rewritten for DELIVERY, never for the record -- the fleet must "
-        "still be able to see which name was actually typed")
+        "still be able to see which name was actually typed"
+    )
     assert meta["probe"] is True, "resolution must not eat the caller's meta"
 
     same, meta2 = Bus._resolve_recipient(object(), "claude", None)
-    assert same == "claude" and (meta2 is None or "addressed_as" not in (meta2 or {})), (
-        "an unaliased send gains no phantom attribution")
+    assert same == "claude", "an unaliased send gains no phantom attribution"
+    assert meta2 is None or "addressed_as" not in (meta2 or {}), "an unaliased send gains no phantom attribution"

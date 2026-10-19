@@ -4,6 +4,7 @@ Synthetic fixtures are made at test time: 60 fps HEVC (the OBS codec) with a 2 s
 start_time (the bug the promoted smartcut fixed), and three noise tracks titled Voice, Game, Comms, so audio sync can
 be measured by cross-correlation. The real oracles (the 2-min OBS excerpt and the 33-min recording) skip when absent.
 """
+
 from __future__ import annotations
 
 import json
@@ -57,8 +58,22 @@ def _three_tracks(out: Path, *, offset: float, audio_codec: list) -> Path:
     args += ["-f", "lavfi", "-i", "testsrc2=s=640x360:r=60:d=8"]
     for color, seed in (("white", 1), ("pink", 2), ("brown", 3)):
         args += ["-f", "lavfi", "-i", f"anoisesrc=d=8:c={color}:seed={seed}:a=0.3"]
-    args += ["-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:a", *_hevc_encoder(), "-pix_fmt", "yuv420p",
-             *audio_codec, "-ar", "48000"]
+    args += [
+        "-map",
+        "0:v",
+        "-map",
+        "1:a",
+        "-map",
+        "2:a",
+        "-map",
+        "3:a",
+        *_hevc_encoder(),
+        "-pix_fmt",
+        "yuv420p",
+        *audio_codec,
+        "-ar",
+        "48000",
+    ]
     for i, t in enumerate(TITLES):
         args += [f"-metadata:s:a:{i}", f"title={t}"]
     ff.run(["-v", "error", "-y", *args, str(out)])
@@ -72,9 +87,32 @@ def clips(tmp_path_factory):
     mp4 = _three_tracks(d / "three_offset.mp4", offset=0.025, audio_codec=["-c:a", "libopus", "-b:a", "96k"])
     mkv = _three_tracks(d / "three.mkv", offset=0.0, audio_codec=["-c:a", "aac", "-b:a", "128k"])
     bframes = d / "bframes.mp4"
-    ff.run(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=6", "-f", "lavfi", "-i",
-            "sine=f=440:d=6", "-c:v", "libx264", "-bf", "2", "-g", "30", "-pix_fmt", "yuv420p", "-c:a", "aac",
-            str(bframes)])
+    ff.run(
+        [
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=320x240:r=30:d=6",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=f=440:d=6",
+            "-c:v",
+            "libx264",
+            "-bf",
+            "2",
+            "-g",
+            "30",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            str(bframes),
+        ]
+    )
     return {"dir": d, "mp4": mp4, "mkv": mkv, "bframes": bframes}
 
 
@@ -83,25 +121,99 @@ def ts_clip(tmp_path_factory):
     """An MPEG-TS: its container clock starts at 1.4 s, so a seek that forgets the format start lands 1.4 s late."""
     _have_ffmpeg()
     out = tmp_path_factory.mktemp("cut_ts") / "gop1.ts"
-    ff.run(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=60:d=8", "-f", "lavfi", "-i",
-            "anoisesrc=d=8:c=white:seed=7:a=0.3", "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-bf", "0",
-            "-g", "60", "-keyint_min", "60", "-sc_threshold", "0", "-pix_fmt", "yuv420p", "-c:a", "aac",
-            "-b:a", "128k", "-ar", "48000", "-f", "mpegts", str(out)])
+    ff.run(
+        [
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=320x180:r=60:d=8",
+            "-f",
+            "lavfi",
+            "-i",
+            "anoisesrc=d=8:c=white:seed=7:a=0.3",
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-c:v",
+            "libx264",
+            "-bf",
+            "0",
+            "-g",
+            "60",
+            "-keyint_min",
+            "60",
+            "-sc_threshold",
+            "0",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-ar",
+            "48000",
+            "-f",
+            "mpegts",
+            str(out),
+        ]
+    )
     return out
 
 
 def _gray_frames(path) -> np.ndarray:
     """Every frame, decoded from the file start with no seek at all: the reference a seek bug cannot share."""
-    res = ff.run(["-v", "error", "-i", str(path), "-map", "0:v:0", "-fps_mode", "passthrough", "-vf",
-                  "scale=160:90", "-pix_fmt", "gray", "-f", "rawvideo", "pipe:1"], binary=True)
+    res = ff.run(
+        [
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-map",
+            "0:v:0",
+            "-fps_mode",
+            "passthrough",
+            "-vf",
+            "scale=160:90",
+            "-pix_fmt",
+            "gray",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ],
+        binary=True,
+    )
     return np.frombuffer(res.stdout, np.uint8).reshape(-1, 90, 160).astype(np.float64)
 
 
 def _pcm(path, track: int, ss=None, dur: float = 1.5) -> np.ndarray:
     seek = ["-ss", f"{ss:.6f}"] if ss is not None else []
-    res = ff.run(["-v", "error", *seek, "-i", str(path), "-map", f"0:a:{track}", "-t", f"{dur}",
-                  "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", "48000", "-f", "f32le", "-"],
-                 binary=True)
+    res = ff.run(
+        [
+            "-v",
+            "error",
+            *seek,
+            "-i",
+            str(path),
+            "-map",
+            f"0:a:{track}",
+            "-t",
+            f"{dur}",
+            "-af",
+            "aresample=async=1:first_pts=0",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
+            "-",
+        ],
+        binary=True,
+    )
     return np.frombuffer(res.stdout, np.float32)
 
 
@@ -115,14 +227,19 @@ def _lag_ms(a: np.ndarray, b: np.ndarray) -> float:
 
 # ------------------------------------------------------------------------------------------- plan
 
+
 def test_plan_suggests_copy_exactly_on_a_keyframe(clips):
     f = cut.facts(clips["mp4"])
     st, kfs = f["video"]["start"], f["keyframes"]
-    assert 0.02 < st < 0.05 and kfs[:3] == pytest.approx([st, st + 2, st + 4], abs=1e-5)   # not a frame multiple
+    assert 0.02 < st < 0.05
+    assert kfs[:3] == pytest.approx([st, st + 2, st + 4], abs=1e-5)
     on = cut.plan(clips["mp4"], kfs[1], 5.0)
     off = cut.plan(clips["mp4"], 2.5, 5.0)
-    assert on["mode_suggested"] == "copy" and on["on_keyframe"] and on["head_reencode_s"] == 0
-    assert off["mode_suggested"] == "smart" and not off["on_keyframe"]
+    assert on["mode_suggested"] == "copy"
+    assert on["on_keyframe"]
+    assert on["head_reencode_s"] == 0
+    assert off["mode_suggested"] == "smart"
+    assert not off["on_keyframe"]
     assert off["start_keyframe"] == pytest.approx(kfs[1], abs=1e-6)
     assert off["next_keyframe"] == pytest.approx(kfs[2], abs=1e-6)
     # the first frame whose pts >= 2.5 s - 1 ms, counted from the video's own start_time
@@ -130,7 +247,8 @@ def test_plan_suggests_copy_exactly_on_a_keyframe(clips):
     assert off["start_real"] == pytest.approx(st + first / 60, abs=1e-6)
     assert off["head_reencode_s"] == pytest.approx(kfs[2] - off["start_real"], abs=1e-6)
     assert on["est_s"] < off["est_s"]
-    assert off["api"] == "arsenal.media.cut/v0" and off["blind"]
+    assert off["api"] == "arsenal.media.cut/v0"
+    assert off["blind"]
 
 
 def test_plan_is_fast_on_a_cached_keyframe_list(clips):
@@ -141,7 +259,7 @@ def test_plan_is_fast_on_a_cached_keyframe_list(clips):
         cut.plan(clips["mp4"], 1.0 + i * 0.1, 6.0)
         times.append(time.perf_counter() - t)
     assert statistics.median(times) < 0.1
-    cut._memo.clear()                     # a new process: the facts come back from the disk cache
+    cut._memo.clear()  # a new process: the facts come back from the disk cache
     t = time.perf_counter()
     cut.plan(clips["mp4"], 1.0, 3.0)
     assert time.perf_counter() - t < 0.1
@@ -149,21 +267,40 @@ def test_plan_is_fast_on_a_cached_keyframe_list(clips):
 
 def test_long_exact_encodes_take_the_gpu_lock():
     """The lock decision only (no encode): 2 min of 1080p60 re-encoded is ~32 s at the measured 224 fps."""
-    facts = {"video": {"codec": "h264", "w": 1920, "h": 1080, "fps": "60/1", "vfr": False, "has_b_frames": 2,
-                       "pix_fmt": "yuv420p", "start": 0.0, "duration": 600.0, "bit_rate": 9_000_000,
-                       "color": {}}, "audio": [], "keyframes": [i * 4.0 for i in range(150)]}
+    facts = {
+        "video": {
+            "codec": "h264",
+            "w": 1920,
+            "h": 1080,
+            "fps": "60/1",
+            "vfr": False,
+            "has_b_frames": 2,
+            "pix_fmt": "yuv420p",
+            "start": 0.0,
+            "duration": 600.0,
+            "bit_rate": 9_000_000,
+            "color": {},
+        },
+        "audio": [],
+        "keyframes": [i * 4.0 for i in range(150)],
+    }
     long = cut._plan(facts, 1.0, 121.0)
     short = cut._plan(facts, 1.0, 21.0)
-    assert long["mode_suggested"] == "exact" and long["gpu_lock"] and long["est_s"] > 30
-    assert not short["gpu_lock"] and short["est_s"] < 30
+    assert long["mode_suggested"] == "exact"
+    assert long["gpu_lock"]
+    assert long["est_s"] > 30
+    assert not short["gpu_lock"]
+    assert short["est_s"] < 30
 
 
 def test_plan_says_why_smart_cannot_run(clips):
     p = cut.plan(clips["bframes"], 1.2, 4.0)
-    assert p["mode_suggested"] == "exact" and "B-frames" in p["smart_blocker"]
+    assert p["mode_suggested"] == "exact"
+    assert "B-frames" in p["smart_blocker"]
 
 
 # ------------------------------------------------------------------------------------------- cut
+
 
 @pytest.mark.parametrize("ext", [".mkv", ".mp4"])
 @pytest.mark.parametrize("src_key", ["mp4", "mkv"])
@@ -171,35 +308,45 @@ def test_smart_cut_is_frame_exact_and_keeps_three_titled_tracks(clips, src_key, 
     out = clips["dir"] / f"smart_{src_key}{ext}"
     res = cut.cut(clips[src_key], 1.5, 5.25, out)
     v = res["verify"]
-    assert res["mode"] == "smart" and res["head_frames"] > 0 and res["copied_frames"] > 0
+    assert res["mode"] == "smart"
+    assert res["head_frames"] > 0
+    assert res["copied_frames"] > 0
     assert v["ok"], v
     assert v["frames_out"] == v["frames_expected"] == res["frames"]
     assert v["decode_errors"] == 0
     assert v["head_psnr_db"] == "inf" or v["head_psnr_db"] > 40
     assert v["copied_identical"] == v["copied_compared"] == res["copied_frames"]
-    assert v["titles_out"] == TITLES and v["audio_streams_out"] == 3
+    assert v["titles_out"] == TITLES
+    assert v["audio_streams_out"] == 3
 
 
 def test_copy_snaps_to_the_keyframe_and_says_so(clips):
     res = cut.cut(clips["mp4"], 2.5, 5.0, clips["dir"] / "copy.mp4", mode="copy")
-    assert res["mode"] == "copy" and res["start_real"] == pytest.approx(cut.facts(clips["mp4"])["keyframes"][1])
+    assert res["mode"] == "copy"
+    assert res["start_real"] == pytest.approx(cut.facts(clips["mp4"])["keyframes"][1])
     assert any("before the requested start" in r for r in res["reasons"])
     v = res["verify"]
-    assert v["ok"] and v["copied_identical"] == v["frames_out"] == res["frames"]
+    assert v["ok"]
+    assert v["copied_identical"] == v["frames_out"] == res["frames"]
     assert v["titles_out"] == TITLES
 
 
 def test_smart_on_a_keyframe_is_a_lossless_copy(clips):
     res = cut.cut(clips["mp4"], cut.facts(clips["mp4"])["keyframes"][1], 5.0, clips["dir"] / "onkey.mkv")
-    assert res["mode"] == "copy" and res["head_frames"] == 0
-    assert res["verify"]["ok"] and res["verify"]["head_psnr_db"] == "inf"
+    assert res["mode"] == "copy"
+    assert res["head_frames"] == 0
+    assert res["verify"]["ok"]
+    assert res["verify"]["head_psnr_db"] == "inf"
 
 
 def test_exact_reencodes_the_whole_range(clips):
     res = cut.cut(clips["mkv"], 0.75, 3.0, clips["dir"] / "exact.mp4", mode="exact")
     v = res["verify"]
-    assert res["mode"] == "exact" and res["head_frames"] == res["frames"] == 135
-    assert v["ok"] and v["copied_compared"] == 0 and v["head_min_psnr_db"] > 40
+    assert res["mode"] == "exact"
+    assert res["head_frames"] == res["frames"] == 135
+    assert v["ok"]
+    assert v["copied_compared"] == 0
+    assert v["head_min_psnr_db"] > 40
     assert v["titles_out"] == TITLES
 
 
@@ -209,12 +356,13 @@ def test_audio_stays_in_sync_with_the_picture(clips, mode):
     res = cut.cut(clips["mp4"], 1.53, 5.2, out, mode=mode, verify=False)
     for track in (0, 2):
         lag = _lag_ms(_pcm(out, track), _pcm(clips["mp4"], track, ss=res["start_real"]))
-        assert abs(lag) < 2.0, (mode, track, lag)          # measured: within 1 ms in every mode and container
+        assert abs(lag) < 2.0, (mode, track, lag)  # measured: within 1 ms in every mode and container
 
 
 def test_track_subset_keeps_titles_and_a_missing_track_refuses(clips):
     res = cut.cut(clips["mp4"], 1.5, 4.5, clips["dir"] / "sub.mp4", tracks=[0, 2])
-    assert res["verify"]["titles_out"] == ["Voice", "Comms"] and res["verify"]["ok"]
+    assert res["verify"]["titles_out"] == ["Voice", "Comms"]
+    assert res["verify"]["ok"]
     with pytest.raises(ff.MediaError, match="missing audio track 5"):
         cut.cut(clips["mp4"], 1.5, 4.5, clips["dir"] / "bad.mp4", tracks=[5])
 
@@ -237,11 +385,14 @@ def test_bad_requests_fail_closed(clips):
 
 def test_bframes_smart_falls_back_to_exact_and_copy_is_honest(clips):
     res = cut.cut(clips["bframes"], 1.2, 4.0, clips["dir"] / "bf.mp4")
-    assert res["mode"] == "exact" and "B-frames" in res["reasons"][0]
-    assert res["verify"]["ok"] and res["verify"]["frames_out"] == 84
+    assert res["mode"] == "exact"
+    assert "B-frames" in res["reasons"][0]
+    assert res["verify"]["ok"]
+    assert res["verify"]["frames_out"] == 84
     cp = cut.cut(clips["bframes"], 1.2, 4.0, clips["dir"] / "bf_copy.mp4", mode="copy")
     assert cp["start_real"] == pytest.approx(1.0)
-    assert cp["verify"]["ok"] and abs(cp["verify"]["frames_out"] - cp["frames"]) <= 3
+    assert cp["verify"]["ok"]
+    assert abs(cp["verify"]["frames_out"] - cp["frames"]) <= 3
     assert any("container level" in r for r in cp["reasons"])
 
 
@@ -254,10 +405,12 @@ def test_the_original_is_never_touched(clips):
 
 def test_default_out_goes_under_the_state_folder(clips):
     res = cut.cut(clips["mp4"], 1.5, 3.0, verify=False)
-    assert Path(res["out"]).parent == ff.state_dir() / "cut" and Path(res["out"]).suffix == ".mp4"
+    assert Path(res["out"]).parent == ff.state_dir() / "cut"
+    assert Path(res["out"]).suffix == ".mp4"
 
 
 # ------------------------------------------------------------------------------------------- MPEG-TS clock
+
 
 @pytest.mark.parametrize("mode", ["smart", "copy", "exact"])
 def test_a_container_that_starts_at_1_4_s_cuts_the_right_frames_and_audio(ts_clip, mode):
@@ -268,17 +421,18 @@ def test_a_container_that_starts_at_1_4_s_cuts_the_right_frames_and_audio(ts_cli
     assert f["format_start"] == pytest.approx(1.4, abs=0.01)
     out = ts_clip.parent / f"ts_{mode}.mp4"
     res = cut.cut(ts_clip, 2.5, 5.0, out, mode=mode)
-    assert res["mode"] == mode and res["verify"]["ok"], res["verify"]
+    assert res["mode"] == mode, res["verify"]
+    assert res["verify"]["ok"], res["verify"]
     src, got = _gray_frames(ts_clip), _gray_frames(out)
     k = round((res["start_real"] - f["video"]["start"]) * 60)
     assert len(got) == res["frames"]
     for i in (0, len(got) - 1):
         mse = [((got[i] - s) ** 2).mean() for s in src]
         assert int(np.argmin(mse)) == k + i, (mode, i, int(np.argmin(mse)), k + i)
-    ref = _pcm(ts_clip, 0, dur=8.0)                      # sample 0 sits at the track's first file time: no -ss
-    off = int(round((res["start_real"] - f["audio"][0]["start"]) * 48000))
-    lag = _lag_ms(_pcm(out, 0), ref[off:off + 72000])
-    assert abs(lag) < 2.0, (mode, lag)                   # measured -0.7 ms (mp4); 1400.7 ms before the fix
+    ref = _pcm(ts_clip, 0, dur=8.0)  # sample 0 sits at the track's first file time: no -ss
+    off = round((res["start_real"] - f["audio"][0]["start"]) * 48000)
+    lag = _lag_ms(_pcm(out, 0), ref[off : off + 72000])
+    assert abs(lag) < 2.0, (mode, lag)  # measured -0.7 ms (mp4); 1400.7 ms before the fix
 
 
 def test_verify_picks_frames_by_pts_so_a_wrong_start_fails(ts_clip):
@@ -286,11 +440,13 @@ def test_verify_picks_frames_by_pts_so_a_wrong_start_fails(ts_clip):
     res = cut.cut(ts_clip, 2.5, 5.0, out, mode="copy", verify=False)
     st, end = res["start_real"], res["end_real"]
     assert cut.verify(ts_clip, st, end, out)["ok"]
-    wrong = cut.verify(ts_clip, st + 1.0, end + 1.0, out)          # a cut that started one GOP late
-    assert not wrong["ok"] and wrong["copied_identical"] == 0
+    wrong = cut.verify(ts_clip, st + 1.0, end + 1.0, out)  # a cut that started one GOP late
+    assert not wrong["ok"]
+    assert wrong["copied_identical"] == 0
     exact = cut.cut(ts_clip, 2.5, 5.0, ts_clip.parent / "ts_check_exact.mp4", mode="exact", verify=False)
     shifted = cut.verify(ts_clip, exact["start_real"] + 1.0, exact["end_real"] + 1.0, exact["out"], copied_from=None)
-    assert not shifted["ok"] and shifted["head_min_psnr_db"] < cut.PSNR_FLOOR_DB
+    assert not shifted["ok"]
+    assert shifted["head_min_psnr_db"] < cut.PSNR_FLOOR_DB
 
 
 def test_long_outputs_are_verified_on_samples(clips, monkeypatch):
@@ -300,14 +456,17 @@ def test_long_outputs_are_verified_on_samples(clips, monkeypatch):
     monkeypatch.setattr(cut, "SAMPLE", 30)
     v = cut.verify(clips["mp4"], res["start_real"], res["end_real"], res["out"], compare_max=60)
     head = res["head_frames"]
-    assert v["ok"] and v["frames_out"] == res["frames"] == 300
+    assert v["ok"]
+    assert v["frames_out"] == res["frames"] == 300
     assert v["decode_checked"] == [[0, head + 30], [270, 30]]
     assert v["frames_compared"] == v["frames_compared_expected"] == 60
     p = cut.plan(clips["mp4"], 1.5, 6.5)
-    assert p["verify_est_s"] > 0 and p["est_s"] > 0
+    assert p["verify_est_s"] > 0
+    assert p["est_s"] > 0
 
 
 # ------------------------------------------------------------------------------------------- concat
+
 
 def test_concat_joins_smart_cuts_and_refuses_a_mismatch(clips):
     d = clips["dir"]
@@ -315,27 +474,34 @@ def test_concat_joins_smart_cuts_and_refuses_a_mismatch(clips):
     b = cut.cut(clips["mp4"], 4.6, 6.5, d / "part_b.mp4", verify=False)
     res = cut.concat([a["out"], b["out"]], d / "joined.mp4")
     assert res["frames_out"] == res["frames_expected"] == a["frames"] + b["frames"]
-    assert res["decode_errors"] == 0 and res["titles_out"] == TITLES
+    assert res["decode_errors"] == 0
+    assert res["titles_out"] == TITLES
     with pytest.raises(ff.MediaError, match="concat refuses"):
         cut.concat([a["out"], clips["bframes"]], d / "nope.mp4")
 
 
 # ------------------------------------------------------------------------------------------- CLI
 
+
 def test_cli_plan_prints_the_cost(clips, capsys):
     rc = cut.cli("cut", [str(clips["mp4"]), "1.5", "0:05.25", "--plan"])
     out = json.loads(capsys.readouterr().out)
-    assert rc == 0 and out["mode_suggested"] == "smart" and out["est_s"] > 0
+    assert rc == 0
+    assert out["mode_suggested"] == "smart"
+    assert out["est_s"] > 0
 
 
 # ------------------------------------------------------------------------------------------- real oracles
+
 
 @pytest.mark.skipif(not EXCERPT.is_file(), reason="media oracle excerpt_600_720.mp4 not on this machine")
 def test_excerpt_smart_cut_matches_the_verified_numbers():
     res = cut.cut(EXCERPT, 1.5, 12.0, Path(os.environ["ARSENAL_MEDIA_STATE"]) / "excerpt_cut.mp4")
     v = res["verify"]
-    assert v["ok"] and v["frames_out"] == 630 and v["decode_errors"] == 0
-    assert 47.0 < v["head_psnr_db"] < 60.0                  # the promoted smartcut measured 47.9-50.9 dB
+    assert v["ok"]
+    assert v["frames_out"] == 630
+    assert v["decode_errors"] == 0
+    assert 47.0 < v["head_psnr_db"] < 60.0  # the promoted smartcut measured 47.9-50.9 dB
     assert v["copied_identical"] == v["copied_compared"] == res["copied_frames"] > 400
 
 
@@ -343,7 +509,9 @@ def test_excerpt_smart_cut_matches_the_verified_numbers():
 def test_recording_601_5_to_612_gives_630_frames():
     res = cut.cut(RECORDING, 601.5, 612.0, Path(os.environ["ARSENAL_MEDIA_STATE"]) / "rec_cut.mp4")
     v = res["verify"]
-    assert res["mode"] == "smart" and v["ok"]
-    assert v["frames_out"] == 630 and v["decode_errors"] == 0
+    assert res["mode"] == "smart"
+    assert v["ok"]
+    assert v["frames_out"] == 630
+    assert v["decode_errors"] == 0
     assert 47.0 < v["head_psnr_db"] < 60.0
     assert v["copied_identical"] == v["copied_compared"] == 470

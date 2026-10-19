@@ -4,7 +4,7 @@ Status: current
 Class: reference
 
 > Do NOT edit by hand. Regenerate with `py scripts/generators/gen_physics_sheet.py`.
-> Derived at 9ac7b2ff2. A bound you discover by collision is not awareness -- this sheet
+> Derived at 56fe6c373. A bound you discover by collision is not awareness -- this sheet
 > exists so every clip, cap, timeout and flag is READABLE before it is HIT.
 > Dynamic envelopes (throughput, latency, limits-under-load) are NOT here: they require
 > measurement, not grep -- see the master-map charter M2b (benchmark half).
@@ -139,8 +139,8 @@ Class: reference
 | `AKASHIC_SESSION_SIGNALS_MAX_BYTES` | `str(16 * 1024 * 1024` | agent/harness/hooks/claude_sessionend.py |
 | `AKASHIC_SHIFT_LOOP` | `"1"` | core/comm/shift_turn.py |
 | `AKASHIC_SHOW_CONSOLES` | `` | core/__init__.py, core/comm/launcher.py, scripts/quiet/sitecustomize.py |
-| `AKASHIC_SNIPPET_AUTOFILE` | `""` | scripts/hooks/snippet_autofile.py |
-| `AKASHIC_SNIPS_ROOT` | `` | scripts/hooks/snippet_autofile.py |
+| `AKASHIC_SNIPPET_AUTOFILE` | `""` | agent/harness/hooks/snippet_autofile.py |
+| `AKASHIC_SNIPS_ROOT` | `` | agent/harness/hooks/snippet_autofile.py |
 | `AKASHIC_SPAWN_INSTANT_SECONDS` | `` | scripts/bifrost_runner_discord.py |
 | `AKASHIC_SPAWN_PROOF_SECONDS` | `` | scripts/bifrost_runner_discord.py |
 | `AKASHIC_SPAWN_REPORT_DEADLINE` | `` | scripts/bifrost_runner_discord.py |
@@ -177,7 +177,7 @@ Class: reference
 | `AKASHIC_WIRE_QUEUE` | `"4096"` | scripts/wire_journal.py |
 | `AKASHIC_WIRE_WRITER` | `` | scripts/wire_journal.py |
 | `AKASHIC_WISHLIST_FILE` | `str(Path(__file__` | agent_cli.py |
-| `AKASHIC_WISHLIST_TRIAGE_DIR` | `` | scripts/ops/wishlist_triage_task.py |
+| `AKASHIC_WISHLIST_TRIAGE_DIR` | `str(ROOT / "state" / "wishlist" / "triage-receipts"` | scripts/ops/wishlist_triage_task.py |
 | `AKASHIC_WORKLIVE_FRESH_S` | `"45"` | core/comm/roster.py |
 | `AKASHIC_WORKLIVE_TTL_S` | `"180"` | core/comm/roster.py |
 | `AKASHIC_WORLD` | `` | aurora-cli/src/aurora_cli/bundle.py |
@@ -318,8 +318,8 @@ Class: reference
 | `STORM_DEPTH_THRESHOLD` | `50` | core/comm/storm_detect.py |
 | `STORM_DEPTH_WINDOW` | `3` | core/comm/storm_detect.py |
 | `STORM_REPEAT_THRESHOLD` | `5` | core/comm/storm_detect.py |
-| `TEMP` | `` | scripts/hooks/snippet_autofile.py |
-| `TMP` | `` | scripts/hooks/snippet_autofile.py |
+| `TEMP` | `` | agent/harness/hooks/snippet_autofile.py |
+| `TMP` | `` | agent/harness/hooks/snippet_autofile.py |
 | `XDG_CACHE_HOME` | `` | core/tools/locate.py |
 
 ## Mechanical bounds (380 numeric constants)
@@ -448,10 +448,10 @@ Class: reference
 | `HEARTBEAT_INTERVAL` | 30 | research/in-flight/t342/dead-modules/multi_agent.py |  |
 | `HELP_TIMEOUT_S` | 20 | tooling-upgrade/oracle.py |  |
 | `HIGHLIGHT_SECONDS` | 6 | arsenal/practice_riff.py |  |
-| `HINT_MAX` | 199 | scripts/hooks/snippet_autofile.py | characters: "keep the hint under 200" |
+| `HINT_MAX` | 199 | agent/harness/hooks/snippet_autofile.py | characters: "keep the hint under 200" |
 | `HINT_MAX_PER_AGENT` | 8 | core/comm/context_hints.py | ring buffer cap per receiving agent |
 | `HINT_TTL_SECONDS` | 300 | core/comm/context_hints.py | 5 min soft expiry (stale hints silently dropped by drain) |
-| `HINT_WINDOW` | 600 | scripts/hooks/snippet_autofile.py | seconds: "the last 10 minutes" |
+| `HINT_WINDOW` | 600 | agent/harness/hooks/snippet_autofile.py | seconds: "the last 10 minutes" |
 | `HISTORY_CAP` | 200 | core/comm/turn_metrics.py |  |
 | `IMPLAUSIBLE_MIN_N` | 5 | core/coord/sift.py | below this, a high rate is small-n noise, not an alarm |
 | `IMPORT_TIMEOUT_S` | 20 | tooling-upgrade/oracle.py |  |
@@ -491,7 +491,7 @@ Class: reference
 | `MAX_BEATS` | 64 | arsenal/jam/schemas.py |  |
 | `MAX_BODY` | 240 | core/toolbelt/contest.py | a second voice is shorter than the first; chorus, not solo. |
 | `MAX_BODY` | 400 | core/toolbelt/toast.py | gratitude is short; the leaderboard guard is distinct-users love |
-| `MAX_CHARS` | 300 | scripts/hooks/snippet_autofile.py | likewise |
+| `MAX_CHARS` | 300 | agent/harness/hooks/snippet_autofile.py | likewise |
 | `MAX_CHARS_PER_ENTRY` | 170 | core/narrative/chronicler.py |  |
 | `MAX_CHECKS` | 8 | arsenal/jam/schemas.py |  |
 | `MAX_CHROMA_STEPS` | 24 | arsenal/shaders/twins/colour.py | bisection steps for oklchMaxChroma (the piano's own count) |
@@ -505,7 +505,7 @@ Class: reference
 | `MAX_HEADER_DEPTH` | 32 | arsenal/shaders/modules.py | brackets and braces outside strings; a real header nests four deep |
 | `MAX_HOPS` | 12 | core/git/rewrite_map.py | three rewrites so far; a cap that can never loop forever |
 | `MAX_ITEMS` | 64 | arsenal/jam/schemas.py |  |
-| `MAX_LINES` | 3 | scripts/hooks/snippet_autofile.py | a snippet longer than this is filed |
+| `MAX_LINES` | 3 | agent/harness/hooks/snippet_autofile.py | a snippet longer than this is filed |
 | `MAX_LIST` | 400 | core/comm/toolbox.py |  |
 | `MAX_LONG_EDGE` | 1,600 | arsenal/media/sheet.py |  |
 | `MAX_MATCHES` | 120 | core/comm/toolbox.py |  |

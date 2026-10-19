@@ -54,9 +54,9 @@ Run::
 
     py -m pytest tests/test_windowed_tasks_can_still_speak.py -q
 """
+
 from __future__ import annotations
 
-import io
 import sys
 from pathlib import Path
 
@@ -65,21 +65,21 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from core.infrastructure import background_stdio as B  # noqa: E402
+from core.infrastructure import background_stdio as B  # noqa: E402  # after the sys.path bootstrap
 
 #: Entry scripts of the WINDOWED AkashicAurora scheduled tasks that live in THIS repo and are
 #: launched directly (not through the run_aurora_service.py wrapper). Enumerated explicitly rather
 #: than read from Task Scheduler, so the pin is deterministic and does not pass vacuously on a host
 #: where the tasks are not registered.
 DIRECT_WINDOWED_TASK_SCRIPTS = (
-    "scripts/revive.py",                      # AkashicAurora-DaemonWatchdog
-    "scripts/ops/archive_ephemeral.py",       # AkashicAurora-EphemeralArchive-Daily
-    "scripts/ops/failsafe_watcher.py",        # AkashicAurora-Failsafe-Deadman
-    "scripts/ops/mem_watch.py",               # AkashicAurora-MemWatch
-    "scripts/checkers/check_secrets.py",      # AkashicAurora-SecretScan-HistoryWeekly
-    "scripts/ops/archive_transcripts.py",     # AkashicAurora-TranscriptArchive-{Daily,VerifyWeekly}
-    "scripts/ops/eye_ingest_task.py",         # AkashicAurora-EyeIngest-Daily (2026-10-07)
-    "scripts/bifrost_daemon.py",              # AkashicAurora-WakeDaemon (2026-10-07)
+    "scripts/revive.py",  # AkashicAurora-DaemonWatchdog
+    "scripts/ops/archive_ephemeral.py",  # AkashicAurora-EphemeralArchive-Daily
+    "scripts/ops/failsafe_watcher.py",  # AkashicAurora-Failsafe-Deadman
+    "scripts/ops/mem_watch.py",  # AkashicAurora-MemWatch
+    "scripts/checkers/check_secrets.py",  # AkashicAurora-SecretScan-HistoryWeekly
+    "scripts/ops/archive_transcripts.py",  # AkashicAurora-TranscriptArchive-{Daily,VerifyWeekly}
+    "scripts/ops/eye_ingest_task.py",  # AkashicAurora-EyeIngest-Daily (2026-10-07)
+    "scripts/bifrost_daemon.py",  # AkashicAurora-WakeDaemon (2026-10-07)
 )
 
 #: The one that already had its own correct copy. Pinned for AGREEMENT, not folded into the helper:
@@ -90,7 +90,7 @@ PRE_EXISTING_COPY = "scripts/trader_archivist.py"
 
 
 def _src(rel: str) -> str:
-    return io.open(ROOT / rel, encoding="utf-8").read()
+    return open(ROOT / rel, encoding="utf-8").read()
 
 
 # ------------------------------------------------------------------ the helper
@@ -99,10 +99,16 @@ def test_the_repair_is_a_noop_when_the_streams_are_live():
     assert B.repair_background_stdio("pin-probe") is None
 
 
-def test_the_repair_never_raises_even_when_it_cannot_open_its_log(monkeypatch):
+def test_the_repair_never_raises_even_when_it_cannot_open_its_log(monkeypatch, tmp_path):
     """A diagnostics helper that kills the job it was meant to make debuggable is worse than the
-    silence it replaces. So a failure to open the log leaves the streams as they were."""
-    monkeypatch.setattr(B, "log_root", lambda: Path("\\\\?\\nonexistent-device\\nope"))
+    silence it replaces. So a failure to open the log leaves the streams as they were.
+
+    The unopenable root sits under a regular FILE, so mkdir fails on every OS. It was a
+    `\\\\?\\` device path, which only Windows refuses: elsewhere it is one odd but valid
+    relative directory name, so the repair succeeded and left that directory in the cwd."""
+    blocker = tmp_path / "a-regular-file"
+    blocker.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr(B, "log_root", lambda: blocker / "logs")
     monkeypatch.setattr(sys, "stdout", None)
     try:
         assert B.repair_background_stdio("pin-probe") is None
@@ -130,9 +136,10 @@ def test_every_direct_windowed_task_script_repairs_its_streams(rel):
     output was the only evidence they ran."""
     src = _src(rel)
     assert "repair_background_stdio" in src, (
-        "%s is a windowed scheduled-task entry point and does not repair its streams. Launched by "
+        f"{rel} is a windowed scheduled-task entry point and does not repair its streams. Launched by "
         "pyw (= pythonw.exe) with no console and no inherited handles, sys.stdout is None and every "
-        "print() in it is silently discarded -- no exception, no output, no evidence it ran." % rel)
+        "print() in it is silently discarded -- no exception, no output, no evidence it ran."
+    )
 
 
 @pytest.mark.parametrize("rel", DIRECT_WINDOWED_TASK_SCRIPTS)
@@ -151,11 +158,11 @@ def test_the_repair_runs_before_anything_can_print(rel):
     come before anything that parses arguments? A definition elsewhere in the file is not an event.
     """
     import ast
+
     src = _src(rel)
     tree = ast.parse(src)
-    main_fn = next((n for n in ast.walk(tree)
-                    if isinstance(n, ast.FunctionDef) and n.name == "main"), None)
-    assert main_fn is not None, "%s has no main() to order" % rel
+    main_fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main"), None)
+    assert main_fn is not None, f"{rel} has no main() to order"
 
     def _calls(node):
         """Line numbers of calls to anything whose attribute/name ends in `names`."""
@@ -173,13 +180,15 @@ def test_the_repair_runs_before_anything_can_print(rel):
 
     seen = _calls(main_fn)
     assert seen["repair"], (
-        "%s never calls repair_background_stdio inside main(), so whatever it does at import time "
-        "or in a helper does not protect the run" % rel)
+        f"{rel} never calls repair_background_stdio inside main(), so whatever it does at import time "
+        "or in a helper does not protect the run"
+    )
     if seen["parse"]:
         assert min(seen["repair"]) < min(seen["parse"]), (
-            "%s parses arguments at line %d before repairing stdout at line %d, so an argparse "
-            "error message -- which goes to stderr and exits -- is still lost"
-            % (rel, min(seen["parse"]), min(seen["repair"])))
+            f"{rel} parses arguments at line {min(seen['parse'])} before repairing stdout at line "
+            f"{min(seen['repair'])}, so an argparse error message -- which goes to stderr and exits -- "
+            "is still lost"
+        )
 
 
 def test_no_task_script_touches_a_stdout_attribute_outside_a_guard():
@@ -192,12 +201,11 @@ def test_no_task_script_touches_a_stdout_attribute_outside_a_guard():
             s = line.strip()
             if s.startswith("#") or "is None" in s or "is not None" in s:
                 continue
-            for attr in ("sys.stdout.", "sys.stderr."):
-                if attr in s:
-                    offenders.append("%s:%d %s" % (rel, n, s[:70]))
+            offenders.extend(f"{rel}:{n} {s[:70]}" for attr in ("sys.stdout.", "sys.stderr.") if attr in s)
     assert not offenders, (
         "a windowed task script touches a stdout/stderr ATTRIBUTE, which raises AttributeError "
-        "when the stream is None and kills the task partway: %s" % offenders)
+        f"when the stream is None and kills the task partway: {offenders}"
+    )
 
 
 def test_pyw_is_recognised_as_the_windowed_launcher_in_the_record():
@@ -206,6 +214,11 @@ def test_pyw_is_recognised_as_the_windowed_launcher_in_the_record():
     reads seven windowed tasks as console tasks. Pinned in prose so the next reader of this file
     does not repeat it."""
     doc = __doc__ or ""
-    assert "pyw" in doc and "windowed launcher" in doc, (
+    assert "pyw" in doc, (
         "the module docstring no longer records that `pyw` IS pythonw.exe -- the single fact that "
-        "made three separate counts of this defect wrong")
+        "made three separate counts of this defect wrong"
+    )
+    assert "windowed launcher" in doc, (
+        "the module docstring no longer records that `pyw` IS pythonw.exe -- the single fact that "
+        "made three separate counts of this defect wrong"
+    )

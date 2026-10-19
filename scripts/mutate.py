@@ -61,16 +61,18 @@ Usage::
 
     py scripts/mutate.py --spec spec.json [--tests tests/test_foo.py] [--json]
 """
+
 from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 DEFAULT_TIMEOUT = 600
 
@@ -80,12 +82,14 @@ SURVIVED = "SURVIVED"
 NULL_APPLY = "NULL-APPLY"
 NULL_SEMANTIC = "NULL-SEMANTIC"
 
-_NO_PROBE_NOTE = ("no probe declared, so semantic nullity could NOT be ruled out -- this may "
-                  "be an unguarded line or a mutation that changes nothing; declare a probe "
-                  "to tell them apart")
+_NO_PROBE_NOTE = (
+    "no probe declared, so semantic nullity could NOT be ruled out -- this may "
+    "be an unguarded line or a mutation that changes nothing; declare a probe "
+    "to tell them apart"
+)
 
 
-def _run_tests(tests: str, repo: Path, timeout: int = DEFAULT_TIMEOUT) -> Tuple[int, str]:
+def _run_tests(tests: str, repo: Path, timeout: int = DEFAULT_TIMEOUT) -> tuple[int, str]:
     """Run the target and return (returncode, output).
 
     THE RETURN CODE IS THE VERDICT. The text comes back only so a human can read why, and
@@ -95,17 +99,21 @@ def _run_tests(tests: str, repo: Path, timeout: int = DEFAULT_TIMEOUT) -> Tuple[
     try:
         r = subprocess.run(
             [sys.executable, "-m", "pytest", tests, "-q", "--no-header", "-p", "no:randomly", "-rf"],
-            capture_output=True, text=True, cwd=str(repo), timeout=timeout)
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            timeout=timeout,
+        )
         return r.returncode, (r.stdout or "") + (r.stderr or "")
     except subprocess.TimeoutExpired:
         # A timeout is NOT a pass. Scoring it green is the blind-detector species again.
-        return 124, "TIMEOUT after %ss" % timeout
+        return 124, f"TIMEOUT after {timeout}s"
 
 
 _probe_seq = 0
 
 
-def _probe_value(expr: str, repo: Path, timeout: int = 120) -> Tuple[bool, str]:
+def _probe_value(expr: str, repo: Path, timeout: int = 120) -> tuple[bool, str]:
     """Evaluate a declared probe in a FRESH interpreter rooted at the repo.
 
     Fresh because the mutated module must actually be re-imported; evaluating in-process
@@ -124,16 +132,19 @@ def _probe_value(expr: str, repo: Path, timeout: int = 120) -> Tuple[bool, str]:
     """
     global _probe_seq
     _probe_seq += 1
-    code = ("import sys; sys.path.insert(0, %r)\n"
-            "try:\n    print(repr(%s))\n"
-            "except Exception as e:\n    print('PROBE-RAISED:' + type(e).__name__ + ':' + str(e))\n"
-            % (str(repo), expr))
+    code = (
+        f"import sys; sys.path.insert(0, {str(repo)!r})\n"
+        f"try:\n    print(repr({expr}))\n"
+        "except Exception as e:\n    print('PROBE-RAISED:' + type(e).__name__ + ':' + str(e))\n"
+    )
     import tempfile
-    cache = os.path.join(tempfile.gettempdir(), "mutate_pyc_%d_%d" % (os.getpid(), _probe_seq))
+
+    cache = os.path.join(tempfile.gettempdir(), f"mutate_pyc_{os.getpid()}_{_probe_seq:d}")
     env = {**os.environ, "PYTHONPYCACHEPREFIX": cache, "PYTHONDONTWRITEBYTECODE": "1"}
     try:
-        r = subprocess.run([sys.executable, "-B", "-c", code], capture_output=True, text=True,
-                           cwd=str(repo), timeout=timeout, env=env)
+        r = subprocess.run(
+            [sys.executable, "-B", "-c", code], capture_output=True, text=True, cwd=str(repo), timeout=timeout, env=env
+        )
     except subprocess.TimeoutExpired:
         return False, "PROBE-TIMEOUT"
     if r.returncode != 0:
@@ -141,16 +152,17 @@ def _probe_value(expr: str, repo: Path, timeout: int = 120) -> Tuple[bool, str]:
     return True, (r.stdout or "").strip()
 
 
-def _calibrate(tests: str, repo: Path, scratch_file: Optional[Path],
-               timeout: int) -> Dict[str, Any]:
+def _calibrate(tests: str, repo: Path, scratch_file: Path | None, timeout: int) -> dict[str, Any]:
     """Prove the detector can say RED and can say GREEN before any verdict is believed."""
-    out: Dict[str, Any] = {"ok": False, "baseline": None, "canary": None, "null_control": None}
+    out: dict[str, Any] = {"ok": False, "baseline": None, "canary": None, "null_control": None}
 
     rc, _ = _run_tests(tests, repo, timeout)
     out["baseline"] = {"returncode": rc, "green": rc == 0}
     if rc != 0:
-        out["why"] = ("baseline is RED before any mutation -- a verdict against an already "
-                      "failing target is unreadable. Fix or narrow --tests first.")
+        out["why"] = (
+            "baseline is RED before any mutation -- a verdict against an already "
+            "failing target is unreadable. Fix or narrow --tests first."
+        )
         return out
 
     # CANARY: a guaranteed failure must read as red, or the detector is blind.
@@ -159,15 +171,15 @@ def _calibrate(tests: str, repo: Path, scratch_file: Optional[Path],
         canary.write_text("def test__mutate_canary():\n    assert False\n", encoding="utf-8")
         crc, _ = _run_tests(canary.name, repo, timeout)
     finally:
-        try:
+        with contextlib.suppress(OSError):
             canary.unlink()
-        except OSError:
-            pass
     out["canary"] = {"returncode": crc, "went_red": crc != 0}
     if crc == 0:
-        out["why"] = ("CANARY NOT CAUGHT: an injected guaranteed-failure reported green, so "
-                      "the detector cannot see red. Every SURVIVED in this run would be a "
-                      "lie. Refusing to report verdicts.")
+        out["why"] = (
+            "CANARY NOT CAUGHT: an injected guaranteed-failure reported green, so "
+            "the detector cannot see red. Every SURVIVED in this run would be a "
+            "lie. Refusing to report verdicts."
+        )
         return out
 
     # NULL CONTROL: a provable no-op must stay green, or the suite is non-deterministic.
@@ -182,26 +194,28 @@ def _calibrate(tests: str, repo: Path, scratch_file: Optional[Path],
         nrc, _ = _run_tests(tests, repo, timeout)
     out["null_control"] = {"returncode": nrc, "stayed_green": nrc == 0}
     if nrc != 0:
-        out["why"] = ("NULL CONTROL WENT RED: a provable no-op reddened the target, so the "
-                      "suite is non-deterministic and every CAUGHT in this run would be a "
-                      "coin flip. Refusing to report verdicts.")
+        out["why"] = (
+            "NULL CONTROL WENT RED: a provable no-op reddened the target, so the "
+            "suite is non-deterministic and every CAUGHT in this run would be a "
+            "coin flip. Refusing to report verdicts."
+        )
         return out
 
     out["ok"] = True
     return out
 
 
-def _apply_check(src: str, anchor: str, replacement: str) -> Optional[str]:
+def _apply_check(src: str, anchor: str, replacement: str) -> str | None:
     """Return a NULL-APPLY reason, or None when the patch can legitimately land."""
     if not anchor:
         return "no anchor given -- nothing to replace"
     n = src.count(anchor)
     if n == 0:
-        return ("anchor not found in the file -- the patch would have silently no-opped "
-                "(this says NOTHING about the pins)")
+        return (
+            "anchor not found in the file -- the patch would have silently no-opped (this says NOTHING about the pins)"
+        )
     if n > 1:
-        return ("anchor is ambiguous: %d matches, so the runner cannot know which site it "
-                "mutated" % n)
+        return f"anchor is ambiguous: {n} matches, so the runner cannot know which site it mutated"
     if replacement == anchor:
         return "replacement is identical to the anchor -- the file would be unchanged"
     return None
@@ -214,8 +228,9 @@ def _mutated_line(text: str, replacement: str) -> str:
     return ""
 
 
-def run_spec(spec: Dict[str, Any], tests: Optional[str] = None,
-             repo: Optional[Path] = None, timeout: int = DEFAULT_TIMEOUT) -> Dict[str, Any]:
+def run_spec(
+    spec: dict[str, Any], tests: str | None = None, repo: Path | None = None, timeout: int = DEFAULT_TIMEOUT
+) -> dict[str, Any]:
     """Run every mutation in `spec` and return {'calibration', 'results'}.
 
     Results is EMPTY when calibration fails -- refusing is the point, because a verdict from
@@ -225,24 +240,30 @@ def run_spec(spec: Dict[str, Any], tests: Optional[str] = None,
     tests = tests or spec.get("tests")
     if not tests:
         raise ValueError("no test target: pass --tests or put 'tests' in the spec")
-    muts: List[Dict[str, Any]] = list(spec.get("mutations") or [])
+    muts: list[dict[str, Any]] = list(spec.get("mutations") or [])
 
     first = next((repo / m["file"] for m in muts if m.get("file")), None)
     cal = _calibrate(tests, repo, first, timeout)
     if not cal["ok"]:
         return {"calibration": cal, "results": []}
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     for m in muts:
         label = m.get("label") or m.get("anchor", "")[:40]
         rel = m.get("file", "")
         target = repo / rel
-        row: Dict[str, Any] = {"label": label, "file": rel, "verdict": NULL_APPLY,
-                               "detail": "", "mutated_line": "", "returncode": None,
-                               "semantic_null_ruled_out": None}
+        row: dict[str, Any] = {
+            "label": label,
+            "file": rel,
+            "verdict": NULL_APPLY,
+            "detail": "",
+            "mutated_line": "",
+            "returncode": None,
+            "semantic_null_ruled_out": None,
+        }
 
         if not target.is_file():
-            row["detail"] = "no such file: %s" % rel
+            row["detail"] = f"no such file: {rel}"
             results.append(row)
             continue
 
@@ -261,8 +282,8 @@ def run_spec(spec: Dict[str, Any], tests: Optional[str] = None,
         if probe:
             okb, probe_before = _probe_value(probe, repo)
             if not okb:
-                probe = None            # an unusable probe must not masquerade as evidence
-                row["detail"] = "probe unusable before mutation (%s); " % probe_before
+                probe = None  # an unusable probe must not masquerade as evidence
+                row["detail"] = f"probe unusable before mutation ({probe_before}); "
 
         try:
             target.write_text(src.replace(anchor, replacement, 1), encoding="utf-8", newline="")
@@ -273,16 +294,17 @@ def run_spec(spec: Dict[str, Any], tests: Optional[str] = None,
                 row["detail"] += "the file is byte-identical after the write"
                 continue
             if replacement and replacement not in after:
-                row["detail"] += ("the mutant token is NOT in the file after writing -- an "
-                                  "escaping layer ate it")
+                row["detail"] += "the mutant token is NOT in the file after writing -- an escaping layer ate it"
                 continue
             if target.suffix == ".py":
                 try:
                     ast.parse(after)
                 except SyntaxError as e:
-                    row["detail"] += ("the mutant does not parse (%s line %s) -- pytest would "
-                                      "report a COLLECTION error, which a FAILED-line parser "
-                                      "scores as survived" % (e.msg, e.lineno))
+                    row["detail"] += (
+                        f"the mutant does not parse ({e.msg} line {e.lineno}) -- pytest would "
+                        "report a COLLECTION error, which a FAILED-line parser "
+                        "scores as survived"
+                    )
                     continue
 
             row["mutated_line"] = _mutated_line(after, replacement)
@@ -292,36 +314,40 @@ def run_spec(spec: Dict[str, Any], tests: Optional[str] = None,
                 if oka and probe_after == probe_before:
                     row["verdict"] = NULL_SEMANTIC
                     row["semantic_null_ruled_out"] = False
-                    row["detail"] += ("the mutant LANDED but the declared probe did not move "
-                                      "(%s both before and after) -- it changes nothing "
-                                      "observable, so this is not evidence about any pin"
-                                      % probe_after[:80])
+                    row["detail"] += (
+                        "the mutant LANDED but the declared probe did not move "
+                        f"({probe_after[:80]} both before and after) -- it changes nothing "
+                        "observable, so this is not evidence about any pin"
+                    )
                     continue
                 row["semantic_null_ruled_out"] = bool(oka)
 
             rc, out = _run_tests(tests, repo, timeout)
-            row["returncode"] = rc                       # THE VERDICT IS THE EXIT CODE
+            row["returncode"] = rc  # THE VERDICT IS THE EXIT CODE
             if rc == 0:
                 row["verdict"] = SURVIVED
                 if row["semantic_null_ruled_out"] is None:
                     row["semantic_null_ruled_out"] = False
-                    row["detail"] += ("nothing guards this line. " + _NO_PROBE_NOTE)
+                    row["detail"] += "nothing guards this line. " + _NO_PROBE_NOTE
                 else:
-                    row["detail"] += ("nothing guards this line, and the declared probe moved, "
-                                      "so it is genuinely unguarded rather than a no-op")
+                    row["detail"] += (
+                        "nothing guards this line, and the declared probe moved, "
+                        "so it is genuinely unguarded rather than a no-op"
+                    )
             else:
                 expect = m.get("expect")
                 if not expect or expect in out:
                     row["verdict"] = CAUGHT
-                    row["detail"] += ("%s fired" % expect) if expect else "the target went red"
+                    row["detail"] += (f"{expect} fired") if expect else "the target went red"
                 else:
                     row["verdict"] = CAUGHT_BY_OTHER
-                    row["detail"] += ("the target went red but %r did not fire -- the "
-                                      "expectation or the mutation is wrong" % expect)
+                    row["detail"] += (
+                        f"the target went red but {expect!r} did not fire -- the expectation or the mutation is wrong"
+                    )
         finally:
             target.write_bytes(before)
-            if target.read_bytes() != before:            # a leaking harness is worse than none
-                raise RuntimeError("RESTORE FAILED for %s -- the tree is left mutated" % rel)
+            if target.read_bytes() != before:  # a leaking harness is worse than none
+                raise RuntimeError(f"RESTORE FAILED for {rel} -- the tree is left mutated")
             # Plain append: an identity-free `if row not in results` would compare dicts and
             # silently DROP the second of two mutations that happened to score identically.
             results.append(row)
@@ -329,37 +355,39 @@ def run_spec(spec: Dict[str, Any], tests: Optional[str] = None,
     return {"calibration": cal, "results": results}
 
 
-def render(report: Dict[str, Any]) -> str:
+def render(report: dict[str, Any]) -> str:
     cal = report["calibration"]
-    lines: List[str] = []
+    lines: list[str] = []
     if not cal["ok"]:
         lines.append("REFUSED -- the harness is not calibrated, so no verdict is trustworthy.")
         lines.append("  " + str(cal.get("why", "")))
-        for k in ("baseline", "canary", "null_control"):
-            if cal.get(k) is not None:
-                lines.append("    %-13s %s" % (k, cal[k]))
+        lines.extend(f"    {k:<13} {cal[k]}" for k in ("baseline", "canary", "null_control") if cal.get(k) is not None)
         return "\n".join(lines)
 
     lines.append("calibrated: baseline green, canary caught, null control clean")
     lines.append("")
-    lines.append("%-44s %-15s %s" % ("mutation", "verdict", "detail"))
+    lines.append(f"{'mutation':<44} {'verdict':<15} detail")
     lines.append("-" * 112)
-    counts: Dict[str, int] = {}
+    counts: dict[str, int] = {}
     for r in report["results"]:
         counts[r["verdict"]] = counts.get(r["verdict"], 0) + 1
-        lines.append("%-44s %-15s %s" % (r["label"][:44], r["verdict"], r["detail"][:60]))
+        lines.append(f"{r['label'][:44]!s:<44} {r['verdict']!s:<15} {r['detail'][:60]}")
         if r.get("mutated_line"):
-            lines.append("%-44s %-15s | %s" % ("", "", r["mutated_line"][:80]))
+            lines.append(f"{'':<44} {'':<15} | {r['mutated_line'][:80]}")
     lines.append("")
-    lines.append("  " + ", ".join("%s=%d" % kv for kv in sorted(counts.items())))
+    lines.append("  " + ", ".join(f"{k}={v:d}" for k, v in sorted(counts.items())))
     uniform = len(counts) == 1 and len(report["results"]) > 2
     if uniform:
-        lines.append("  UNIFORM VERDICT across %d mutations. That is a statement about the "
-                     "harness far more often than about the pins -- re-run one by hand before "
-                     "believing it." % len(report["results"]))
+        lines.append(
+            f"  UNIFORM VERDICT across {len(report['results'])} mutations. That is a statement about the "
+            "harness far more often than about the pins -- re-run one by hand before "
+            "believing it."
+        )
     if counts.get(SURVIVED):
-        lines.append("  SURVIVED is not 'the pin is blind' unless a probe ruled out "
-                     "NULL-SEMANTIC; check semantic_null_ruled_out per row.")
+        lines.append(
+            "  SURVIVED is not 'the pin is blind' unless a probe ruled out "
+            "NULL-SEMANTIC; check semantic_null_ruled_out per row."
+        )
     return "\n".join(lines)
 
 
@@ -373,10 +401,9 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     spec = json.loads(Path(a.spec).read_text(encoding="utf-8"))
-    if isinstance(spec, list):                       # bare list of mutations is fine
+    if isinstance(spec, list):  # bare list of mutations is fine
         spec = {"mutations": spec}
-    report = run_spec(spec, tests=a.tests, repo=Path(a.repo) if a.repo else None,
-                      timeout=a.timeout)
+    report = run_spec(spec, tests=a.tests, repo=Path(a.repo) if a.repo else None, timeout=a.timeout)
     print(json.dumps(report, indent=2) if a.json else render(report))
     if not report["calibration"]["ok"]:
         return 2

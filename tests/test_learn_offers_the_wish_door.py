@@ -42,6 +42,7 @@ control, but both sides are still pinned: tests below cover the FALSE-NEGATIVE s
 tool complaint that must fire) and the FALSE-POSITIVE side (a lesson that merely mentions a
 command and must stay silent), because an unpinned widening is unfalsifiable.
 """
+
 import json
 import os
 import subprocess
@@ -56,8 +57,7 @@ REPO = Path(__file__).resolve().parent.parent
 # ------------------------------------------------------------------ gate A: category
 def test_a_correction_lesson_is_wish_shaped():
     """Gate A. 8% of the corpus, and the half that covers sol/codex/codex_root."""
-    got = wish_candidate(category="correction", result="the door never told us",
-                         experiment="some_lesson")
+    got = wish_candidate(category="correction", result="the door never told us", experiment="some_lesson")
     assert got, "a correction lesson produced no wish candidate"
     assert got.get("why") == "correction", got
 
@@ -72,17 +72,21 @@ def test_a_tool_defect_outside_the_correction_category_still_fires():
         category="uncategorized",
         tried="ran py agent_cli.py bifrost-sync --consume to clear the backlog",
         result="it printed (no messages consumed) while its own peek said 60+ unread, so the "
-               "remedy silently cleared nothing and neither surface said so",
-        experiment="consume_clears_nothing")
-    assert got, ("a plain tool complaint produced no candidate -- with a category-only gate "
-                 "this feature is dead for deepseek (0/174) and kimi (0/106)")
+        "remedy silently cleared nothing and neither surface said so",
+        experiment="consume_clears_nothing",
+    )
+    assert got, (
+        "a plain tool complaint produced no candidate -- with a category-only gate "
+        "this feature is dead for deepseek (0/174) and kimi (0/106)"
+    )
     assert got.get("why") == "names-a-defect-in-a-tool", got
 
 
 def test_an_empty_category_does_not_block_the_content_gate():
     """Lessons arrive with no category at all; 826 of 1,560 are 'uncategorized'."""
-    got = wish_candidate(category="", result="the verb cannot be reached from a seat and the "
-                                             "flag is silently ignored", experiment="x")
+    got = wish_candidate(
+        category="", result="the verb cannot be reached from a seat and the flag is silently ignored", experiment="x"
+    )
     assert got, "the content gate must not require a category to be present"
 
 
@@ -90,28 +94,32 @@ def test_an_empty_category_does_not_block_the_content_gate():
 def test_an_ordinary_lesson_stays_silent():
     """A hint that fires on everything is wallpaper, and the precedent's own comment says so:
     'high-signal, no nag'."""
-    got = wish_candidate(category="architecture",
-                         tried="sharded the index by agent",
-                         result="lookups got faster and the shards stayed balanced",
-                         experiment="shard_by_agent")
-    assert not got, "fired on a lesson with no tool complaint at all: %r" % (got,)
+    got = wish_candidate(
+        category="architecture",
+        tried="sharded the index by agent",
+        result="lookups got faster and the shards stayed balanced",
+        experiment="shard_by_agent",
+    )
+    assert not got, f"fired on a lesson with no tool complaint at all: {got!r}"
 
 
 def test_merely_naming_a_command_is_not_a_complaint():
     """THE FALSE-POSITIVE PIN. Nearly every lesson in this corpus names a command somewhere.
     Naming one is not conceding it -- without this the gate degenerates to 'always'."""
-    got = wish_candidate(category="method",
-                         tried="used py agent_cli.py recall-bench to score the eval set",
-                         result="the bench reported 22% recall@1 and the ceiling block worked "
-                                "exactly as designed",
-                         experiment="bench_scored_fine")
-    assert not got, "fired on a lesson that merely USES a tool successfully: %r" % (got,)
+    got = wish_candidate(
+        category="method",
+        tried="used py agent_cli.py recall-bench to score the eval set",
+        result="the bench reported 22% recall@1 and the ceiling block worked exactly as designed",
+        experiment="bench_scored_fine",
+    )
+    assert not got, f"fired on a lesson that merely USES a tool successfully: {got!r}"
 
 
 # ------------------------------------------------------------------ the draft
 def test_the_draft_carries_the_lesson_slug_so_the_wish_is_traceable():
-    got = wish_candidate(category="correction", result="the door silently lost the row",
-                         experiment="the_door_silently_lost_the_row")
+    got = wish_candidate(
+        category="correction", result="the door silently lost the row", experiment="the_door_silently_lost_the_row"
+    )
     assert "the_door_silently_lost_the_row" in got.get("body", ""), got.get("body")
 
 
@@ -130,20 +138,25 @@ def test_the_draft_carries_the_lessons_own_words_not_a_template():
         result="SIX-OF-FORTY vanished while every process printed filed and exited 0",
         recommendation="LOCK-THE-DOOR before the read",
         root_cause="UNLOCKED-RMW on a shared file",
-        experiment="wish_door_loses_wishes")
+        experiment="wish_door_loses_wishes",
+    )
     body = got.get("body", "")
-    for sentinel, field in (("RAN-THE-DOOR", "tried"), ("SIX-OF-FORTY", "result"),
-                            ("LOCK-THE-DOOR", "recommendation"), ("UNLOCKED-RMW", "root_cause")):
-        assert sentinel in body, "the draft dropped the lesson's %s field:\n%s" % (field, body)
+    for sentinel, field in (
+        ("RAN-THE-DOOR", "tried"),
+        ("SIX-OF-FORTY", "result"),
+        ("LOCK-THE-DOOR", "recommendation"),
+        ("UNLOCKED-RMW", "root_cause"),
+    ):
+        assert sentinel in body, f"the draft dropped the lesson's {field} field:\n{body}"
     assert "describe" not in body.lower(), "the draft is asking the seat to write it: " + body
 
 
 def test_nothing_in_the_draft_needs_shell_escaping():
     """W213: prose through the shell is a standing defect in this house, and the whole reason
     the hint hands back --text-file. A draft that must be pasted inline re-opens it."""
-    body = wish_candidate(category="correction",
-                          result="backticks ` and $(subshells) and 'quotes' in the prose",
-                          experiment="e").get("body", "")
+    body = wish_candidate(
+        category="correction", result="backticks ` and $(subshells) and 'quotes' in the prose", experiment="e"
+    ).get("body", "")
     assert body, "no draft produced"
     # the CONTRACT is that the body goes to a FILE; the hint must never hand back inline prose
     got = wish_candidate(category="correction", result="x", experiment="e")
@@ -163,18 +176,24 @@ def test_the_headline_names_the_friction_not_the_advice():
         result="it reported six of six surviving and every one was wrong",
         recommendation="Use when building any harness that judges a test run",
         root_cause="the detector matched output text instead of reading the exit code",
-        experiment="e").get("body", "")
+        experiment="e",
+    ).get("body", "")
     first = body.splitlines()[0]
-    assert not first.lower().startswith("use when"), \
+    assert not first.lower().startswith("use when"), (
         "the wish opens with trigger-format advice instead of the friction: " + first
+    )
     assert "exit code" in first, "the headline should name the cause: " + first
 
 
 def test_missing_fields_never_throw():
     """This runs inside cmd_learn AFTER the lesson is already recorded. It must never be able
     to turn a successful capture into a traceback."""
-    for kwargs in ({}, {"category": None}, {"result": None, "tried": None},
-                   {"category": "correction", "experiment": None}):
+    for kwargs in (
+        {},
+        {"category": None},
+        {"result": None, "tried": None},
+        {"category": "correction", "experiment": None},
+    ):
         wish_candidate(**kwargs)
 
 
@@ -189,30 +208,43 @@ def test_cmd_learn_reaches_for_the_helper():
     runtime. The end-to-end pin caught that; this one did not, and a pin whose whole job is
     naming the missing piece must not be the loose one. Word-boundary, and both halves."""
     import re as _re
+
     src = (REPO / "agent_cli.py").read_text(encoding="utf-8")
     start = src.index("def cmd_learn(")
-    body = src[start:src.index("\ndef ", start + 1)]
-    assert _re.search(r"import\s+wish_candidate\b", body), \
-        "cmd_learn does not import wish_candidate by that name"
-    assert _re.search(r"\bwish_candidate\s*\(", body), \
-        "cmd_learn imports wish_candidate but never calls it"
+    body = src[start : src.index("\ndef ", start + 1)]
+    assert _re.search(r"import\s+wish_candidate\b", body), "cmd_learn does not import wish_candidate by that name"
+    assert _re.search(r"\bwish_candidate\s*\(", body), "cmd_learn imports wish_candidate but never calls it"
 
 
 def test_a_real_learn_prints_the_wish_hint_end_to_end(tmp_path):
     """The pins above measure the decision; this measures the DOOR. Safe to run live because
     conftest's isolate_canonical redirects AI_SETUP and REDIS_DB=15 through os.environ, which
     a subprocess inherits -- so this writes to the test db, never the real corpus."""
-    assert os.environ.get("_AISETUP_TEST_ISOLATED") == "1", \
+    assert os.environ.get("_AISETUP_TEST_ISOLATED") == "1", (
         "refusing to run a live `learn` without conftest isolation -- it would pollute the corpus"
+    )
     r = subprocess.run(
-        [sys.executable, "agent_cli.py", "learn", "t-seat",
-         "--experiment", "pin_w237_end_to_end",
-         "--category", "correction",
-         "--tried", "called the door",
-         "--result", "the door silently dropped the row and exited 0",
-         "--success", "yes"],
-        capture_output=True, text=True, cwd=str(REPO),
-        env={**os.environ, "PYTHONUTF8": "1"})
+        [
+            sys.executable,
+            "agent_cli.py",
+            "learn",
+            "t-seat",
+            "--experiment",
+            "pin_w237_end_to_end",
+            "--category",
+            "correction",
+            "--tried",
+            "called the door",
+            "--result",
+            "the door silently dropped the row and exited 0",
+            "--success",
+            "yes",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+        env={**os.environ, "PYTHONUTF8": "1"},
+    )
     assert r.returncode == 0, r.stdout + r.stderr
     out = r.stdout
     assert "wish" in out.lower(), "learn recorded but never offered the wish door:\n" + out
@@ -222,11 +254,26 @@ def test_a_real_learn_prints_the_wish_hint_end_to_end(tmp_path):
 def test_the_hint_is_silent_under_json():
     """--json is a machine contract; the precedent hint honours it and so must this."""
     r = subprocess.run(
-        [sys.executable, "agent_cli.py", "learn", "t-seat",
-         "--experiment", "pin_w237_json", "--category", "correction",
-         "--result", "the door silently dropped the row", "--success", "yes", "--json"],
-        capture_output=True, text=True, cwd=str(REPO),
-        env={**os.environ, "PYTHONUTF8": "1"})
+        [
+            sys.executable,
+            "agent_cli.py",
+            "learn",
+            "t-seat",
+            "--experiment",
+            "pin_w237_json",
+            "--category",
+            "correction",
+            "--result",
+            "the door silently dropped the row",
+            "--success",
+            "yes",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+        env={**os.environ, "PYTHONUTF8": "1"},
+    )
     assert r.returncode == 0, r.stdout + r.stderr
-    json.loads(r.stdout.strip().splitlines()[-1])    # must still be parseable
+    json.loads(r.stdout.strip().splitlines()[-1])  # must still be parseable
     assert "[wish]" not in r.stdout, "the hint leaked into --json output:\n" + r.stdout

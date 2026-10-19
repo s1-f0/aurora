@@ -8,17 +8,36 @@
 
 Further verbs register themselves in VERBS as their modules land (dissect, census, render, check, lab...).
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Callable, Dict, List
+from typing import TYPE_CHECKING
 
 from . import corpus as C
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 HERE = Path(__file__).resolve().parent
+
+
+def pyl() -> str:
+    """How to invoke Aurora's Python here, for commands we print: core.paths.python_launcher() (`uv run` in a checkout
+    with uv, `py` on Windows without it, `python3` elsewhere)."""
+    try:
+        from core.paths import python_launcher
+    except ImportError:  # run from outside the repo: the Windows home line's launcher
+        return "py"
+    return python_launcher()
+
+
+def door(args: str) -> str:
+    """The shader door as a command to print: `<launcher> -m arsenal shader <args>`."""
+    return f"{pyl()} -m arsenal shader {args}"
 
 
 def _print(obj, as_json: bool, human: Callable[[object], str]) -> None:
@@ -38,8 +57,11 @@ def read_clipboard_text() -> str:
     WHY A CLIPBOARD DOOR. Brave asks where to save every download, and a second download from one page waits on a
     permission prompt, so a harvest that runs while Daniel sleeps cannot leave the browser as a file. A real Ctrl+C
     on a selected textarea (harvest.js stage(), then the browser tool's key press) can, and this reads it back."""
+    if sys.platform != "win32":
+        raise OSError("--clipboard reads the Windows clipboard; on this OS save the bundle to a file and give its path")
     import ctypes
     from ctypes import wintypes
+
     user32, kernel32 = ctypes.WinDLL("user32"), ctypes.WinDLL("kernel32")
     user32.GetClipboardData.restype = wintypes.HANDLE
     kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
@@ -75,10 +97,15 @@ def cmd_ingest(ns) -> int:
         print("give a bundle path, or --clipboard", file=sys.stderr)
         return 2
     report = C.ingest_bundle(Path(ns.bundle))
-    _print(report, ns.json, lambda r: (
-        f"ingested {r['shaders_written']} shaders into {r['corpus']}\n"
-        f"  new set members: {r['sets_new']}  media written: {r['media_written']}\n"
-        f"  bundle kept as harvests/{r['sha256'][:16]}....json"))
+    _print(
+        report,
+        ns.json,
+        lambda r: (
+            f"ingested {r['shaders_written']} shaders into {r['corpus']}\n"
+            f"  new set members: {r['sets_new']}  media written: {r['media_written']}\n"
+            f"  bundle kept as harvests/{r['sha256'][:16]}....json"
+        ),
+    )
     return 0
 
 
@@ -97,18 +124,24 @@ def cmd_list(ns) -> int:
             rows.append(C.load_meta(sid))
         except FileNotFoundError:
             rows.append({"id": sid, "missing": True})
+
     def human(rs):
-        out = [f"{len(rs)} shaders" + (f" in set {ns.set!r}" if ns.set else "") + "   (passes: I image, B buffer, c common, S sound, C cube)"]
+        out = [
+            f"{len(rs)} shaders"
+            + (f" in set {ns.set!r}" if ns.set else "")
+            + "   (passes: I image, B buffer, c common, S sound, C cube)"
+        ]
         out += [(f"{r['id']}  (not saved yet)" if r.get("missing") else _row(r)) for r in rs]
         return "\n".join(out)
-    _print(rows if ns.json else rows, ns.json, human)
+
+    _print(rows, ns.json, human)
     return 0
 
 
 def cmd_show(ns) -> int:
     hits = C.resolve(ns.query)
     if not hits:
-        print(f"no shader matches {ns.query!r}; try: py -m arsenal shader list", file=sys.stderr)
+        print(f"no shader matches {ns.query!r}; try: {door('list')}", file=sys.stderr)
         return 2
     sets = C.load_sets()
     metas = []
@@ -117,41 +150,54 @@ def cmd_show(ns) -> int:
         m["sets"] = {k: v.index(sid) + 1 for k, v in sets.items() if not k.startswith("_") and sid in v}
         m["dir"] = str(C.CORPUS / "shaders" / sid)
         metas.append(m)
+
     def human(ms):
         out = []
         for m in ms:
             out.append(f"{m['name']} by {m['author']}  ({m['id']}, {m['url']})")
-            out.append(f"  licence: {m['license']['license']}" + (f"  \"{m['license']['line']}\"" if m['license']['line'] else ""))
+            out.append(
+                f"  licence: {m['license']['license']}"
+                + (f'  "{m["license"]["line"]}"' if m["license"]["line"] else "")
+            )
             out.append(f"  likes {m['likes']}  views {m['views']}  sets {m['sets']}  tags {', '.join(m['tags'][:8])}")
             for p in m["passes"]:
-                ins = ", ".join(f"ch{i['channel']}={i['type']}" + (f":{Path(i['src']).name[:12]}" if i['src'] else "")
-                                for i in p["inputs"])
+                ins = ", ".join(
+                    f"ch{i['channel']}={i['type']}" + (f":{Path(i['src']).name[:12]}" if i["src"] else "")
+                    for i in p["inputs"]
+                )
                 out.append(f"  - {p['name']:<9} {p['type']:<8} {p['lines']:>4} lines  {p['file']:<14} {ins}")
             out.append(f"  files: {m['dir']}")
         return "\n".join(out)
+
     _print(metas, ns.json, human)
     return 0
 
 
 def cmd_missing(ns) -> int:
     res = {"ids": C.missing_ids(), "media": C.missing_media()}
-    _print(res, ns.json, lambda r: (
-        "ids named by a set but not saved: " + json.dumps(r["ids"]) + "\n"
-        f"media sampled but not saved ({len(r['media'])}):\n  " + "\n  ".join(r["media"])))
+    _print(
+        res,
+        ns.json,
+        lambda r: (
+            "ids named by a set but not saved: " + json.dumps(r["ids"]) + "\n"
+            f"media sampled but not saved ({len(r['media'])}):\n  " + "\n  ".join(r["media"])
+        ),
+    )
     return 0
 
 
 MEDIA_BUNDLE = "shadertoy-media.json"
 
 
-def media_snippet(paths: List[str], bundle_name: str = MEDIA_BUNDLE) -> str:
+def media_snippet(paths: list[str], bundle_name: str = MEDIA_BUNDLE) -> str:
     """A console snippet for a signed-in shadertoy.com tab: the harvest helper, then one paced run that fetches every
     path and saves ONE bundle file (Brave asks where to save; that click is the only human step). The paths are
     shadertoy's own content-hash names, so the snippet carries nothing private."""
     helper = (HERE / "harvest.js").read_text(encoding="utf-8")
-    return (helper.rstrip() + "\n" +
-            f"__st.run('media', async () => {{ const m = await __st.media({json.dumps(paths)}); "
-            f"__st.download({json.dumps(bundle_name)}, {{ media: m }}); return Object.keys(m).length; }});\n")
+    return (
+        helper.rstrip() + "\n" + f"__st.run('media', async () => {{ const m = await __st.media({json.dumps(paths)}); "
+        f"__st.download({json.dumps(bundle_name)}, {{ media: m }}); return Object.keys(m).length; }});\n"
+    )
 
 
 def cmd_harvest_js(ns) -> int:
@@ -165,19 +211,22 @@ def cmd_harvest_js(ns) -> int:
     if ns.json:
         _print({"paths": paths, "snippet": media_snippet(paths)}, True, str)
         return 0
-    print(f"// {len(paths)} media to fetch. Paste into the DevTools console of a signed-in shadertoy.com tab (type"
-          f" 'allow pasting' first if Brave asks), save the file it offers, then:\n"
-          f"//   py -m arsenal shader ingest <the saved {MEDIA_BUNDLE}>")
+    print(
+        f"// {len(paths)} media to fetch. Paste into the DevTools console of a signed-in shadertoy.com tab (type"
+        f" 'allow pasting' first if Brave asks), save the file it offers, then:\n"
+        f"//   py -m arsenal shader ingest <the saved {MEDIA_BUNDLE}>"
+    )
     print(media_snippet(paths))
     return 0
 
 
-VERBS: Dict[str, Callable] = {}
+VERBS: dict[str, Callable] = {}
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="py -m arsenal shader", description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        prog=f"{pyl()} -m arsenal shader", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = ap.add_subparsers(dest="verb", required=True)
     p = sub.add_parser("ingest", help="save a browser harvest bundle into the private corpus")
     p.add_argument("bundle", nargs="?")
@@ -192,11 +241,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_show)
     p = sub.add_parser("missing", help="ids and media the corpus still lacks")
     p.set_defaults(fn=cmd_missing)
-    p = sub.add_parser("harvest-js", help="path of the browser harvest helper, or (--media) a ready-to-paste snippet "
-                                          "that fetches every texture the corpus still lacks into one bundle file")
+    p = sub.add_parser(
+        "harvest-js",
+        help="path of the browser harvest helper, or (--media) a ready-to-paste snippet "
+        "that fetches every texture the corpus still lacks into one bundle file",
+    )
     p.add_argument("--media", action="store_true")
     p.set_defaults(fn=cmd_harvest_js)
-    for name, register in VERBS.items():
+    for register in VERBS.values():
         register(sub)
     for action in sub.choices.values():
         action.add_argument("--json", action="store_true", help="machine-readable output")
@@ -206,8 +258,20 @@ def build_parser() -> argparse.ArgumentParser:
 def _load_extensions() -> None:
     """Modules that add verbs call cli.VERBS[name] = register(sub). Missing modules are simply absent verbs."""
     import importlib
-    for mod in ("modules", "dissect", "census", "render", "lab", "school", "licence_line", "atlas", "shelf", "cards",
-                "explain"):
+
+    for mod in (
+        "modules",
+        "dissect",
+        "census",
+        "render",
+        "lab",
+        "school",
+        "licence_line",
+        "atlas",
+        "shelf",
+        "cards",
+        "explain",
+    ):
         try:
             importlib.import_module(f"arsenal.shaders.{mod}")
         except ModuleNotFoundError as exc:
@@ -215,7 +279,7 @@ def _load_extensions() -> None:
                 raise
 
 
-def main(argv: List[str] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     _load_extensions()
     ns = build_parser().parse_args(argv)
     return ns.fn(ns) or 0

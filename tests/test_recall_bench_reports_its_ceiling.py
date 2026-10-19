@@ -39,14 +39,13 @@ have arrived". An abstain moment has no right answer to reach, and an UNRESOLVED
 established one, so folding either into the denominator would make the ceiling move when the
 abstain count changes, which is incoherent.
 """
+
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.recall import bench  # noqa: E402
+from core.recall import bench
 
 UNCHECKABLE = getattr(bench, "UNCHECKABLE", "UNCHECKABLE")
 
@@ -55,10 +54,12 @@ UNCHECKABLE = getattr(bench, "UNCHECKABLE", "UNCHECKABLE")
 def _fake_recall(reachable):
     """A stand-in retriever. `reachable` maps a trigger key -> the ordered sources it returns at
     unlimited depth. Nothing here touches Redis or the live corpus."""
+
     def fn(*, path=None, command=None, limit=5, **kw):
         key = path or command or ""
         got = list(reachable.get(key, []))
         return {"lessons": [{"source": s, "text": "x"} for s in got[:limit]], "verbs": []}
+
     return fn
 
 
@@ -107,8 +108,8 @@ def test_the_ceiling_is_independent_of_the_reporting_k():
     ceiling is still 2 of 3."""
     for k in (1, 3, 5, 10):
         c = _score(k=k)["ceiling"]
-        assert c["reachable"] == 2 and c["scored"] == 3, \
-            f"the ceiling moved with k={k}, so it is measuring the gate it should bound"
+        assert c["reachable"] == 2, f"the ceiling moved with k={k}, so it is measuring the gate it should bound"
+        assert c["scored"] == 3, f"the ceiling moved with k={k}, so it is measuring the gate it should bound"
 
 
 # ---------------------------------------------------------------- P4-P6: the decomposition
@@ -119,8 +120,9 @@ def test_the_loss_is_split_into_ranking_and_matching():
     assert s["delivered"] == 1, "delivered = the right answer inside the reported k"
     assert s["rankable"] == 1, "rankable = retrieved, ranked below k -- recoverable by re-ranking"
     assert s["unmatchable"] == 1, "unmatchable = never retrieved -- no gate or re-rank can help"
-    assert s["delivered"] + s["rankable"] + s["unmatchable"] == s["scored"], \
+    assert s["delivered"] + s["rankable"] + s["unmatchable"] == s["scored"], (
         "the three buckets must partition the scored positives exactly"
+    )
 
 
 def test_the_unmatchable_moments_are_NAMED_not_merely_counted():
@@ -138,7 +140,8 @@ def test_an_abstain_or_unresolved_moment_is_outside_the_ceiling():
     d = _score()
     s = d["ceiling"]
     assert s["scored"] == 3, "an abstain or an excluded moment leaked into the ceiling"
-    assert "T4" not in s["unmatchable_ids"] and "T5" not in s["unmatchable_ids"]
+    assert "T4" not in s["unmatchable_ids"]
+    assert "T5" not in s["unmatchable_ids"]
 
 
 # ---------------------------------------------------------------- P7-P9: honesty at the edges
@@ -146,10 +149,11 @@ def test_a_ceiling_that_cannot_be_measured_says_so_rather_than_reading_zero():
     """ZERO IS NOT NO, the house rule this whole slice turns on. With no scored positives at all
     there is nothing to bound, and a rate of 0.0 would read as 'nothing is reachable' -- the most
     alarming possible reading of an empty set."""
-    d = bench.score([MOMENTS[3]], _fake_recall(REACHABLE), k=5)   # one abstain, no positives
+    d = bench.score([MOMENTS[3]], _fake_recall(REACHABLE), k=5)  # one abstain, no positives
     assert d["ceiling"]["scored"] == 0
-    assert d["ceiling"]["rate"] in (None, UNCHECKABLE), \
+    assert d["ceiling"]["rate"] in (None, UNCHECKABLE), (
         f"an unmeasurable ceiling rendered as {d['ceiling']['rate']!r} instead of saying so"
+    )
 
 
 def test_the_depth_the_ceiling_was_probed_at_is_declared():
@@ -158,8 +162,8 @@ def test_the_depth_the_ceiling_was_probed_at_is_declared():
     'unmatchable' silently means 'not in the first N'."""
     d = _score()
     probe = d["ceiling"].get("probe_depth")
-    assert isinstance(probe, int) and probe >= 50, \
-        "the probe depth must be declared and deep enough to be worth calling a ceiling"
+    assert isinstance(probe, int), "the probe depth must be declared and deep enough to be worth calling a ceiling"
+    assert probe >= 50, "the probe depth must be declared and deep enough to be worth calling a ceiling"
 
 
 def test_recall_never_exceeds_the_ceiling_it_reports():
@@ -169,8 +173,7 @@ def test_recall_never_exceeds_the_ceiling_it_reports():
         d = _score(k=k)
         r = d["recall_at_k"]
         if r is not None and d["ceiling"]["rate"] not in (None, UNCHECKABLE):
-            assert r <= d["ceiling"]["rate"] + 1e-9, \
-                f"recall@{k}={r} exceeded its own ceiling {d['ceiling']['rate']}"
+            assert r <= d["ceiling"]["rate"] + 1e-9, f"recall@{k}={r} exceeded its own ceiling {d['ceiling']['rate']}"
 
 
 def test_the_rendered_report_shows_the_ceiling_beside_the_number():

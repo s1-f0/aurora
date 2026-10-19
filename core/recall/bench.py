@@ -33,19 +33,28 @@ from that would really be measuring recall@3 under another name, and a number wi
 is worse than no number because it gets compared to other people's precision. It becomes checkable
 when moments carry a labelled relevant-set, which is a job for whoever writes the remaining 36.
 """
+
 from __future__ import annotations
 
 import json
 import os
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 UNCHECKABLE = "UNCHECKABLE"
 SCHEMA = "recall_eval.v1"
 
 
-def load(path: Optional[str] = None) -> Dict[str, Any]:
-    p = path or os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)))), "tests", "fixtures", "recall_eval", "moments.json")
+def load(path: str | None = None) -> dict[str, Any]:
+    p = path or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "tests",
+        "fixtures",
+        "recall_eval",
+        "moments.json",
+    )
     with open(p, encoding="utf-8") as f:
         d = json.load(f)
     if d.get("schema") != SCHEMA:
@@ -59,9 +68,14 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
 PROBE_DEPTH = 200
 
 
-def score(moments: Sequence[Dict[str, Any]], recall_fn: Callable[..., Dict[str, Any]],
-          *, k: int = 5, probe_fn: Optional[Callable[..., Dict[str, Any]]] = None,
-          probe_depth: int = PROBE_DEPTH) -> Dict[str, Any]:
+def score(
+    moments: Sequence[dict[str, Any]],
+    recall_fn: Callable[..., dict[str, Any]],
+    *,
+    k: int = 5,
+    probe_fn: Callable[..., dict[str, Any]] | None = None,
+    probe_depth: int = PROBE_DEPTH,
+) -> dict[str, Any]:
     """Drive the real trigger for each moment and grade what came back.
 
     THE CEILING (W0.3-f2). recall@k alone is unreadable, and its author misread it. On the
@@ -78,12 +92,12 @@ def score(moments: Sequence[Dict[str, Any]], recall_fn: Callable[..., Dict[str, 
     """
     hits_at_1 = hits_at_k = scored = 0
     abstain_total = abstain_ok = 0
-    excluded: List[str] = []
-    delivered: List[str] = []
-    rankable: List[str] = []
-    contend: Dict[Any, List[Any]] = {}
-    unmatchable: List[str] = []
-    rows: List[Dict[str, Any]] = []
+    excluded: list[str] = []
+    delivered: list[str] = []
+    rankable: list[str] = []
+    contend: dict[Any, list[Any]] = {}
+    unmatchable: list[str] = []
+    rows: list[dict[str, Any]] = []
     chrome_chars = body_chars = 0
 
     for m in moments:
@@ -101,16 +115,14 @@ def score(moments: Sequence[Dict[str, Any]], recall_fn: Callable[..., Dict[str, 
 
         if expect == "UNRESOLVED":
             excluded.append(mid)
-            rows.append({"id": mid, "verdict": "EXCLUDED", "why": "ground truth unresolved",
-                         "got": got[:k]})
+            rows.append({"id": mid, "verdict": "EXCLUDED", "why": "ground truth unresolved", "got": got[:k]})
             continue
 
         if expect == "ABSTAIN":
             abstain_total += 1
-            ok = not got                      # silence is the right answer; anything is a false hit
+            ok = not got  # silence is the right answer; anything is a false hit
             abstain_ok += 1 if ok else 0
-            rows.append({"id": mid, "verdict": "ABSTAIN-OK" if ok else "SPOKE-WHEN-SILENT",
-                         "got": got[:k]})
+            rows.append({"id": mid, "verdict": "ABSTAIN-OK" if ok else "SPOKE-WHEN-SILENT", "got": got[:k]})
             continue
 
         accept = {expect, *(m.get("also_acceptable") or [])}
@@ -124,8 +136,14 @@ def score(moments: Sequence[Dict[str, Any]], recall_fn: Callable[..., Dict[str, 
         atk = any(g in accept for g in got[:k])
         hits_at_1 += 1 if at1 else 0
         hits_at_k += 1 if atk else 0
-        rows.append({"id": mid, "verdict": "HIT@1" if at1 else ("HIT%s" % f"@{k}" if atk else "MISS"),
-                     "expected": expect, "got": got[:k]})
+        rows.append(
+            {
+                "id": mid,
+                "verdict": "HIT@1" if at1 else (f"HIT@{k}" if atk else "MISS"),
+                "expected": expect,
+                "got": got[:k],
+            }
+        )
 
         # --- the ceiling probe. Was the right answer reachable AT ALL, gate and k aside?
         if atk:
@@ -133,10 +151,9 @@ def score(moments: Sequence[Dict[str, Any]], recall_fn: Callable[..., Dict[str, 
         else:
             pf = probe_fn or recall_fn
             try:
-                deep = pf(path=trig.get("path"), command=trig.get("command"),
-                          limit=probe_depth) or {}
+                deep = pf(path=trig.get("path"), command=trig.get("command"), limit=probe_depth) or {}
                 deep_got = [str(x.get("source") or "") for x in (deep.get("lessons") or [])]
-            except Exception:                                             # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 deep_got = []
             (rankable if any(g in accept for g in deep_got) else unmatchable).append(mid)
 
@@ -148,11 +165,16 @@ def score(moments: Sequence[Dict[str, Any]], recall_fn: Callable[..., Dict[str, 
         "recall_at_k": (hits_at_k / scored) if scored else None,
         # Named rather than invented -- see the module docstring.
         "precision_at_3": UNCHECKABLE,
-        "precision_why": ("the set carries one labelled right answer per moment, not a labelled "
-                          "relevant-set, so any 'precision' computed here would be recall@3 under "
-                          "another name"),
-        "abstention": {"total": abstain_total, "correct": abstain_ok,
-                       "rate": (abstain_ok / abstain_total) if abstain_total else None},
+        "precision_why": (
+            "the set carries one labelled right answer per moment, not a labelled "
+            "relevant-set, so any 'precision' computed here would be recall@3 under "
+            "another name"
+        ),
+        "abstention": {
+            "total": abstain_total,
+            "correct": abstain_ok,
+            "rate": (abstain_ok / abstain_total) if abstain_total else None,
+        },
         "excluded": excluded,
         # W0.3-f2: recall@k is unreadable without the quantity that bounds it.
         "ceiling": {
@@ -174,7 +196,7 @@ def score(moments: Sequence[Dict[str, Any]], recall_fn: Callable[..., Dict[str, 
     }
 
 
-def _ambiguity(contend: Dict[Any, List[Any]], scored: int) -> Dict[str, Any]:
+def _ambiguity(contend: dict[Any, list[Any]], scored: int) -> dict[str, Any]:
     """The cap trigger ambiguity places on recall@1, and WHICH moments it cannot tell apart.
 
     Within one trigger group the moments that can possibly hit at rank 1 are those sharing the
@@ -186,19 +208,22 @@ def _ambiguity(contend: Dict[Any, List[Any]], scored: int) -> Dict[str, Any]:
     situations produce a byte-identical trigger, the trigger does not identify the moment.
     """
     best = 0
-    contended: List[Dict[str, Any]] = []
+    contended: list[dict[str, Any]] = []
     for key, rows in contend.items():
-        counts: Dict[str, int] = {}
+        counts: dict[str, int] = {}
         for _mid, exp in rows:
             counts[exp] = counts.get(exp, 0) + 1
         best += max(counts.values()) if counts else 0
-        if len(counts) > 1:                     # same trigger, genuinely different right answers
-            contended.append({
-                "path": key[0], "command": key[1],
-                "ids": [mid for mid, _ in rows],
-                "distinct_answers": len(counts),
-                "best_possible": max(counts.values()),
-            })
+        if len(counts) > 1:  # same trigger, genuinely different right answers
+            contended.append(
+                {
+                    "path": key[0],
+                    "command": key[1],
+                    "ids": [mid for mid, _ in rows],
+                    "distinct_answers": len(counts),
+                    "best_possible": max(counts.values()),
+                }
+            )
     return {
         "scored": scored,
         "distinct_triggers": len(contend),
@@ -209,16 +234,19 @@ def _ambiguity(contend: Dict[Any, List[Any]], scored: int) -> Dict[str, Any]:
     }
 
 
-def render(d: Dict[str, Any], meta: Dict[str, Any]) -> str:
+def render(d: dict[str, Any], meta: dict[str, Any]) -> str:
     def pct(v):
         return f"{v:.0%}" if isinstance(v, float) else "UNKNOWN (nothing scored)"
+
     out = [
         f"recall-bench   set: {meta.get('seeded')}/{meta.get('target')} moments seeded",
         "",
         f"  RECALL@1          {pct(d['recall_at_1'])}   ({d['scored']} scored)",
         f"  RECALL@{d['k']}          {pct(d['recall_at_k'])}",
-        f"  ABSTENTION        {d['abstention']['correct']}/{d['abstention']['total']} "
-        f"({pct(d['abstention']['rate'])})   silence when silence was right",
+        (
+            f"  ABSTENTION        {d['abstention']['correct']}/{d['abstention']['total']} "
+            f"({pct(d['abstention']['rate'])})   silence when silence was right"
+        ),
         f"  CHROME SHARE      {pct(d['chrome_share'])}   of pushed characters that are not a lesson",
         f"  PRECISION@3       {UNCHECKABLE}",
         f"                      {d['precision_why']}",
@@ -227,37 +255,51 @@ def render(d: Dict[str, Any], meta: Dict[str, Any]) -> str:
     if c:
         out += [
             "",
-            f"  CEILING           {pct(c.get('rate'))}   "
-            f"({c.get('reachable')}/{c.get('scored')} scored positives whose right answer is "
-            f"reachable at all, probed to depth {c.get('probe_depth')})",
+            (
+                f"  CEILING           {pct(c.get('rate'))}   "
+                f"({c.get('reachable')}/{c.get('scored')} scored positives whose right answer is "
+                f"reachable at all, probed to depth {c.get('probe_depth')})"
+            ),
             f"    DELIVERED       {c.get('delivered')}   inside the reported k -- what recall@k counts",
-            f"    RANKABLE        {c.get('rankable')}   retrieved but ranked below k. A RANKING "
-            f"problem, recoverable without touching the matcher.",
-            f"    UNMATCHABLE     {c.get('unmatchable')}   never retrieved at this depth. A MATCHING "
-            f"problem; no gate, floor or re-rank can reach these.",
+            (
+                f"    RANKABLE        {c.get('rankable')}   retrieved but ranked below k. A RANKING "
+                f"problem, recoverable without touching the matcher."
+            ),
+            (
+                f"    UNMATCHABLE     {c.get('unmatchable')}   never retrieved at this depth. A MATCHING "
+                f"problem; no gate, floor or re-rank can reach these."
+            ),
         ]
         if c.get("unmatchable_ids"):
-            out.append(f"      unmatchable: {', '.join(c['unmatchable_ids'])}   "
-                       f"<- these lessons want their TRIGGERS rewritten, not the gate retuned")
+            out.append(
+                f"      unmatchable: {', '.join(c['unmatchable_ids'])}   "
+                f"<- these lessons want their TRIGGERS rewritten, not the gate retuned"
+            )
         if c.get("rankable_ids"):
-            out.append(f"      rankable:    {', '.join(c['rankable_ids'])}   "
-                       f"<- the right answer is already in the list, below the fold")
+            out.append(
+                f"      rankable:    {', '.join(c['rankable_ids'])}   "
+                f"<- the right answer is already in the list, below the fold"
+            )
         amb = c.get("ambiguity") or {}
         if amb and amb.get("contended"):
             out += [
                 "",
-                f"  AMBIGUOUS TRIGGERS cap recall@1 at {pct(amb.get('cap_at_1'))}   "
-                f"({amb.get('best_possible_at_1')}/{amb.get('scored')} reachable at rank 1 across "
-                f"{amb.get('distinct_triggers')} distinct triggers)",
+                (
+                    f"  AMBIGUOUS TRIGGERS cap recall@1 at {pct(amb.get('cap_at_1'))}   "
+                    f"({amb.get('best_possible_at_1')}/{amb.get('scored')} reachable at rank 1 across "
+                    f"{amb.get('distinct_triggers')} distinct triggers)"
+                ),
                 "    A perfect engine cannot beat that cap. Two moments with a byte-identical",
                 "    trigger get an identical list, and only one lesson can sit at rank 1, so this",
                 "    measures the TRIGGER's insufficiency rather than the ranker's quality.",
             ]
             for g in amb["contended"]:
                 where = g.get("path") or g.get("command") or "?"
-                out.append(f"      {', '.join(g['ids'])} share {where!r} with "
-                           f"{g['distinct_answers']} different right answers "
-                           f"<- these situations need a RICHER trigger, not a better ranker")
+                out.append(
+                    f"      {', '.join(g['ids'])} share {where!r} with "
+                    f"{g['distinct_answers']} different right answers "
+                    f"<- these situations need a RICHER trigger, not a better ranker"
+                )
     out += ["", "  PER MOMENT:"]
     for r in d["rows"]:
         out.append(f"    {r['id']:<4} {r['verdict']:<18} {r.get('why') or r.get('expected') or ''}")

@@ -62,6 +62,25 @@ def test_a_long_list_is_cut_with_the_json_escape_hatch(result, capsys):
     assert "find t --format json" in text
 
 
+def test_a_repaired_name_is_never_silent(result, capsys, monkeypatch):
+    """E:'s decode fix repairs a non-UTF-8 name with U+FFFD instead of dropping the whole result;
+    format_result says so, and the agent and human views must say so too."""
+    result["r"] = SearchResult(
+        query="target.exe", ok=True, engine="everything", paths=["C:\\x\\targ\ufffdt.exe"], undecodable=1
+    )
+    _, text = _run(capsys)
+    assert "undecodable: 1" in text
+    assert "NOT VALID UTF-8" in text
+    monkeypatch.setenv("AURORA_OUTPUT", "human")
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("COLUMNS", "200")
+    _, text = _run(capsys)
+    assert "NOT VALID UTF-8" in text
+    result["r"] = SearchResult(query="target.exe", ok=True, engine="everything", undecodable=2)
+    _, text = _run(capsys)
+    assert "UNCHECKABLE, not an absence" in text
+
+
 def test_unavailable_engine_is_a_structured_error(result, capsys):
     result["r"] = SearchResult(query="t", ok=False, error="es.exe not found")
     code, text = _run(capsys, query="t")

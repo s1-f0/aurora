@@ -44,6 +44,7 @@ Run::
 
     py -m pytest tests/test_the_rank_shown_is_the_rank_used.py -q
 """
+
 from __future__ import annotations
 
 import sys
@@ -52,12 +53,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-QUERY = ("how is an agent's working context assembled and what gets built in wave 0 "
-         "versus later waves")
+QUERY = "how is an agent's working context assembled and what gets built in wave 0 versus later waves"
 
 
 def _hits():
     from core.recall.lookback import lookback
+
     return lookback(QUERY)
 
 
@@ -70,17 +71,20 @@ def test_rows_are_ordered_by_the_number_they_print():
     ordering, which is the one thing the ranker got right.
     """
     hits = _hits()
-    assert hits, "lookback returned nothing for %r -- cannot measure ordering" % QUERY
+    assert hits, f"lookback returned nothing for {QUERY!r} -- cannot measure ordering"
     by_layer: dict = {}
     for h in hits:
         by_layer.setdefault(h.get("layer"), []).append(h.get("score"))
-    bad = {lyr: scores for lyr, scores in by_layer.items()
-           if [s for s in scores if s is not None] != sorted(
-               [s for s in scores if s is not None], reverse=True)}
+    bad = {
+        lyr: scores
+        for lyr, scores in by_layer.items()
+        if [s for s in scores if s is not None] != sorted([s for s in scores if s is not None], reverse=True)
+    }
     assert not bad, (
         "the printed score decreases non-monotonically inside a layer, so position and number "
-        "disagree: %r. Rows are sorted by ranker.py's weighted COMPOSITE (relevance + importance + "
-        "recency) and the published `score` is the relevance COMPONENT alone." % bad)
+        f"disagree: {bad!r}. Rows are sorted by ranker.py's weighted COMPOSITE (relevance + importance + "
+        "recency) and the published `score` is the relevance COMPONENT alone."
+    )
 
 
 def test_a_hit_carries_the_composite_that_actually_ordered_it():
@@ -89,9 +93,10 @@ def test_a_hit_carries_the_composite_that_actually_ordered_it():
     hits = _hits()
     assert hits, "no hits to inspect"
     h = hits[0]
-    assert ("rank" in h or "composite" in h or "relevance" in h), (
-        "a hit publishes %r -- the number that determined its position is not among them, so the "
-        "ordering is unauditable from the output" % sorted(h))
+    assert "rank" in h or "composite" in h or "relevance" in h, (
+        f"a hit publishes {sorted(h)!r} -- the number that determined its position is not among them, so the "
+        "ordering is unauditable from the output"
+    )
 
 
 def test_the_relevance_component_survives():
@@ -100,8 +105,7 @@ def test_the_relevance_component_survives():
     hits = _hits()
     assert hits, "no hits to inspect"
     h = hits[0]
-    assert ("relevance" in h or "score" in h), (
-        "neither a relevance component nor a score is published: %r" % sorted(h))
+    assert "relevance" in h or "score" in h, f"neither a relevance component nor a score is published: {sorted(h)!r}"
 
 
 # ------------------------------------------------------------------ ratchets
@@ -110,17 +114,21 @@ def test_the_ranker_itself_still_sorts_by_its_composite():
     Asserted on the ranker directly so a change to lookback's display cannot quietly alter the
     ordering contract."""
     from core.primitives.ranker import Ranker
-    items = [{"text": "alpha beta", "importance": 1, "timestamp": 0},
-             {"text": "alpha beta gamma", "importance": 3, "timestamp": 0},
-             {"text": "alpha", "importance": 2, "timestamp": 0}]
+
+    items = [
+        {"text": "alpha beta", "importance": 1, "timestamp": 0},
+        {"text": "alpha beta gamma", "importance": 3, "timestamp": 0},
+        {"text": "alpha", "importance": 2, "timestamp": 0},
+    ]
     scored = Ranker().rank(items, query="alpha beta")
     totals = [s.score for s in scored]
     assert totals == sorted(totals, reverse=True), (
-        "Ranker.rank no longer returns rows best-first by its own composite: %r" % totals)
+        f"Ranker.rank no longer returns rows best-first by its own composite: {totals!r}"
+    )
 
 
 def test_every_hit_still_carries_its_drill():
     """RATCHET. The drill pointer is how a reader gets from a row to the document, and it is the
     reason the fences layer is worth having at all."""
     for h in _hits():
-        assert h.get("drill"), "a hit has no drill pointer: %r" % h
+        assert h.get("drill"), f"a hit has no drill pointer: {h!r}"

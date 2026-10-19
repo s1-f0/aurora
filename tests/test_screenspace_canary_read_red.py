@@ -38,19 +38,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 _IMPORT_ERROR = None
 try:
-    from core.screenspace import canary
     from core.screenspace.canary import CanaryState
     from core.screenspace.engine import ScreenResult
     from core.screenspace.shadow import Pulse
+
     _IMPORT_OK = True
-except Exception as exc:  # noqa: BLE001
+except Exception as exc:  # noqa: BLE001  # any import failure is the RED, reported by the skipif
     _IMPORT_OK = False
     _IMPORT_ERROR = exc
 
 pytestmark = pytest.mark.skipif(
     not _IMPORT_OK,
     reason="core.screenspace.canary not yet built -- RED: "
-           f"the amended §1 ruling requires a positive canary read (import failed: {_IMPORT_ERROR!r})",
+    f"the amended §1 ruling requires a positive canary read (import failed: {_IMPORT_ERROR!r})",
 )
 
 
@@ -79,6 +79,7 @@ def test_c3_uia_available_true_only_on_readable():
     # We can't force a live desktop here, so we pin the LOGIC via the module source's
     # own definition, plus the pure fact that only READABLE is a non-empty read.
     import inspect
+
     import core.screenspace.canary as c
 
     src = inspect.getsource(c.uia_available)
@@ -108,13 +109,20 @@ def test_c5_no_context_inference_in_availability_path():
     docstring -- the docstring legitimately NARRATES the falsification (it names the
     rejected context checks as history). The executable path must never PERFORM one."""
     import inspect
+
     import core.screenspace.canary as c
 
     # Function sources only (exclude the module docstring, which recounts the ruling).
-    bodies = "\n".join(inspect.getsource(fn) for _, fn in inspect.getmembers(c, inspect.isfunction)
-                       if fn.__module__ == c.__name__)
-    forbidden = ("GetProcessWindowStation(", "ProcessIdToSessionId(", "CoInitializeEx(",
-                 "Winsta0", "GetUserObjectInformation")
+    bodies = "\n".join(
+        inspect.getsource(fn) for _, fn in inspect.getmembers(c, inspect.isfunction) if fn.__module__ == c.__name__
+    )
+    forbidden = (
+        "GetProcessWindowStation(",
+        "ProcessIdToSessionId(",
+        "CoInitializeEx(",
+        "Winsta0",
+        "GetUserObjectInformation",
+    )
     for token in forbidden:
         assert token not in bodies, (
             f"availability EXECUTABLE path performs forbidden context check '{token}' -- "

@@ -5,6 +5,7 @@ is measured, a click track lines up with its own times, two sources of one sound
 practice-log oracle (session 20261011-165503-f62d348c against the 17-06-22 recording) runs when both are on this
 machine. Every signal here is generated at test time.
 """
+
 from __future__ import annotations
 
 import wave
@@ -34,10 +35,10 @@ def _clicks(times, dur: float, sr: int = 48000, seed: int = 1, noise: float = 0.
     x = rng.standard_normal(int(dur * sr)).astype(np.float32) * noise
     n = int(0.05 * sr)
     for t in times:
-        i = int(round(t * sr))
+        i = round(t * sr)
         if 0 <= i < len(x):
             burst = rng.standard_normal(n) * np.exp(-np.arange(n) / (0.015 * sr)) * rng.uniform(0.1, 0.5)
-            x[i:i + n] += burst[:len(x) - i].astype(np.float32)
+            x[i : i + n] += burst[: len(x) - i].astype(np.float32)
     return x
 
 
@@ -66,22 +67,103 @@ def media(tmp_path_factory):
     times = _times(3, 40.0)
     clicks = _wav(d / "clicks.wav", _clicks(times, 40.0))
     a = d / "a.mp4"
-    ff.run(["-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=30:d=40", "-i", str(clicks), "-map", "0:v",
-            "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-b:a", "128k", "-shortest",
-            "-y", str(a)])
-    b = d / "b.mp4"   # the spec's construction: the same audio, its timestamps moved 83 ms later
-    ff.run(["-v", "error", "-i", str(a), "-itsoffset", "0.083", "-i", str(a), "-map", "0:v", "-map", "1:a",
-            "-c", "copy", "-y", str(b)])
-    two = d / "two_tracks.mp4"   # track 1 is track 0 delayed 40 ms: the "is the Discord track late?" case
-    ff.run(["-v", "error", "-i", str(clicks), "-filter_complex", "[0:a]asplit[x][y];[y]adelay=40[z]",
-            "-map", "[x]", "-map", "[z]", "-c:a", "aac", "-b:a", "128k", "-y", str(two)])
-    silent = d / "silent two.mp4"   # two tracks nobody spoke on: a muted mic, an empty Discord track
-    ff.run(["-v", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono:d=12", "-f", "lavfi",
-            "-i", "anullsrc=r=48000:cl=mono:d=12", "-map", "0:a", "-map", "1:a", "-c:a", "aac", "-y", str(silent)])
+    ff.run(
+        [
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=160x120:r=30:d=40",
+            "-i",
+            str(clicks),
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-shortest",
+            "-y",
+            str(a),
+        ]
+    )
+    b = d / "b.mp4"  # the spec's construction: the same audio, its timestamps moved 83 ms later
+    ff.run(
+        [
+            "-v",
+            "error",
+            "-i",
+            str(a),
+            "-itsoffset",
+            "0.083",
+            "-i",
+            str(a),
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-c",
+            "copy",
+            "-y",
+            str(b),
+        ]
+    )
+    two = d / "two_tracks.mp4"  # track 1 is track 0 delayed 40 ms: the "is the Discord track late?" case
+    ff.run(
+        [
+            "-v",
+            "error",
+            "-i",
+            str(clicks),
+            "-filter_complex",
+            "[0:a]asplit[x][y];[y]adelay=40[z]",
+            "-map",
+            "[x]",
+            "-map",
+            "[z]",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-y",
+            str(two),
+        ]
+    )
+    silent = d / "silent two.mp4"  # two tracks nobody spoke on: a muted mic, an empty Discord track
+    ff.run(
+        [
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=48000:cl=mono:d=12",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=48000:cl=mono:d=12",
+            "-map",
+            "0:a",
+            "-map",
+            "1:a",
+            "-c:a",
+            "aac",
+            "-y",
+            str(silent),
+        ]
+    )
     return SimpleNamespace(dir=d, times=times, clicks=clicks, a=a, b=b, two=two, silent=silent)
 
 
 # ------------------------------------------------------------------------------------------------- two signals
+
 
 def test_itsoffset_copy_is_recovered_as_83_ms(media):
     r = avsync.offset(media.a, media.b, window_s=10)
@@ -90,7 +172,8 @@ def test_itsoffset_copy_is_recovered_as_83_ms(media):
     assert abs(r["drift_ms_per_min"]) < 1.0
     assert r["api"] == "arsenal.media.avsync/v0"
     assert {"a_track", "b_track", "span", "max_offset_s", "window_s", "hop_ms"} <= set(r["params"])
-    assert r["blind"] and len(r["source"]) == 2
+    assert r["blind"]
+    assert len(r["source"]) == 2
     assert Path(r["receipt"]).is_file()
 
 
@@ -101,14 +184,14 @@ def test_the_sign_follows_the_order(media):
 
 
 def test_two_tracks_of_one_file(media):
-    r = avsync.offset(media.two)          # b=None: track 1 of the same file against track 0
+    r = avsync.offset(media.two)  # b=None: track 1 of the same file against track 0
     assert r["params"]["b_track"] == 1
     assert r["offset_ms"] == pytest.approx(40.0, abs=2.0), r["reading"]
 
 
 def test_synthetic_drift_is_measured(tmp_path):
     times = _times(5, 120.0)
-    rate = 12.0 / 60000                    # b's clock runs 12 ms per minute fast, and starts 40 ms late
+    rate = 12.0 / 60000  # b's clock runs 12 ms per minute fast, and starts 40 ms late
     a = _wav(tmp_path / "a.wav", _clicks(times, 120.0, sr=16000, seed=11), sr=16000)
     b = _wav(tmp_path / "b.wav", _clicks(times * (1 + rate) + 0.040, 120.0, sr=16000, seed=11), sr=16000)
     r = avsync.offset(a, b, window_s=20)
@@ -127,12 +210,15 @@ def test_flux_does_not_depend_on_how_the_stream_is_cut():
 
 def test_cli_reads_the_offset_aloud(media, capsys):
     from arsenal.media.__main__ import main
+
     assert main(["avsync", str(media.a), str(media.b), "--window", "10"]) == 0
     out = capsys.readouterr().out
-    assert "b is 82." in out and "later than a" in out
+    assert "b is 82." in out
+    assert "later than a" in out
 
 
 # ------------------------------------------------------------------------------------------------- event lists
+
 
 def test_a_click_track_lines_up_with_its_own_times(media):
     r = avsync.against_events(media.clicks, media.times, window_s=10)
@@ -163,6 +249,7 @@ def test_two_sources_of_one_sound_show_as_two_lobes(tmp_path):
 
 # ------------------------------------------------------------------------------------------------- refusals
 
+
 def test_refusals(media):
     with pytest.raises(ff.MediaError, match="itself"):
         avsync.offset(media.a, None, a_track=0, b_track=0)
@@ -177,6 +264,7 @@ def test_refusals(media):
 def test_a_silent_track_is_refused_not_read_as_the_search_edge(media, capsys):
     """An all-zero envelope correlates as zeros everywhere; its argmax used to come back as -2000 ms, exit 0."""
     from arsenal.media.__main__ import main
+
     with pytest.raises(ff.MediaError, match="silent"):
         avsync.offset(media.silent)
     with pytest.raises(ff.MediaError, match="silent"):
@@ -192,11 +280,13 @@ def test_a_best_match_on_the_search_edge_is_refused():
     b = np.exp(-0.5 * ((i - 1800) / 120.0) ** 2)
     with pytest.raises(ff.MediaError, match="edge"):
         avsync._align(a, b, 0.0, 2.0, 30.0)
-    assert avsync._at_edge(np.array([3.0, 2.0, 1.0])) and not avsync._at_edge(np.array([1.0, 3.0, 2.0]))
+    assert avsync._at_edge(np.array([3.0, 2.0, 1.0]))
+    assert not avsync._at_edge(np.array([1.0, 3.0, 2.0]))
 
 
 def test_malformed_events_fail_closed(media, tmp_path, capsys):
     from arsenal.media.__main__ import main
+
     with pytest.raises(ff.MediaError, match="weights"):
         avsync.against_events(media.clicks, media.times[:3], weights=[1.0, 2.0])
     with pytest.raises(ff.MediaError, match="numbers"):
@@ -209,11 +299,14 @@ def test_malformed_events_fail_closed(media, tmp_path, capsys):
 
 # ------------------------------------------------------------------------------------------------- the practice log
 
+
 def test_session_anchor_follows_jam_align():
     from arsenal.jam import align
+
     info = {"meta": {"opened_at_client": "2026-10-11T20:55:03.791Z"}, "opened_at": "2026-10-11T20:55:03.803+00:00"}
     anchor = avsync.session_anchor(info)
-    assert anchor["method"] == "L3" and anchor["error_ms"] == align.ERROR_MS["L3"]
+    assert anchor["method"] == "L3"
+    assert anchor["error_ms"] == align.ERROR_MS["L3"]
     assert anchor["epoch_ms"] == align.epoch_ms_of("2026-10-11T20:55:03.791Z")
     assert avsync.session_anchor({"opened_at": info["opened_at"]})["method"] == "L4"
     with pytest.raises(ff.MediaError, match="buffered"):
@@ -253,9 +346,13 @@ def test_practice_session_oracle(practice):
     assert all(c["matched"] >= avsync.MIN_LIFT * r["matched_chance"] for c in r["candidates"][:2]), r["candidates"]
 
 
-@pytest.mark.xfail(strict=True, reason="spec P12 acceptance not met on this oracle (Vandor's ruling): every key "
-                                       "sounds twice, so the window offsets wander over ~100 ms between two lobes "
-                                       "93 ms apart, and the OBS name gives the start only to the second")
+@pytest.mark.xfail(
+    strict=True,
+    reason="spec P12 acceptance not met on this oracle (Vandor's ruling): every key "
+    "sounds twice, so the window offsets wander over ~100 ms between two lobes "
+    "93 ms apart, and the OBS name gives the start only to the second",
+)
 def test_practice_session_holds_steady_to_one_frame(practice):
     """The spec's bar: steady within 16.7 ms across the recording. Strict, so it reports when it starts passing."""
-    assert practice["spread_ms"] is not None and practice["spread_ms"] <= 16.7, practice["spread_ms"]
+    assert practice["spread_ms"] is not None, practice["spread_ms"]
+    assert practice["spread_ms"] <= 16.7, practice["spread_ms"]

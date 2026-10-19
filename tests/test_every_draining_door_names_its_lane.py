@@ -50,6 +50,7 @@ Run::
 
     py -m pytest tests/test_every_draining_door_names_its_lane.py -q
 """
+
 from __future__ import annotations
 
 import ast
@@ -70,8 +71,7 @@ LANE_VAR = "BIFROST_CONSUME_LANE"
 
 def _functions() -> dict:
     tree = ast.parse((ROOT / "agent_cli.py").read_text(encoding="utf-8-sig"))
-    return {n.name: n for n in ast.walk(tree)
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    return {n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
 
 def _names_the_lane(fn: ast.AST) -> bool:
@@ -83,10 +83,13 @@ def _names_the_lane(fn: ast.AST) -> bool:
     this repo made by using `in inspect.getsource(...)`.
     """
     body = list(fn.body)
-    if (body and isinstance(body[0], ast.Expr)
-            and isinstance(body[0].value, ast.Constant)
-            and isinstance(body[0].value.value, str)):
-        body = body[1:]                                  # drop the docstring, keep the code
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]  # drop the docstring, keep the code
     code = "\n".join(ast.unparse(st) for st in body)
     return (LANE_VAR in code) or ("ensure_lane_defaults" in code)
 
@@ -96,16 +99,16 @@ def test_every_draining_door_resolves_the_consume_lane_itself():
     fns = _functions()
     missing = []
     for name in DRAINING_DOORS:
-        assert name in fns, "%s no longer exists in agent_cli.py -- update DRAINING_DOORS" % name
+        assert name in fns, f"{name} no longer exists in agent_cli.py -- update DRAINING_DOORS"
         if not _names_the_lane(fns[name]):
             missing.append(name)
     assert not missing, (
-        "%d draining/arming door(s) never resolve %s and so read whatever lane the caller "
-        "happened to export: %s.\n"
+        f"{len(missing)} draining/arming door(s) never resolve {LANE_VAR} and so read whatever lane the caller "
+        f"happened to export: {', '.join(missing)}.\n"
         "That is T133 (22h cursor drift) and T198 (eight hand re-arms in one day) for a third "
         "time. The prescribed arm command carries the variable explicitly, which hides this "
         "for exactly as long as every seat types the long form correctly every time."
-        % (len(missing), LANE_VAR, ", ".join(missing)))
+    )
 
 
 def test_the_wake_lane_is_non_empty_for_a_seat_that_only_ran_the_verb():
@@ -121,15 +124,18 @@ def test_the_wake_lane_is_non_empty_for_a_seat_that_only_ran_the_verb():
     import importlib
 
     from core.comm import bifrost_api
+
     importlib.reload(bifrost_api)
 
-    import agent_cli  # noqa: F401  -- importing the CLI must be enough to settle the default
+    import agent_cli  # noqa: F401  # importing the CLI must be enough to settle the default
+
     importlib.reload(bifrost_api)
 
     assert bifrost_api.wake_lane(), (
         "wake_lane() is empty for a seat that imported the CLI and exported nothing, so the "
         "watcher watches one lane while the drain moves another -- T198 verbatim. The consume "
-        "lane default must live in the code, not in the instruction string.")
+        "lane default must live in the code, not in the instruction string."
+    )
 
 
 def test_the_import_failure_fallback_agrees_with_the_canonical_arm_command():
@@ -154,14 +160,17 @@ def test_the_import_failure_fallback_agrees_with_the_canonical_arm_command():
 
     canon = WS.arm_command("claude", "deadbeefdeadbeefdeadbeefdeadbeef")
     assert "BIFROST_CONSUME_LANE" not in canon, (
-        "the canonical arm command still carries a lane prefix the door now sets itself")
+        "the canonical arm command still carries a lane prefix the door now sets itself"
+    )
 
     for rel in ("scripts/hooks/claude_stop.py", "agent/harness/hooks/claude_stop.py"):
         text = (ROOT / rel).read_text(encoding="utf-8-sig")
         # the fallback's shape, as written: f"py {_cli} " f"bifrost-standby {AGENT}" ...
         assert "BIFROST_CONSUME_LANE=work BIFROST_WAKE_LANE=work" not in text, (
-            "%s prescribes a lane prefix that wake_seat.arm_command no longer emits -- two "
-            "surfaces, two commands for one job, which is the 2026-10-02 defect" % rel)
+            f"{rel} prescribes a lane prefix that wake_seat.arm_command no longer emits -- two "
+            "surfaces, two commands for one job, which is the 2026-10-02 defect"
+        )
         assert re.search(r"bifrost-standby \{AGENT\}", text), (
-            "%s no longer contains the hand-built fallback this pin tracks; if it now "
-            "delegates entirely, delete this assertion deliberately" % rel)
+            f"{rel} no longer contains the hand-built fallback this pin tracks; if it now "
+            "delegates entirely, delete this assertion deliberately"
+        )

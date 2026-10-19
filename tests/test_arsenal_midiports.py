@@ -4,6 +4,7 @@ Acceptance: docs/library/map/20261007_design-night-roadmap-2026-10-07_fa48f2.md 
 module was written. The parser and fail-soft tests run anywhere; the live snapshot test runs only on Windows and reads
 the real WinMM list without opening any port.
 """
+
 import json
 import sys
 import threading
@@ -13,7 +14,6 @@ import pytest
 
 from arsenal import midiports
 from arsenal.serve import App, Server
-
 
 SC_RUNNING = """
 SERVICE_NAME: midisrv
@@ -26,14 +26,17 @@ SC_STOPPED = SC_RUNNING.replace("4  RUNNING", "1  STOPPED")
 SC_ABSENT = "[SC] EnumQueryServicesStatus:OpenService FAILED 1060:\n\nThe specified service does not exist as an installed service."
 
 
-@pytest.mark.parametrize("text, state", [
-    (SC_RUNNING, "running"),
-    (SC_STOPPED, "stopped"),
-    (SC_RUNNING.replace("4  RUNNING", "2  START_PENDING"), "start_pending"),
-    (SC_ABSENT, "absent"),
-    ("", "unknown"),
-    ("something else entirely", "unknown"),
-])
+@pytest.mark.parametrize(
+    ("text", "state"),
+    [
+        (SC_RUNNING, "running"),
+        (SC_STOPPED, "stopped"),
+        (SC_RUNNING.replace("4  RUNNING", "2  START_PENDING"), "start_pending"),
+        (SC_ABSENT, "absent"),
+        ("", "unknown"),
+        ("something else entirely", "unknown"),
+    ],
+)
 def test_parse_sc_state(text, state):
     assert midiports.parse_sc_state(text) == state
 
@@ -41,6 +44,7 @@ def test_parse_sc_state(text, state):
 def test_snapshot_fails_soft_with_a_reason(monkeypatch):
     def boom(kind):
         raise OSError("winmm unavailable")
+
     monkeypatch.setattr(midiports, "_winmm_names", boom)
     monkeypatch.setattr(midiports.sys, "platform", "win32")
     snap = midiports.snapshot()
@@ -59,14 +63,20 @@ def test_snapshot_off_windows_says_so(monkeypatch):
 def test_live_snapshot_shape():
     snap = midiports.snapshot()
     assert snap["ok"] is True, snap
-    assert isinstance(snap["inputs"], list) and all(isinstance(n, str) for n in snap["inputs"])
+    assert isinstance(snap["inputs"], list)
+    assert all(isinstance(n, str) for n in snap["inputs"])
     assert isinstance(snap["outputs"], list)
     assert snap["service"]["name"] == "midisrv"
     assert snap["service"]["state"] in {"running", "stopped", "start_pending", "stop_pending", "absent", "unknown"}
 
 
 def test_route_serves_the_snapshot_as_json(tmp_path, monkeypatch):
-    fake = {"ok": True, "inputs": ["KeyLab 88 mk3 MIDI"], "outputs": [], "service": {"name": "midisrv", "state": "running"}}
+    fake = {
+        "ok": True,
+        "inputs": ["KeyLab 88 mk3 MIDI"],
+        "outputs": [],
+        "service": {"name": "midisrv", "state": "running"},
+    }
     monkeypatch.setattr(midiports, "snapshot", lambda: fake)
     app = App([str(tmp_path / "library")], takes_root=tmp_path / "takes", performance_root=tmp_path / "perf")
     srv = Server(0, app)

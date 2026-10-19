@@ -53,6 +53,7 @@ a message merely contains it.
 
 Run: py scripts/checkers/check_session_resolvers.py     (0 = one resolver, 1 = more than one)
 """
+
 from __future__ import annotations
 
 import io
@@ -86,18 +87,21 @@ def _env_read_sites(path: Path, needles):
     """{line: text} for each line where a needle is passed to an environment read."""
     try:
         src = path.read_text(encoding="utf-8", errors="replace")
-    except Exception:                                                     # noqa: BLE001
+    except Exception:  # noqa: BLE001  # fail-soft: falls back to a default value
         return {}
     if not any(v in src for v in needles):
         return {}
     try:
-        toks = [t for t in tokenize.generate_tokens(io.StringIO(src).readline)
-                if t.type not in (tokenize.COMMENT, tokenize.NL)]
-    except Exception:                                                     # noqa: BLE001
+        toks = [
+            t
+            for t in tokenize.generate_tokens(io.StringIO(src).readline)
+            if t.type not in (tokenize.COMMENT, tokenize.NL)
+        ]
+    except Exception:  # noqa: BLE001  # fail-soft: falls back to a default value
         return {}
 
     found, prev = {}, None
-    for i, tok in enumerate(toks):
+    for tok in toks:
         if tok.type != tokenize.STRING:
             prev = tok.type
             continue
@@ -148,8 +152,9 @@ def check() -> int:
     print("nothing is truncated inside a resolver.\n")
 
     if incarnation:
-        print("NOTE, not counted: %d site(s) read %s. In bus.py and eye/position.py it is the"
-              % (len(incarnation), INCARNATION_VAR))
+        print(
+            f"NOTE, not counted: {len(incarnation)} site(s) read {INCARNATION_VAR}. In bus.py and eye/position.py it is the"
+        )
         print("first link of the session chain; in the runners it is a process incarnation.")
         print("Two meanings on one variable -- worth resolving, but it is not this class.\n")
 
@@ -159,13 +164,12 @@ def check() -> int:
         # counting FAIL: summaries. The first version of this checker titled the block
         # "HAND-ROLLED SESSION RESOLVERS" and the ratchet adopted 1 instead of 16 -- a guard
         # with fifteen sites of silent slack, which is that function's own docstring warning
-        # ("a baseline built from a wrong count is not a ratchet, it is a rubber stamp")
+        # -- "a baseline built from a wrong count is not a ratchet, it is a rubber stamp" --
         # happening to the guard being added.
-        print("VIOLATIONS -- hand-rolled session resolvers (%d):" % len(offenders))
+        print(f"VIOLATIONS -- hand-rolled session resolvers ({len(offenders)}):")
         for rel, ln, text in offenders:
-            print("  - [%s:%d] %s" % (rel, ln, text))
-        print("\nFAIL: %d site(s) resolve a session id outside %s."
-              % (len(offenders), SANCTIONED[0]))
+            print(f"  - [{rel}:{ln}] {text}")
+        print(f"\nFAIL: {len(offenders)} site(s) resolve a session id outside {SANCTIONED[0]}.")
         print("      Delegate: from core.coord.session_id import ambient_session_id, session_of")
         print("      Need a short form? short(sid) AT THE POINT OF DISPLAY -- never inside a")
         print("      resolver, because a truncated id cannot join a full-length one.")

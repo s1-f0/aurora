@@ -44,6 +44,7 @@ Run::
 
     py -m pytest tests/test_ambient_session_id_has_one_resolver.py -q
 """
+
 from __future__ import annotations
 
 import sys
@@ -57,7 +58,10 @@ FULL = "428ba6c4-2217-4008-a2be-ecd9901cc3b2"
 
 # --------------------------------------------------------------- the resolver
 def test_there_is_one_ambient_resolver():
-    from core.coord.session_id import ambient_session_id, session_of   # noqa: F401
+    from core.coord.session_id import (  # noqa: F401  # the import IS the pin: both names must exist
+        ambient_session_id,
+        session_of,
+    )
 
 
 def test_it_reads_the_three_env_vars_in_precedence_order(monkeypatch):
@@ -65,6 +69,7 @@ def test_it_reads_the_three_env_vars_in_precedence_order(monkeypatch):
     CLAUDE_CODE_SESSION_ID is what Claude Code exports; CLAUDE_SESSION_ID is the legacy
     spelling runner_lock still honours. All three must be in ONE place."""
     from core.coord.session_id import ambient_session_id
+
     for v in ("AKASHIC_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"):
         monkeypatch.delenv(v, raising=False)
 
@@ -81,11 +86,12 @@ def test_it_returns_the_full_id_never_truncated(monkeypatch):
     resolver that truncates mints an id that can never join a full-length one -- the exact
     shape measured on the target plane, where two address classes intersected at zero."""
     from core.coord.session_id import ambient_session_id
+
     monkeypatch.delenv("AKASHIC_SESSION_ID", raising=False)
     monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", FULL)
     got, _src = ambient_session_id()
-    assert got == FULL, "the resolver truncated or rewrote the id: %r" % got
+    assert got == FULL, f"the resolver truncated or rewrote the id: {got!r}"
     assert len(got) == len(FULL) == 36
 
 
@@ -96,11 +102,12 @@ def test_absent_is_empty_AND_SAYS_SO(monkeypatch):
     The other three resolvers return a bare string and throw that away. Lifting the pair is the
     unification; returning a bare id would unify them on the WORSE of the two contracts."""
     from core.coord.session_id import ambient_session_id
+
     for v in ("AKASHIC_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"):
         monkeypatch.delenv(v, raising=False)
     sid, src = ambient_session_id()
     assert sid == ""
-    assert src == "unknown", "absence must be TYPED, not just empty: got source %r" % src
+    assert src == "unknown", f"absence must be TYPED, not just empty: got source {src!r}"
 
 
 # --------------------------------------------------- the ratchet that matters most
@@ -114,27 +121,36 @@ def test_the_payload_outranks_the_environment_and_the_source_is_recorded(monkeyp
     So the rule is not "never read the env". It is "payload wins, and the loser is named".
     A shared resolver that drops the source would quietly destroy that."""
     from core.coord.session_id import session_of
+
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "ambient-env-sid")
 
     sid, src = session_of({"session_id": "from-the-payload"})
     assert (sid, src) == ("from-the-payload", "payload"), (
-        "the ambient environment outranked the payload -- that attributes one session's "
-        "work to another")
+        "the ambient environment outranked the payload -- that attributes one session's work to another"
+    )
 
     sid, src = session_of({})
     assert (sid, src) == ("ambient-env-sid", "env"), (
-        "the env fallback must still work, and must be LABELLED env: got %r" % (src,))
+        f"the env fallback must still work, and must be LABELLED env: got {src!r}"
+    )
 
 
 def test_touch_delegates_rather_than_keeping_its_own_copy():
     """touch.py is where the good contract lives; after the unification it should be the
     shared one, not a fourth implementation that happens to agree today."""
     import inspect
+
     from core.events import touch as T
+
     src = inspect.getsource(T)
-    assert "session_id" in src and "core.coord.session_id" in src, (
+    assert "session_id" in src, (
         "touch.py still carries its own session resolution instead of delegating to the "
-        "shared module -- four implementations, one meaning")
+        "shared module -- four implementations, one meaning"
+    )
+    assert "core.coord.session_id" in src, (
+        "touch.py still carries its own session resolution instead of delegating to the "
+        "shared module -- four implementations, one meaning"
+    )
 
 
 # --------------------------------------------------------------- the call sites
@@ -142,12 +158,14 @@ def test_the_cli_capture_sites_resolve_a_session():
     """learning / fail / boot are CLI-or-hook processes with no payload to consult, so the
     ambient environment IS their ground truth -- and all three currently pass nothing."""
     import re
+
     src = (ROOT / "agent_cli.py").read_text(encoding="utf-8")
     start = src.index('capture_event("learning"')
-    block = src[start:start + 600]
+    block = src[start : start + 600]
     assert re.search(r"session_id\s*=", block), (
         "cmd_learn's capture_event passes no session_id, so a filed lesson cannot be joined "
-        "to the session that produced it (measured 0 of 4 over 24h)")
+        "to the session that produced it (measured 0 of 4 over 24h)"
+    )
 
 
 def test_the_old_resolvers_agree_with_the_shared_one(monkeypatch):
@@ -156,7 +174,9 @@ def test_the_old_resolvers_agree_with_the_shared_one(monkeypatch):
     monkeypatch.delenv("AKASHIC_SESSION_ID", raising=False)
     monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", FULL)
-    from core.coord.session_id import ambient_session_id
     from core.coord import session_focus
+    from core.coord.session_id import ambient_session_id
+
     assert session_focus.this_session() == ambient_session_id()[0], (
-        "session_focus.this_session resolves a different id than the shared resolver")
+        "session_focus.this_session resolves a different id than the shared resolver"
+    )

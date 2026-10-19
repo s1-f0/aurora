@@ -15,6 +15,7 @@ research/reviewed/shader-school-2026-10-13/volumes-atmosphere.md (sections 4.1, 
 emissive aurora model (2011), the NOAA SWPC aurora tutorial, the CIE 1931 standard observer, Inigo Quilez's fog
 articles. No corpus code.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -30,8 +31,8 @@ AURORA_RISE_KM = 6.0
 # Each emission line's colour: its wavelength through the CIE 1931 2-degree observer into linear sRGB (IEC 61966-2-1),
 # the negative channel clipped (no display shows a spectral line), brightest channel 1. Brightness is not here: the
 # profile carries it, so these only choose the hue.
-LINE_GREEN_5577 = np.array([0.222, 1.0, 0.0])          # atomic oxygen 557.7 nm: the curtain's body
-LINE_RED_6300 = np.array([1.0, 0.0, 0.0])              # atomic oxygen 630.0 nm: the slow, high crown
+LINE_GREEN_5577 = np.array([0.222, 1.0, 0.0])  # atomic oxygen 557.7 nm: the curtain's body
+LINE_RED_6300 = np.array([1.0, 0.0, 0.0])  # atomic oxygen 630.0 nm: the slow, high crown
 # The lower fringe of an energetic display: ionised nitrogen's 427.8 nm violet band plus a share of molecular
 # nitrogen's red first-positive bands (about 670 nm), which together read as the purple-pink hem in photographs.
 FRINGE_N2_RED_SHARE = 0.7
@@ -40,10 +41,10 @@ LINE_FRINGE = np.array([0.125 + FRINGE_N2_RED_SHARE, 0.0, 1.0])
 # Rays: two rows of 1D value noise (a whole-number row of 2D value noise is exactly 1D value noise), drifting in
 # opposite directions at unrelated rates, the fine row about three times denser.
 RAYS_FINE_SCALE = 3.1
-RAYS_DRIFT = (-0.21, 0.53)        # along-units per second, coarse and fine
+RAYS_DRIFT = (-0.21, 0.53)  # along-units per second, coarse and fine
 RAYS_FINE_ROW = 7.0
 RAYS_COARSE_SHARE = 0.55
-RAYS_EDGES = (0.5, 0.9)           # 0 below the first, 1 above the second: about half dark, one place in 16 bright
+RAYS_EDGES = (0.5, 0.9)  # 0 below the first, 1 above the second: about half dark, one place in 16 bright
 
 # Sky: the horizon band's sharpness away from the sun and toward a low sun (exponents on 1 - sin(elevation)), and the
 # sun elevation (as sin) by which the warm horizon has gone.
@@ -64,23 +65,23 @@ def _out(x):
     return float(x) if np.ndim(x) == 0 else x
 
 
-# ------------------------------------------------------------------------------------------------------- fog (G7)
+# -------------------------------------------------------------------------------------------------------- fog, G7
 def fogExp(col, fogCol, dist, k):
     """mix(col, fogCol, 1 - exp(-k dist)): the surface seen through `dist` of uniform fog. A negative distance or
     density is read as no fog."""
     t = volTransmittance(np.maximum(_f(k), 0.0), np.maximum(_f(dist), 0.0))
     t = t[..., None] if np.ndim(t) else t
-    return _f(fogCol) * (1.0 - t) + _f(col) * t                 # GLSL mix(fogCol, col, t)
+    return _f(fogCol) * (1.0 - t) + _f(col) * t  # GLSL mix(fogCol, col, t)
 
 
-# ---------------------------------------------------------------------------------------------------- aurora (G8)
+# ----------------------------------------------------------------------------------------------------- aurora, G8
 def auroraProfile(altKm, lowerEdgeKm, scaleHKm):
     """Emission against altitude, 0 at and below the hem, (1 - e^(-z/rise)) e^(-z/H) above it (z the height above the
     hem), divided by its own peak so the brightest altitude is exactly 1; far above it decays by e per scale height H."""
     h = np.maximum(_f(scaleHKm), 1e-3)
     above = np.maximum(_f(altKm) - _f(lowerEdgeKm), 0.0)
     shape = (1.0 - np.exp(-above / AURORA_RISE_KM)) * np.exp(-above / h)
-    settle = AURORA_RISE_KM / (AURORA_RISE_KM + h)             # e^(-z/rise) at the peak
+    settle = AURORA_RISE_KM / (AURORA_RISE_KM + h)  # e^(-z/rise) at the peak
     peak = (1.0 - settle) * settle ** (AURORA_RISE_KM / h)
     return _out(shape / peak)
 
@@ -94,8 +95,11 @@ def auroraLineColor(altKm, energetic):
     green = _smoothstep(92.0, 108.0, alt) * (1.0 - _smoothstep(170.0, 250.0, alt))
     red = _smoothstep(160.0, 260.0, alt)
     fringe = np.clip(_f(energetic), 0.0, 1.0) * (1.0 - _smoothstep(96.0, 112.0, alt))
-    return (green[..., None] * LINE_GREEN_5577 + red[..., None] * LINE_RED_6300
-            + np.asarray(fringe)[..., None] * LINE_FRINGE)
+    return (
+        green[..., None] * LINE_GREEN_5577
+        + red[..., None] * LINE_RED_6300
+        + np.asarray(fringe)[..., None] * LINE_FRINGE
+    )
 
 
 def auroraRays(along, t, seed):
@@ -105,13 +109,14 @@ def auroraRays(along, t, seed):
     x, tt = _f(along), _f(t)
     x, tt = np.broadcast_arrays(x, tt)
     coarse = 0.5 + 0.5 * N.noiseValue2(np.stack([x + RAYS_DRIFT[0] * tt, np.zeros_like(x)], -1), seed)
-    fine = 0.5 + 0.5 * N.noiseValue2(np.stack([RAYS_FINE_SCALE * x + RAYS_DRIFT[1] * tt,
-                                               np.full_like(x, RAYS_FINE_ROW)], -1), seed)
+    fine = 0.5 + 0.5 * N.noiseValue2(
+        np.stack([RAYS_FINE_SCALE * x + RAYS_DRIFT[1] * tt, np.full_like(x, RAYS_FINE_ROW)], -1), seed
+    )
     lit = RAYS_COARSE_SHARE * coarse + (1.0 - RAYS_COARSE_SHARE) * fine
     return _out(_smoothstep(RAYS_EDGES[0], RAYS_EDGES[1], lit))
 
 
-# ------------------------------------------------------------------------------------------------------- sky (G6)
+# -------------------------------------------------------------------------------------------------------- sky, G6
 def skyGradient(rd, toSun, zenith, horizon, sunTint):
     """A sky from three colours: exactly `zenith` overhead, the horizon colour at and below the horizon, the band
     between them thin away from the sun and wide toward it. While the sun is low (or below the horizon) the horizon

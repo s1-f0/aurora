@@ -41,12 +41,12 @@ another seat's worktree, and ``trader_archivist.py``'s copy is correct and runni
 they AGREE in behaviour rather than that there is only one of them -- the remedy this house
 actually uses (``tests/test_every_draining_door_names_its_lane.py:135`` is the precedent).
 """
+
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 
 def log_root() -> Path:
@@ -61,7 +61,7 @@ def log_root() -> Path:
     return root / "AkashicAurora" / "logs"
 
 
-def repair_background_stdio(name: str) -> Optional[Path]:
+def repair_background_stdio(name: str) -> Path | None:
     """Point ``sys.stdout``/``sys.stderr`` at a log file when they are None. Returns its path.
 
     Call this FIRST in a script's ``main``, before argument parsing and before importing anything
@@ -81,7 +81,7 @@ def repair_background_stdio(name: str) -> Optional[Path]:
     try:
         root = log_root()
         root.mkdir(parents=True, exist_ok=True)
-        path = root / ("%s.log" % name)
+        path = root / (f"{name}.log")
         stream = path.open("a", encoding="utf-8", errors="replace", buffering=1)
     except Exception:  # noqa: BLE001 -- see docstring: never make the job fail
         return None

@@ -13,6 +13,7 @@ uvFootprint takes the coordinate at every pixel of an image and measures the cha
 
 Apache-2.0, Akashic Aurora. Written fresh from the mathematics; no corpus code.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -20,10 +21,10 @@ import numpy as np
 F32 = np.float32
 
 # ---------------------------------------------------------------------------------------------- core/const.glsl
-PI = F32(3.14159265358979323846)       # half a turn, in radians
-TAU = F32(6.28318530717958647692)      # a whole turn: 2 PI
-PHI = F32(1.61803398874989484820)      # the golden ratio, (1 + sqrt 5) / 2: PHI * PHI = PHI + 1
-SQRT3 = F32(1.73205080756887729353)    # the height of an equilateral triangle is SQRT3 / 2 of its side
+PI = F32(3.14159265358979323846)  # half a turn, in radians
+TAU = F32(6.28318530717958647692)  # a whole turn: 2 PI
+PHI = F32(1.61803398874989484820)  # the golden ratio, (1 + sqrt 5) / 2: PHI * PHI = PHI + 1
+SQRT3 = F32(1.73205080756887729353)  # the height of an equilateral triangle is SQRT3 / 2 of its side
 
 
 def _f(x):
@@ -103,7 +104,7 @@ def imodFloor(a, b):
     non-negative operands (the one case GLSL ES 3.00 defines), so the twin and the shader take the same path."""
     a = np.asarray(a, dtype=np.int64)
     b = np.maximum(np.asarray(b, dtype=np.int64), 1)
-    below = -(a + 1)                                   # >= 0 when a < 0, and no overflow at the most negative int
+    below = -(a + 1)  # >= 0 when a < 0, and no overflow at the most negative int
     r = np.where(a >= 0, np.abs(a) % b, b - 1 - (np.abs(below) % b))
     r = r.astype(np.int32)
     return int(r) if r.ndim == 0 else r
@@ -169,7 +170,7 @@ def uvFootprint(field):
 
 
 # ---------------------------------------------------------------------------------------------- debug/views.glsl
-LUMA709 = np.array([0.2126, 0.7152, 0.0722], dtype=F32)   # ITU-R BT.709 weights: how bright each primary looks
+LUMA709 = np.array([0.2126, 0.7152, 0.0722], dtype=F32)  # ITU-R BT.709 weights: how bright each primary looks
 MAGENTA = np.array([1, 0, 1], dtype=F32)
 CYAN = np.array([0, 1, 1], dtype=F32)
 BLUE = np.array([0, 0, 1], dtype=F32)
@@ -178,18 +179,16 @@ WHITE = np.array([1, 1, 1], dtype=F32)
 
 # The heat ramp's five stops, display-referred: black, violet, red-orange, amber, white. Their Rec. 709 luma is 0,
 # 0.25, 0.50, 0.75, 1, so brightness climbs in even steps and (each step linear) never dips between them.
-HEAT_STOPS = np.array([[0.00, 0.00, 0.00],
-                       [0.40, 0.15, 0.85],
-                       [1.00, 0.38, 0.25],
-                       [1.00, 0.74, 0.20],
-                       [1.00, 1.00, 1.00]], dtype=F32)
+HEAT_STOPS = np.array(
+    [[0.00, 0.00, 0.00], [0.40, 0.15, 0.85], [1.00, 0.38, 0.25], [1.00, 0.74, 0.20], [1.00, 1.00, 1.00]], dtype=F32
+)
 
 
 def dbgHeatRamp(t):
     """Piecewise-linear through HEAT_STOPS, as the GLSL's chain of mix() calls: each stop takes over across its
     quarter of [0, 1]."""
     s = (np.clip(_f(t), 0, 1) * F32(4))[..., None]
-    col = np.broadcast_to(HEAT_STOPS[0], s.shape[:-1] + (3,)).astype(F32)
+    col = np.broadcast_to(HEAT_STOPS[0], (*s.shape[:-1], 3)).astype(F32)
     for i in range(1, 5):
         w = np.clip(s - F32(i - 1), 0, 1)
         col = _mix(col, HEAT_STOPS[i], w)
@@ -239,8 +238,8 @@ def _smoothstep(a, b, x):
     return t * t * (3 - 2 * t)
 
 
-SLICE_INSIDE = np.array([0.92, 0.55, 0.22], dtype=F32)    # warm: the field is negative (inside the shape)
-SLICE_OUTSIDE = np.array([0.25, 0.55, 0.92], dtype=F32)   # cool: positive (outside)
+SLICE_INSIDE = np.array([0.92, 0.55, 0.22], dtype=F32)  # warm: the field is negative (inside the shape)
+SLICE_OUTSIDE = np.array([0.25, 0.55, 0.92], dtype=F32)  # cool: positive (outside)
 
 
 def dbgSlice(d, spacing, px):
@@ -259,7 +258,7 @@ def dbgSlice(d, spacing, px):
     return _mix(col, WHITE, zero_ink[..., None])
 
 
-R2 = np.array([0.7548776662466927, 0.5698402909980532], dtype=F32)   # 1/g and 1/g^2, g the plastic number
+R2 = np.array([0.7548776662466927, 0.5698402909980532], dtype=F32)  # 1/g and 1/g^2, g the plastic number
 
 
 def dbgCells(local, cellId, period, px):
@@ -271,7 +270,7 @@ def dbgCells(local, cellId, period, px):
     wheel = cellId @ R2
     wheel = wheel - np.floor(wheel)
     tint = F32(0.5) + F32(0.5) * np.cos(TAU * wheel[..., None] + np.array([0, 2, 4], dtype=F32) * (PI / F32(3)))
-    col = F32(0.55) * np.concatenate([at, np.zeros(at.shape[:-1] + (1,), F32)], -1) + F32(0.45) * tint
+    col = F32(0.55) * np.concatenate([at, np.zeros((*at.shape[:-1], 1), F32)], -1) + F32(0.45) * tint
     to_edge = F32(0.5) * period - np.abs(local)
     edge = np.min(to_edge, axis=-1)
     ink = 1 - _smoothstep(0.5 * px, 1.5 * px, edge)

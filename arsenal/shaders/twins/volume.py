@@ -16,6 +16,7 @@ Apache-2.0, Akashic Aurora. Written fresh from the mathematics: Beer-Lambert; Hi
 integral (SIGGRAPH 2015, "Physically based and unified volumetric rendering in Frostbite"); Henyey and Greenstein
 (1941); as taught by research/reviewed/shader-school-2026-10-13/volumes-atmosphere.md.
 """
+
 from __future__ import annotations
 
 import math
@@ -35,10 +36,11 @@ def _f(x):
     return np.asarray(x, dtype=np.float64)
 
 
-# ----------------------------------------------------------------------------------------- integrate (G1)
+# ------------------------------------------------------------------------------------------ integrate, G1
 @dataclass
 class VolAccum:
     """Front-to-back accumulator: L is the light gathered so far, T the transmittance so far (per channel)."""
+
     L: np.ndarray
     T: np.ndarray
 
@@ -47,7 +49,7 @@ def volAccumInit(shape=()) -> VolAccum:
     """L = 0, T = 1: nothing gathered, everything behind still visible. (`shape` is a twin convenience: one
     accumulator per pixel of an image; the GLSL takes no argument.)"""
     shape = tuple(shape)
-    return VolAccum(np.zeros(shape + (3,)), np.ones(shape + (3,)))
+    return VolAccum(np.zeros((*shape, 3)), np.ones((*shape, 3)))
 
 
 def volTransmittance(sigmaT, dist):
@@ -113,7 +115,7 @@ def volResolve(a: VolAccum, background):
     return a.L + a.T * _f(background)
 
 
-# ---------------------------------------------------------------------------------------------- phase (G2)
+# ----------------------------------------------------------------------------------------------- phase, G2
 def phaseIso() -> float:
     """The isotropic phase function, 1 / (4 pi) per steradian."""
     return 0.25 / math.pi
@@ -142,7 +144,7 @@ def phaseHG32(mu, g):
     return ((f32(1.0) - k * k) / (f32(4.0 * math.pi) * spread * np.sqrt(spread))).astype(f32)
 
 
-# -------------------------------------------------------------------------------------------- density (G4)
+# --------------------------------------------------------------------------------------------- density, G4
 def densFromSDF(sdf, softness):
     """clamp(-sdf / softness, 0, 1): 0 outside the shape, ramping to 1 at depth `softness` inside. softness 0 is a hard
     edge (read as 1e-6)."""
@@ -150,7 +152,7 @@ def densFromSDF(sdf, softness):
     return float(out) if np.ndim(out) == 0 else out
 
 
-# --------------------------------------------------------------------------------------------- march (G5)
+# ---------------------------------------------------------------------------------------------- march, G5
 def marchStepPoly(i, base, scale, power) -> float:
     """Layer i sits at base + scale * i^power (power > 0; layer 0 at base, a negative index read as 0)."""
     k = max(float(i), 0.0)
@@ -165,5 +167,5 @@ def volLightOneTap(p, toLight, dist, floorShadow, densityAt):
     mid = _f(p) + (0.5 * reach)[..., None] * _f(toLight) if np.ndim(reach) else _f(p) + 0.5 * float(reach) * _f(toLight)
     sigma = np.maximum(_f(densityAt(mid)), 0.0)
     t = volTransmittance(sigma, reach)
-    out = floorShadow * (1.0 - t) + t                    # GLSL mix(floorShadow, 1.0, t)
+    out = floorShadow * (1.0 - t) + t  # GLSL mix(floorShadow, 1.0, t)
     return float(out) if np.ndim(out) == 0 else out

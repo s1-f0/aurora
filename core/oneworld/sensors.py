@@ -9,26 +9,32 @@ undeliverable_mail -- entry 1, Navi's: "mail to an absent seat is more urgent, n
 whether it was handled). Wired 2026-10-09, the morning Sunshine came up dead after a reboot: exactly the case where
 mail can wait for a reader who is not coming.
 """
+
 from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 from core.oneworld.floor import CLEAR, FIRED, UNAVAILABLE, Signal
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # A STALE seat is beating slowly, probably idle -- present, not gone. Only seats with neither are absent.
 PRESENT_STATES = frozenset({"LIVE", "STALE"})
 NS = "bifrost"
 
 
-def _roster_rows() -> List[Dict[str, Any]]:
+def _roster_rows() -> list[dict[str, Any]]:
     from core.comm import roster
+
     return roster.by_agent(roster.roster(NS))
 
 
-def _mailbox_query(ns: str, agent: str) -> Dict[str, Any]:
+def _mailbox_query(ns: str, agent: str) -> dict[str, Any]:
     from core.comm import mailbox
+
     return mailbox.query(ns, agent)
 
 
@@ -38,23 +44,28 @@ def _obligation_kinds() -> frozenset:
     (handoff, request, question, blocker) and the kinds that settle an expectation (reply, handoff, completion --
     RB-29). Chat and notes are not obligations."""
     from core.comm import expectations, mailbox
+
     return frozenset(mailbox.LONG_KINDS) | frozenset(expectations.ANSWER_KINDS)
 
 
-def _age_s(ts: str, now_s: float) -> Optional[float]:
+def _age_s(ts: str, now_s: float) -> float | None:
     try:
         return max(0.0, now_s - datetime.fromisoformat(str(ts)).timestamp())
     except (TypeError, ValueError):
         return None
 
 
-def _hours(s: Optional[float]) -> str:
+def _hours(s: float | None) -> str:
     return "age unknown" if s is None else f"oldest {s / 3600:.1f}h"
 
 
-def undeliverable_mail(roster_rows: Optional[Callable[[], List[Dict[str, Any]]]] = None,
-                       mailbox_query: Optional[Callable[[str, str], Dict[str, Any]]] = None, *,
-                       ns: str = NS, now_s: Optional[float] = None) -> Signal:
+def undeliverable_mail(
+    roster_rows: Callable[[], list[dict[str, Any]]] | None = None,
+    mailbox_query: Callable[[str, str], dict[str, Any]] | None = None,
+    *,
+    ns: str = NS,
+    now_s: float | None = None,
+) -> Signal:
     """FIRED when a seat with no live or stale incarnation holds unhandled directed obligations; CLEAR when both
     reads worked and none do; UNAVAILABLE when the roster, or the mailbox of an absent seat, could not be read."""
     rows_fn = roster_rows or _roster_rows
@@ -70,8 +81,8 @@ def undeliverable_mail(roster_rows: Optional[Callable[[], List[Dict[str, Any]]]]
         obligations = _obligation_kinds()
     except Exception as exc:  # noqa: BLE001 -- without the canonical sets the sensor cannot classify: blind
         return Signal(UNAVAILABLE, f"cannot load the canonical kind sets ({type(exc).__name__}: {exc})")
-    hits: List[str] = []
-    blind: List[str] = []
+    hits: list[str] = []
+    blind: list[str] = []
     for agent in absent:
         try:
             q = query(ns, agent)
@@ -81,16 +92,17 @@ def undeliverable_mail(roster_rows: Optional[Callable[[], List[Dict[str, Any]]]]
         if not q or not q.get("available"):
             blind.append(f"{agent} ({(q or {}).get('reason') or 'mailbox unavailable'})")
             continue
-        pending = [e for e in q.get("entries") or []
-                   if e.get("tier") == "unhandled" and e.get("kind") in obligations]
+        pending = [e for e in q.get("entries") or [] if e.get("tier") == "unhandled" and e.get("kind") in obligations]
         if pending:
-            kinds: Dict[str, int] = {}
+            kinds: dict[str, int] = {}
             for e in pending:
                 kinds[e["kind"]] = kinds.get(e["kind"], 0) + 1
             ages = [a for a in (_age_s(e.get("ts"), now_s) for e in pending) if a is not None]
             kind_text = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))
-            hits.append(f"{agent}: {len(pending)} unhandled directed ({kind_text}), "
-                        f"{_hours(max(ages) if ages else None)}, no live incarnation")
+            hits.append(
+                f"{agent}: {len(pending)} unhandled directed ({kind_text}), "
+                f"{_hours(max(ages) if ages else None)}, no live incarnation"
+            )
 
     could_not = f"; could not read the mailbox of: {', '.join(blind)}" if blind else ""
     if hits:
@@ -98,8 +110,11 @@ def undeliverable_mail(roster_rows: Optional[Callable[[], List[Dict[str, Any]]]]
     if blind:
         return Signal(UNAVAILABLE, f"checked {len(absent)} absent seat(s){could_not}")
     who = f" ({', '.join(absent)})" if absent else ""
-    return Signal(CLEAR, f"{len(absent)} absent seat(s){who} hold no unhandled directed mail; "
-                         f"agents never seen on the roster are not scanned")
+    return Signal(
+        CLEAR,
+        f"{len(absent)} absent seat(s){who} hold no unhandled directed mail; "
+        f"agents never seen on the roster are not scanned",
+    )
 
 
 def undeliverable_mail_falsifier() -> Signal:
@@ -109,6 +124,9 @@ def undeliverable_mail_falsifier() -> Signal:
     ts = datetime.fromtimestamp(now_s - 3600).astimezone().isoformat()
     return undeliverable_mail(
         roster_rows=lambda: [{"agent": "falsifier-seat", "state": "DEAD"}],
-        mailbox_query=lambda ns, agent: {"available": True,
-                                         "entries": [{"kind": "request", "tier": "unhandled", "ts": ts}]},
-        now_s=now_s)
+        mailbox_query=lambda ns, agent: {
+            "available": True,
+            "entries": [{"kind": "request", "tier": "unhandled", "ts": ts}],
+        },
+        now_s=now_s,
+    )

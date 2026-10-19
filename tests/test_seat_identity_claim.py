@@ -19,11 +19,8 @@ VERDICTS are locked regardless of whether any given boot path has or has not yet
 call. The wired-vs-latent gap is covered separately: the function's docstring states the
 caller's duty, and a latent claim is at least a NAMED gap now, not a silent one.
 """
+
 from __future__ import annotations
-
-import os
-
-import pytest
 
 
 class _Fake:
@@ -42,7 +39,7 @@ class _Fake:
 
     def set(self, key, val, nx=False, ex=None):
         if nx and key in self.store:
-            return False          # the atomic claim: refused, someone holds it
+            return False  # the atomic claim: refused, someone holds it
         self.store[key] = val
         self._ttl[key] = ex
         return True
@@ -54,6 +51,7 @@ class _Fake:
 
 def _claim(aid, sid, client=None, ttl_s=180):
     from core.comm import seat_identity
+
     return seat_identity.claim_id(aid, sid, client=client, ttl_s=ttl_s)
 
 
@@ -94,11 +92,14 @@ def test_c4_unreachable_store_is_unverified_not_safe():
     NOTE on how 'unreachable' is simulated: passing client=None means 'use the default bus
     connection' (which SUCCEEDS), not 'no store'. The real unreachable condition is a client
     whose reads/writes raise -- which is what a down Redis looks like at the call site."""
+
     class _Down:
         def get(self, key):
             raise ConnectionError("redis down")
+
         def set(self, *a, **k):
             raise ConnectionError("redis down")
+
         def expire(self, *a, **k):
             raise ConnectionError("redis down")
 
@@ -111,6 +112,7 @@ def test_c5_never_raises_even_with_garbage():
     """Hooks are fail-open by contract (T029/K8): a claim must never break a session, even for
     a malformed id or an empty session id."""
     from core.comm import seat_identity
+
     assert isinstance(seat_identity.claim_id("", ""), dict)
     assert isinstance(seat_identity.claim_id(None, None), dict)
     assert isinstance(seat_identity.claim_id("a" * 200, "s"), dict)

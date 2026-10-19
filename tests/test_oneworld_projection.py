@@ -10,6 +10,7 @@ one line in the journal, so a projection rebuilt from it counts that fact ONCE. 
 that incremented on each arrival would count it twice -- that gap IS the drift, and rebuilding from
 the authored truth closes it by construction.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -31,7 +32,7 @@ def test_latest_by_respects_authored_order(jp):
     journal.append("mode_set", "claude", {"surface": "floor", "mode": "loud"})
     r = projection.project(projection.latest_by(lambda f: f["payload"]["surface"]))
     state = r["state"]
-    assert state["fleet"]["payload"]["mode"] == "quiet"   # the LATER fleet mode, not the first
+    assert state["fleet"]["payload"]["mode"] == "quiet"  # the LATER fleet mode, not the first
     assert state["floor"]["payload"]["mode"] == "loud"
 
 
@@ -40,10 +41,10 @@ def test_redelivered_fact_counts_once_not_twice(jp):
     projection rebuilt from the journal counts it ONCE. This is the drift a live in-place surface
     would suffer (it would count the arrival twice) and the one replay-from-authored-truth cannot."""
     journal.append("ev", "a", {"k": "x"})
-    journal.append("ev", "a", {"k": "x"})   # identical content -> same id -> one line (idempotent)
+    journal.append("ev", "a", {"k": "x"})  # identical content -> same id -> one line (idempotent)
     journal.append("ev", "a", {"k": "y"})
     r = projection.project(projection.count_by(lambda f: f["kind"]))
-    assert r["state"]["ev"] == 2            # two DISTINCT facts, not three append calls
+    assert r["state"]["ev"] == 2  # two DISTINCT facts, not three append calls
 
 
 def test_projection_holds_no_state_wipe_and_rebuild(jp):
@@ -53,7 +54,7 @@ def test_projection_holds_no_state_wipe_and_rebuild(jp):
         journal.append("ev", "a", {"n": i})
     red = projection.count_by(lambda f: f["kind"])
     first = projection.project(red)["state"]
-    second = projection.project(red)["state"]   # a fresh rebuild, no carried state
+    second = projection.project(red)["state"]  # a fresh rebuild, no carried state
     assert first == second == {"ev": 4}
 
 
@@ -66,7 +67,8 @@ def test_one_world_many_projections(jp):
     # on its own id -- three distinct keys, each holding its latest fact.
     latest = projection.project(projection.latest_by(lambda f: f["payload"].get("surface") or f["id"]))
     counts = projection.project(projection.count_by(lambda f: f["kind"]))
-    assert "fleet" in latest["state"] and "floor" in latest["state"]
+    assert "fleet" in latest["state"]
+    assert "floor" in latest["state"]
     assert len(latest["state"]) == 3  # fleet, floor, and the hail (keyed by id)
     assert counts["state"] == {"mode_set": 2, "hail": 1}  # a different, equally-correct surface
 
@@ -80,28 +82,34 @@ def test_found_vs_taken_carried_into_projection(jp):
     journal.append("ev", "a", {"n": 2})
     r = projection.project(projection.count_by(lambda f: f["kind"]))
     assert r["state"] == {"ev": 2}
-    assert r["taken"] == 2 and r["unparsed"] == 1
+    assert r["taken"] == 2
+    assert r["unparsed"] == 1
 
 
 def test_empty_journal_projects_clean(jp):
     r = projection.project(projection.count_by(lambda f: f["kind"]))
-    assert r["state"] == {} and r["taken"] == 0 and r["unparsed"] == 0
+    assert r["state"] == {}
+    assert r["taken"] == 0
+    assert r["unparsed"] == 0
 
 
 # --- W1: the bounds legend (spec d622ac) -- a surface declares what it could not see, by
 # construction, before it issues a verdict about the whole. ---
 
+
 def test_projection_always_carries_a_legend(jp):
     """By construction: project() can't return a result without a non-empty legend."""
     journal.append("ev", "a", {"n": 1})
     r = projection.project(projection.count_by(lambda f: f["kind"]))
-    assert isinstance(r.get("legend"), str) and r["legend"].strip()
+    assert isinstance(r.get("legend"), str)
+    assert r["legend"].strip()
 
 
 def test_clean_legend_says_complete(jp):
     journal.append("ev", "a", {"n": 1})
     r = projection.project(projection.count_by(lambda f: f["kind"]))
-    assert "complete" in r["legend"].lower() and "1" in r["legend"]
+    assert "complete" in r["legend"].lower()
+    assert "1" in r["legend"]
 
 
 def test_legend_names_dropped_lines(jp):
@@ -129,4 +137,5 @@ def test_bounds_legend_surfaces_extra_gaps(jp):
     """The primitive accepts surface-specific gaps (things THIS surface could not resolve), beyond
     the journal-level unparsed count."""
     line = projection.bounds_legend(taken=5, unparsed=0, gaps=["2 refs dangling"])
-    assert "2 refs dangling" in line and "complete" not in line.lower()
+    assert "2 refs dangling" in line
+    assert "complete" not in line.lower()

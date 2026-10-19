@@ -28,11 +28,10 @@ TWO PINS, AND THEY FAIL DIFFERENTLY ON PURPOSE.
   round trip that cannot be joined are not one record, they are two half-records, and that is worse
   than the blank template because it looks finished.
 """
+
 import os
 import re
 import sys
-
-import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -67,8 +66,14 @@ def _stream_turn_body():
 #: response-body reads belong here; everything else measures the Python namespace rather than the
 #: thing the rule is about.
 _SECOND_READ = (
-    "resp.stream", "response.stream", ".aread(", ".iter_bytes", ".iter_raw",
-    ".iter_lines", "raw_response", "httpx",
+    "resp.stream",
+    "response.stream",
+    ".aread(",
+    ".iter_bytes",
+    ".iter_raw",
+    ".iter_lines",
+    "raw_response",
+    "httpx",
 )
 
 
@@ -104,7 +109,8 @@ def test_p1_the_turn_loop_never_reads_the_response_body_a_second_time():
         f"Found {offenders} in _stream_turn. Heimdall's own hard stop: 'if any change I propose "
         "would require reading the body twice, it is wrong'. The transport's refusal to touch the "
         "body is what keeps the stream intact; buying wire fields by breaking that trades a blank "
-        "template for a corrupted one.")
+        "template for a corrupted one."
+    )
 
 
 def test_p1b_the_transport_still_refuses_the_body_too():
@@ -141,7 +147,8 @@ def test_p2_the_two_stamps_of_one_round_trip_share_a_join_key():
         "no join key is present on both sides. The transport records status, timing and headers; "
         "the call site will record the body-derived fields. Without a shared key those are two "
         "unrelated half-records of one round trip, which looks finished and cannot be joined. "
-        f"runner has {sorted(on_runner)}, journal has {sorted(on_journal)}.")
+        f"runner has {sorted(on_runner)}, journal has {sorted(on_journal)}."
+    )
 
 
 def test_p2b_the_call_site_fills_the_fields_the_template_declares():
@@ -152,7 +159,8 @@ def test_p2b_the_call_site_fills_the_fields_the_template_declares():
     missing = [w for w in want if w not in body]
     assert not missing, (
         f"_stream_turn still walks past {missing}. `_shape` declares them and no caller has ever "
-        "filled one; the loop is the only lane that can see them.")
+        "filled one; the loop is the only lane that can see them."
+    )
 
 
 def test_p2c_usage_detail_is_folded_not_just_the_four_fields_already_taken():
@@ -163,4 +171,5 @@ def test_p2c_usage_detail_is_folded_not_just_the_four_fields_already_taken():
     m = re.search(r"\n    def _absorb_usage\(self, usage\).*?\n    def ", src, re.S)
     assert m, "_absorb_usage not found"
     assert "reasoning_tokens" in m.group(0) or "completion_tokens_details" in m.group(0), (
-        "the reasoning-token split is still dropped on the floor")
+        "the reasoning-token split is still dropped on the floor"
+    )

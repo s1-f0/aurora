@@ -22,16 +22,18 @@ dependence beyond the authored order it is handed). An impure reducer reintroduc
 module exists to remove; latest_by and count_by below are the two pure starters every early surface
 needs, and a surface supplies its own when it needs more.
 """
+
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 from core.oneworld import journal
 
-Reducer = Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]]
+Reducer = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
 
 
-def project(reducer: Reducer, initial: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def project(reducer: Reducer, initial: dict[str, Any] | None = None) -> dict[str, Any]:
     """Fold the authored journal through `reducer` into a derived surface state.
 
     Returns {"state": <folded>, "taken": N, "unparsed": M}. The state is rebuilt from the journal
@@ -40,11 +42,13 @@ def project(reducer: Reducer, initial: Optional[Dict[str, Any]] = None) -> Dict[
     found-vs-taken honesty the journal computed.
     """
     r = journal.replay()
-    state: Dict[str, Any] = {} if initial is None else dict(initial)
+    state: dict[str, Any] = {} if initial is None else dict(initial)
     for fact in r["facts"]:
         state = reducer(state, fact)
     return {
-        "state": state, "taken": r["taken"], "unparsed": r["unparsed"],
+        "state": state,
+        "taken": r["taken"],
+        "unparsed": r["unparsed"],
         # W1: the bounds legend is emitted BY CONSTRUCTION. There is no code path that returns a
         # projection without it, so a surface literally cannot render one without a declared
         # boundary. A reducer that knows surface-specific gaps passes them via a wrapping call to
@@ -53,26 +57,30 @@ def project(reducer: Reducer, initial: Optional[Dict[str, Any]] = None) -> Dict[
     }
 
 
-def latest_by(key_fn: Callable[[Dict[str, Any]], Any]) -> Reducer:
+def latest_by(key_fn: Callable[[dict[str, Any]], Any]) -> Reducer:
     """Reducer factory: keep the LATEST fact per key_fn(fact). The 'current state' projection --
     the most common surface shape (current mode per surface, latest value per channel). Authored
     order decides 'latest', and replay() preserves it, so the last-appended fact for a key wins."""
-    def reducer(state: Dict[str, Any], fact: Dict[str, Any]) -> Dict[str, Any]:
+
+    def reducer(state: dict[str, Any], fact: dict[str, Any]) -> dict[str, Any]:
         out = dict(state)
         out[key_fn(fact)] = fact
         return out
+
     return reducer
 
 
-def count_by(key_fn: Callable[[Dict[str, Any]], Any]) -> Reducer:
+def count_by(key_fn: Callable[[dict[str, Any]], Any]) -> Reducer:
     """Reducer factory: count facts per key_fn(fact). Because it folds the DEDUPED journal, a
     redelivered fact is counted once -- the drift a live counter would suffer, closed by the
     journal's idempotency rather than by a de-dup the surface has to remember to do."""
-    def reducer(state: Dict[str, Any], fact: Dict[str, Any]) -> Dict[str, Any]:
+
+    def reducer(state: dict[str, Any], fact: dict[str, Any]) -> dict[str, Any]:
         out = dict(state)
         k = key_fn(fact)
         out[k] = out.get(k, 0) + 1
         return out
+
     return reducer
 
 
@@ -80,7 +88,8 @@ def count_by(key_fn: Callable[[Dict[str, Any]], Any]) -> Reducer:
 # its boundary before it issues a verdict about the whole." It lives here (not its own module) until
 # a second consumer -- the floor, the mode schema -- reuses it; rule of three, then extract. ---
 
-def bounds_legend(taken: int, unparsed: int, gaps: Optional[list] = None) -> str:
+
+def bounds_legend(taken: int, unparsed: int, gaps: list | None = None) -> str:
     """One line a human reads: what this surface could NOT see. The journal-level found-vs-taken
     (unparsed lines) is always folded in; `gaps` carries surface-specific unresolved things (a
     dangling reference, a window that rotated away). 'complete' is said ONLY when nothing was
@@ -94,7 +103,7 @@ def bounds_legend(taken: int, unparsed: int, gaps: Optional[list] = None) -> str
     return f"{taken} fact(s) read; could not see: " + "; ".join(parts)
 
 
-def require_bounds(result: Dict[str, Any]) -> str:
+def require_bounds(result: dict[str, Any]) -> str:
     """The render-boundary guard a surface calls before it draws. A projection-shaped dict with no
     non-empty legend is REFUSED: you may not issue a verdict about the whole without declaring your
     boundary. Returns the legend so the call site renders it."""
@@ -102,5 +111,6 @@ def require_bounds(result: Dict[str, Any]) -> str:
     if not isinstance(legend, str) or not legend.strip():
         raise ValueError(
             "a surface must declare its bounds (a non-empty legend) before it renders a verdict "
-            "about the whole -- this projection has none")
+            "about the whole -- this projection has none"
+        )
     return legend

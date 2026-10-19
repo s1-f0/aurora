@@ -24,6 +24,7 @@ law applied to its own instrument, and it names the next slice instead of hiding
 
 Hermetic: every statistic is computed from a list of records handed in. Nothing reads Redis.
 """
+
 import os
 import sys
 
@@ -31,20 +32,21 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.events import touch_stats as S  # noqa: E402
+from core.events import touch_stats as S
 
 HOUR = 3600.0
 T0 = 1_790_900_000.0
 
 
-def rec(kind="touch", *, at=T0, agent="claude", session="sid-1", targets=2,
-        incomplete=False, total=None, truncated=False):
+def rec(
+    kind="touch", *, at=T0, agent="claude", session="sid-1", targets=2, incomplete=False, total=None, truncated=False
+):
     d = {"at": at, "kind": kind, "agent_id": agent, "session_id": session, "detail": {}}
     if kind == "touch":
         d["detail"] = {
-            "schema": "touch.v1", "tool": "Bash",
-            "targets": None if targets is None else [{"action": "read", "key": f"f{i}.py"}
-                                                     for i in range(targets)],
+            "schema": "touch.v1",
+            "tool": "Bash",
+            "targets": None if targets is None else [{"action": "read", "key": f"f{i}.py"} for i in range(targets)],
             "targets_total": total if total is not None else (targets or 0),
             "targets_truncated": truncated,
             "targets_incomplete": incomplete,
@@ -72,13 +74,14 @@ def test_coverage_is_reported_across_every_kind_not_only_touches():
 def test_an_empty_stream_reports_a_measured_zero_not_a_crash():
     r = S.compute([], now=T0)
     assert r["session_coverage"]["total"] == 0
-    assert r["session_coverage"]["share"] is None     # a share of nothing is not 0.0, it is unknown
+    assert r["session_coverage"]["share"] is None  # a share of nothing is not 0.0, it is unknown
 
 
 # ---------------------------------------------------------------- rate and shape
 def test_touches_per_hour_by_seat():
-    recs = [rec(at=T0 + i * 60, agent="claude") for i in range(30)] + \
-           [rec(at=T0 + i * 60, agent="kimi") for i in range(10)]
+    recs = [rec(at=T0 + i * 60, agent="claude") for i in range(30)] + [
+        rec(at=T0 + i * 60, agent="kimi") for i in range(10)
+    ]
     r = S.compute(recs, now=T0 + HOUR)
     assert r["touches_per_hour"]["claude"] == pytest.approx(30.0, rel=0.01)
     assert r["touches_per_hour"]["kimi"] == pytest.approx(10.0, rel=0.01)
@@ -89,7 +92,8 @@ def test_targets_per_touch_reports_a_distribution_not_only_a_mean():
     r = S.compute([rec(targets=n) for n in (0, 1, 1, 2, 40)], now=T0 + 60)
     t = r["targets_per_touch"]
     assert t["mean"] == pytest.approx(8.8)
-    assert t["p50"] == 1 and t["max"] == 40
+    assert t["p50"] == 1
+    assert t["max"] == 40
 
 
 def test_the_share_of_commands_we_could_not_see_into_is_reported():
@@ -130,7 +134,8 @@ def test_what_is_not_measured_is_named_uncheckable_never_estimated():
 
 def test_uncheckable_is_distinct_from_zero_everywhere_it_appears():
     r = S.compute([], now=T0)
-    assert r["p95_hook_latency_ms"] is not 0 and r["p95_hook_latency_ms"] == S.UNCHECKABLE
+    assert r["p95_hook_latency_ms"] != 0
+    assert r["p95_hook_latency_ms"] == S.UNCHECKABLE
 
 
 # ---------------------------------------------------------------- the window
@@ -156,5 +161,6 @@ def test_a_touch_we_could_not_see_into_is_excluded_from_the_targets_distribution
     r = S.compute(recs, now=T0 + 60)
     t = r["targets_per_touch"]
     assert t["mean"] == pytest.approx(5.0), "an unknowable command must not drag the mean toward 0"
-    assert t["known"] == 2 and t["unknown"] == 1
+    assert t["known"] == 2
+    assert t["unknown"] == 1
     assert r["incomplete_share"] == pytest.approx(1 / 3)

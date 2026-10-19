@@ -45,6 +45,7 @@ Run::
 
     py -m pytest tests/test_the_token_gauge_reads_the_keys_the_journal_writes.py -q
 """
+
 from __future__ import annotations
 
 import json
@@ -64,7 +65,8 @@ WRITER_KEYS = ("prompt_tokens", "completion_tokens")
 def _journal(tmp_path, **fields) -> str:
     """Write a journal in the REAL shape and return its directory."""
     import time
-    p = tmp_path / ("runner_probe_%s.json" % time.strftime("%Y-%m-%d"))
+
+    p = tmp_path / ("runner_probe_{}.json".format(time.strftime("%Y-%m-%d")))
     body = {"agent": "probe", "turns": 1}
     body.update(fields)
     p.write_text(json.dumps(body), encoding="utf-8")
@@ -80,14 +82,23 @@ def test_the_gauge_reads_a_journal_the_writer_actually_produced(tmp_path):
     the writer has moved on again. Only writing and reading proves they agree.
     """
     from core.comm import engine_vitals as ev
+
     d = _journal(tmp_path, prompt_tokens=5031502, completion_tokens=17654, total_tokens=5049156)
     got = ev._today_journal("probe", d)
-    assert got.get("prompt") == 5031502 and got.get("completion") == 17654, (
-        "the gauge read %r from a journal holding prompt_tokens=5031502, completion_tokens=17654. "
+    assert got.get("prompt") == 5031502, (
+        f"the gauge read {got!r} from a journal holding prompt_tokens=5031502, completion_tokens=17654. "
         "engine_vitals.py:62 asks for d['prompt'] and d['completion']; the writer serializes "
         "prompt_tokens and completion_tokens (verified against "
         "state/runner_deepseek_2026-10-07.json on 2026-10-07, where the live gauge reported "
-        "{'prompt': 0, 'completion': 0} over 5,049,156 real tokens)." % (got,))
+        "{'prompt': 0, 'completion': 0} over 5,049,156 real tokens)."
+    )
+    assert got.get("completion") == 17654, (
+        f"the gauge read {got!r} from a journal holding prompt_tokens=5031502, completion_tokens=17654. "
+        "engine_vitals.py:62 asks for d['prompt'] and d['completion']; the writer serializes "
+        "prompt_tokens and completion_tokens (verified against "
+        "state/runner_deepseek_2026-10-07.json on 2026-10-07, where the live gauge reported "
+        "{'prompt': 0, 'completion': 0} over 5,049,156 real tokens)."
+    )
 
 
 def test_an_unreadable_journal_is_not_reported_as_zero(tmp_path):
@@ -98,20 +109,27 @@ def test_an_unreadable_journal_is_not_reported_as_zero(tmp_path):
     was wrong every single day.
     """
     from core.comm import engine_vitals as ev
+
     missing = ev._today_journal("no-such-agent-at-all", str(tmp_path))
     assert missing.get("prompt") is None or missing.get("unknown") or missing.get("measured") is False, (
-        "a journal that does not exist reports %r -- indistinguishable from a seat that ran all day "
-        "and spent nothing. An unmeasurable quantity must say so; 0 is a measurement." % (missing,))
+        f"a journal that does not exist reports {missing!r} -- indistinguishable from a seat that ran all day "
+        "and spent nothing. An unmeasurable quantity must say so; 0 is a measurement."
+    )
 
 
 def test_a_genuine_zero_is_still_reported_as_zero(tmp_path):
     """The other half of the same rule, and the reason the fix cannot just be `return None`.
     A journal that EXISTS and records no tokens is a real measurement of zero and must stay 0."""
     from core.comm import engine_vitals as ev
+
     d = _journal(tmp_path, prompt_tokens=0, completion_tokens=0, total_tokens=0)
     got = ev._today_journal("probe", d)
-    assert got.get("prompt") == 0 and got.get("completion") == 0, (
-        "a journal recording a real zero reported %r; measured-zero must survive the fix" % (got,))
+    assert got.get("prompt") == 0, (
+        f"a journal recording a real zero reported {got!r}; measured-zero must survive the fix"
+    )
+    assert got.get("completion") == 0, (
+        f"a journal recording a real zero reported {got!r}; measured-zero must survive the fix"
+    )
 
 
 # ------------------------------------------------------------------ ratchets
@@ -120,6 +138,7 @@ def test_the_writer_still_serializes_the_keys_this_pin_names(tmp_path):
     than let the reader drift again -- the failure above is a disagreement, and a disagreement needs
     a guard on both sides or it just moves."""
     from scripts.runner_token_journal import TokenJournal
+
     tj = TokenJournal("probe-writer", journal_dir=str(tmp_path))
     tj.add_turn(prompt=11, completion=7, model="m")
     files = list(Path(tmp_path).glob("runner_probe-writer_*.json"))
@@ -128,13 +147,16 @@ def test_the_writer_still_serializes_the_keys_this_pin_names(tmp_path):
     body = json.loads(files[0].read_text(encoding="utf-8"))
     for k in WRITER_KEYS:
         assert k in body, (
-            "the writer no longer serializes %r (keys: %r). The reader is pinned to these names; "
-            "if they move, move both." % (k, sorted(body)))
+            f"the writer no longer serializes {k!r} (keys: {sorted(body)!r}). The reader is pinned to these names; "
+            "if they move, move both."
+        )
 
 
 def test_gauge_snapshot_still_returns_its_stable_shape():
     """RATCHET. gauge_snapshot promises a shape-stable, exception-free dict; the fix must not make
     it raise on a seat that has never run."""
     from core.comm import engine_vitals as ev
+
     snap = ev.gauge_snapshot("no-such-agent-at-all")
-    assert isinstance(snap, dict) and "tokens" in snap, snap
+    assert isinstance(snap, dict), snap
+    assert "tokens" in snap, snap

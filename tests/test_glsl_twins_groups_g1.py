@@ -41,11 +41,12 @@ tanh clamp are pinned too. Each was seen failing on the recipes as they were.
 
 Apache-2.0, Akashic Aurora. Written fresh for the house; no corpus code.
 """
+
 from __future__ import annotations
 
 import functools
+import itertools
 import json
-import math
 import re
 import shutil
 from pathlib import Path
@@ -67,24 +68,50 @@ GLOW_TWIN = "arsenal/shaders/twins/groups_glow.py"
 # file -> the plan: module name, atlas group (and tier), category, entry signature, how many leading entry arguments
 # are host inputs rather than params, the uniform prefix, the hooks the host defines, whether it takes uint seeds.
 PLAN = {
-    "groups/aurora-band.glsl": dict(
-        name="aurora-band", group="aurora", tier="band", cat="G8", twin=AURORA_TWIN,
-        entry="vec3 auroraBand(vec2 pixel, vec2 res, float clock, float intensity, float hemHeight, "
-              "float curtainWidth, float fold, float rays, float fringe, int palette, float sky, int curtains, "
-              "int view)",
-        lead=3, prefix="u_auroraBand_", hooks=(), uint=True, cost={"C1"}),
-    "groups/aurora-sheets.glsl": dict(
-        name="aurora-sheets", group="aurora", tier="sheet", cat="G8", twin=AURORA_TWIN,
-        entry="vec3 auroraSheets(vec2 pixel, vec2 res, vec3 ro, mat3 basis, float focal, float clock, "
-              "float intensity, float hemHeight, float curtainWidth, float fold, float rays, float fringe, "
-              "int palette, float sky, float lake, int layers, int view)",
-        lead=6, prefix="u_auroraSheets_", hooks=("float mapScene(vec3 p)", "float densityAt(vec3 p)"), uint=True,
-        cost={"C2"}),
-    "groups/glow-xray.glsl": dict(
-        name="glow-xray", group="glow-xray", tier=None, cat="F9", twin=GLOW_TWIN,
-        entry="vec3 glowXray(vec2 pixel, vec2 res, vec3 ro, mat3 basis, float focal, int budget, float passthrough, "
-              "float density, float sparkWidth, int palette, float hueSpeed, float rim, int view)",
-        lead=5, prefix="u_glowXray_", hooks=("float mapScene(vec3 p)",), uint=False, cost={"C2"}),
+    "groups/aurora-band.glsl": {
+        "name": "aurora-band",
+        "group": "aurora",
+        "tier": "band",
+        "cat": "G8",
+        "twin": AURORA_TWIN,
+        "entry": "vec3 auroraBand(vec2 pixel, vec2 res, float clock, float intensity, float hemHeight, "
+        "float curtainWidth, float fold, float rays, float fringe, int palette, float sky, int curtains, "
+        "int view)",
+        "lead": 3,
+        "prefix": "u_auroraBand_",
+        "hooks": (),
+        "uint": True,
+        "cost": {"C1"},
+    },
+    "groups/aurora-sheets.glsl": {
+        "name": "aurora-sheets",
+        "group": "aurora",
+        "tier": "sheet",
+        "cat": "G8",
+        "twin": AURORA_TWIN,
+        "entry": "vec3 auroraSheets(vec2 pixel, vec2 res, vec3 ro, mat3 basis, float focal, float clock, "
+        "float intensity, float hemHeight, float curtainWidth, float fold, float rays, float fringe, "
+        "int palette, float sky, float lake, int layers, int view)",
+        "lead": 6,
+        "prefix": "u_auroraSheets_",
+        "hooks": ("float mapScene(vec3 p)", "float densityAt(vec3 p)"),
+        "uint": True,
+        "cost": {"C2"},
+    },
+    "groups/glow-xray.glsl": {
+        "name": "glow-xray",
+        "group": "glow-xray",
+        "tier": None,
+        "cat": "F9",
+        "twin": GLOW_TWIN,
+        "entry": "vec3 glowXray(vec2 pixel, vec2 res, vec3 ro, mat3 basis, float focal, int budget, float passthrough, "
+        "float density, float sparkWidth, int palette, float hueSpeed, float rim, int view)",
+        "lead": 5,
+        "prefix": "u_glowXray_",
+        "hooks": ("float mapScene(vec3 p)",),
+        "uint": False,
+        "cost": {"C2"},
+    },
 }
 NAMES = [v["name"] for v in PLAN.values()]
 ENTRY_RE = re.compile(r"^\s*(\w+)\s+(\w+)\s*\((.*)\)\s*$", re.S)
@@ -110,8 +137,10 @@ def library():
 
 def _module(lib, file):
     name = PLAN[file]["name"]
-    assert name in lib.modules, f"no module named {name} (expected in arsenal/web/glsl/{file}); quarantined: " \
-                                f"{[p for p in lib.problems if file in str(p.get('path', '')).replace(chr(92), '/')]}"
+    assert name in lib.modules, (
+        f"no module named {name} (expected in arsenal/web/glsl/{file}); quarantined: "
+        f"{[p for p in lib.problems if file in str(p.get('path', '')).replace(chr(92), '/')]}"
+    )
     m = lib.modules[name]
     assert Path(m.path).resolve() == (LIB / file).resolve(), f"{name} lives in {m.path}, not {file}"
     return m
@@ -142,22 +171,35 @@ def test_headers_carry_every_library_field(library, file):
     plan = PLAN[file]
     m = _module(library, file)
     h = m.header
-    assert h["cat"] == plan["cat"] and h["family"] == plan["cat"][0]
-    assert re.fullmatch(r"\d+\.\d+\.\d+", h["version"]) and h["order"] >= 50
-    assert h["license"] == "Apache-2.0" and h.get("public", True) is True
-    assert isinstance(h["credits"], list) and h["credits"] and all("http" in c for c in h["credits"]), \
-        "every credit names who taught the technique, with a link"
-    assert h["cost"]["class"] in plan["cost"] and h["cost"]["tex"] == 0 and h["cost"]["loop"]
+    assert h["cat"] == plan["cat"]
+    assert h["family"] == plan["cat"][0]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", h["version"])
+    assert h["order"] >= 50
+    assert h["license"] == "Apache-2.0"
+    assert h.get("public", True) is True
+    assert isinstance(h["credits"], list), "every credit names who taught the technique, with a link"
+    assert h["credits"], "every credit names who taught the technique, with a link"
+    assert all("http" in c for c in h["credits"]), "every credit names who taught the technique, with a link"
+    assert h["cost"]["class"] in plan["cost"]
+    assert h["cost"]["tex"] == 0
+    assert h["cost"]["loop"]
     for field in ("contract", "note"):
-        assert isinstance(h[field], str) and len(h[field]) > 200, field
-    assert h["targets"]["glsl"] == "300es" and ("uint" in h["targets"]["needs"]) == plan["uint"]
-    assert h["card"] == f"{plan['name']}.card" and (LIB / "cards" / h["card"]).is_file()
-    assert h["twin"].split(":")[0] == plan["twin"] and (REPO / plan["twin"]).is_file()
+        assert isinstance(h[field], str), field
+        assert len(h[field]) > 200, field
+    assert h["targets"]["glsl"] == "300es"
+    assert ("uint" in h["targets"]["needs"]) == plan["uint"]
+    assert h["card"] == f"{plan['name']}.card"
+    assert (LIB / "cards" / h["card"]).is_file()
+    assert h["twin"].split(":")[0] == plan["twin"]
+    assert (REPO / plan["twin"]).is_file()
     assert h["status"] == "P0"
     group_exemplars = set(_group(plan["group"])["exemplars"])
-    assert h["exemplars"] and set(h["exemplars"]) <= group_exemplars
-    assert h["learn"] and isinstance(h["learn"], list)
-    assert isinstance(h.get("debug"), list) and h["debug"], "a group lists its debug views (atlas section 16)"
+    assert h["exemplars"]
+    assert set(h["exemplars"]) <= group_exemplars
+    assert h["learn"]
+    assert isinstance(h["learn"], list)
+    assert isinstance(h.get("debug"), list), "a group lists its debug views (atlas section 16)"
+    assert h["debug"], "a group lists its debug views (atlas section 16)"
 
 
 @pytest.mark.parametrize("file", sorted(PLAN))
@@ -166,8 +208,10 @@ def test_the_one_function_is_the_entry_and_matches_the_header(library, file):
     m = _module(library, file)
     assert " ".join(m.header["entry"].split()) == plan["entry"]
     _ret, fn, _ = _args(plan["entry"])
-    assert m.functions == (fn,), f"{file} defines {m.functions}: a recipe is one entry (a helper would be a name " \
-                                 "another module could clash with; it belongs in its family's module)"
+    assert m.functions == (fn,), (
+        f"{file} defines {m.functions}: a recipe is one entry (a helper would be a name "
+        "another module could clash with; it belongs in its family's module)"
+    )
     d = next(M.DEFINITION_RE.finditer(M.strip_comments(m.body)))
     assert f"{d.group(1)} {d.group(2)}({' '.join(d.group(3).split())})" == plan["entry"]
 
@@ -177,19 +221,23 @@ def test_params_are_the_entry_tail_and_pass_the_param_schema(library, file):
     plan = PLAN[file]
     h = _module(library, file).header
     _ret, _fn, args = _args(plan["entry"])
-    tail = args[plan["lead"]:]
+    tail = args[plan["lead"] :]
     params = h["params"]
     assert [p["name"] for p in params] == [a[1] for a in tail], "params map one to one onto the entry's tail, in order"
-    for p, (gtype, _name) in zip(params, tail):
+    for p, (gtype, _name) in zip(params, tail, strict=False):
         for field in ("name", "label", "unit", "default", "group", "uniform"):
             assert field in p, f"{p.get('name')}: no {field}"
         assert p["uniform"] == plan["prefix"] + p["name"]
         if "choices" in p:
-            assert gtype == "int" and p["unit"] == "choice"
-            assert [c["value"] for c in p["choices"]] == list(range(len(p["choices"]))), \
+            assert gtype == "int"
+            assert p["unit"] == "choice"
+            assert [c["value"] for c in p["choices"]] == list(range(len(p["choices"]))), (
                 "choice values are 0..n-1, so the Stage's index binding and the value agree"
+            )
         else:
-            assert "range" in p and "step" in p and p["range"][0] <= p["default"] <= p["range"][1]
+            assert "range" in p
+            assert "step" in p
+            assert p["range"][0] <= p["default"] <= p["range"][1]
             assert gtype == ("int" if p["unit"] == "count" else "float"), p["name"]
     descriptors = P.params_from_module(h)
     assert P.check_descriptors(descriptors) == []
@@ -236,8 +284,11 @@ def test_each_recipe_is_wired_from_the_atlas_parts(library, file):
     plan = PLAN[file]
     m = _module(library, file)
     reach = {fn for n in library.resolve([m.name]) for fn in library.modules[n].provides}
-    card_reach = {fn for n in K.build_card(K.load_card(m.name), library=library)["card"]["modules"]
-                  for fn in library.modules[n].provides}
+    card_reach = {
+        fn
+        for n in K.build_card(K.load_card(m.name), library=library)["card"]["modules"]
+        for fn in library.modules[n].provides
+    }
     finish = {"tmRootGain", "tmTanh", "displayOut"}
     tier = _tier(plan)
     missing = sorted(set(tier["required"]) - reach)
@@ -248,7 +299,8 @@ def test_each_recipe_is_wired_from_the_atlas_parts(library, file):
         assert any(set(alt) <= seen for alt in alternatives), f"none of {alternatives} is used"
     code = M.strip_comments(m.body)
     assert not re.search(r"\bconst\s+float\s+(PI|TAU|PHI|SQRT3)\b", code), "PI and TAU come from core-const"
-    assert "hashSine" not in code and not re.search(r"\bsin\s*\(\s*dot", code), "hashes come from hash-pcg"
+    assert "hashSine" not in code, "hashes come from hash-pcg"
+    assert not re.search(r"\bsin\s*\(\s*dot", code), "hashes come from hash-pcg"
     assert not re.search(r"^\s*uniform\b", code, re.M), "the entry takes its params as arguments; hosts bind them"
 
 
@@ -277,8 +329,10 @@ def test_each_card_drives_its_recipe_at_the_header_defaults(library, name):
     file = next(f for f, p in PLAN.items() if p["name"] == name)
     h = _module(library, file).header
     card = K.load_card(name)
-    assert name in card.uses and len(card.note) > 200
-    assert card.size == (480, 270) and {0.0, 2.0, 4.0} <= set(card.times)
+    assert name in card.uses
+    assert len(card.note) > 200
+    assert card.size == (480, 270)
+    assert {0.0, 2.0, 4.0} <= set(card.times)
     body = M.strip_comments(card.body)
     _ret, fn, _ = _args(PLAN[file]["entry"])
     assert re.search(rf"\b{fn}\s*\(", body), f"the card never calls {fn}"
@@ -296,11 +350,13 @@ def test_each_card_drives_its_recipe_at_the_header_defaults(library, name):
 # ========================================================================================================= the twins
 def _aurora():
     from arsenal.shaders.twins import groups_aurora
+
     return groups_aurora
 
 
 def _glow():
     from arsenal.shaders.twins import groups_glow
+
     return groups_glow
 
 
@@ -318,8 +374,21 @@ def _band(pixels, res, clock, **over):
     a = _aurora()
     k = dict(_defaults("groups/aurora-band.glsl"))
     k.update(over)
-    return a.auroraBand(pixels, res, clock, k["intensity"], k["hemHeight"], k["curtainWidth"], k["fold"], k["rays"],
-                        k["fringe"], k["palette"], k["sky"], k["curtains"], k["view"])
+    return a.auroraBand(
+        pixels,
+        res,
+        clock,
+        k["intensity"],
+        k["hemHeight"],
+        k["curtainWidth"],
+        k["fold"],
+        k["rays"],
+        k["fringe"],
+        k["palette"],
+        k["sky"],
+        k["curtains"],
+        k["view"],
+    )
 
 
 def test_twin_params_match_the_headers():
@@ -329,9 +398,12 @@ def test_twin_params_match_the_headers():
     a = _aurora()
     for file in ("groups/aurora-band.glsl", "groups/aurora-sheets.glsl"):
         d = _defaults(file)
-        assert d["palette"] == a.PHYSICAL == 1 and d["view"] == 0 and d["fringe"] == 0
+        assert d["palette"] == a.PHYSICAL == 1
+        assert d["view"] == 0
+        assert d["fringe"] == 0
     assert _defaults("groups/aurora-sheets.glsl")["layers"] == 36
-    assert len(a.PALETTES) == 3 and all(len(v) == 3 for v in a.PALETTES[:1] + a.PALETTES[2:])
+    assert len(a.PALETTES) == 3
+    assert all(len(v) == 3 for v in a.PALETTES[:1] + a.PALETTES[2:])
     assert a.PALETTES[1] is None, "palette 1 is the physical one: auroraLineColor, not a ramp"
 
 
@@ -342,6 +414,7 @@ def _finished(lin):
     """The cards' house tail without the vignette and the dither: tmSuperlinear at 0.85, tanh, the sRGB encode."""
     from arsenal.shaders.twins import colour as C
     from arsenal.shaders.twins import tone as TN
+
     return np.asarray(C.srgbEncode(np.clip(TN.tmTanh(TN.tmSuperlinear(lin, 0.85)), 0.0, 1.0)), dtype=np.float64)
 
 
@@ -368,7 +441,9 @@ def test_band_is_finite_non_negative_and_a_pure_function_of_its_inputs():
     px = _grid(160, 90)
     for clock in (0.0, 7.3, 1234.5):
         c = _band(px, RES, clock)
-        assert c.shape == (90, 160, 3) and np.all(np.isfinite(c)) and c.min() >= 0.0
+        assert c.shape == (90, 160, 3)
+        assert np.all(np.isfinite(c))
+        assert c.min() >= 0.0
         assert np.array_equal(c, _band(px, RES, clock)), "no hidden state, no clock in a hash"
 
 
@@ -381,12 +456,22 @@ def test_band_nothing_glows_below_its_hem():
     px = _grid(160, 90)
     y = (2.0 * px[..., 1] - RES[1]) / RES[1]
     x = (2.0 * px[..., 0] - RES[0]) / RES[1]
-    for hem_height, curtains, clock, over in ((0.6, 1, 3.0, {}), (0.6, 2, 0.0, {}), (1.2, 3, 7.7, {}),
-                                              (0.9, 2, 2.0, dict(fringe=1.0)), (0.9, 2, 2.0, dict(palette=0))):
+    for hem_height, curtains, clock, over in (
+        (0.6, 1, 3.0, {}),
+        (0.6, 2, 0.0, {}),
+        (1.2, 3, 7.7, {}),
+        (0.9, 2, 2.0, {"fringe": 1.0}),
+        (0.9, 2, 2.0, {"palette": 0}),
+    ):
         lit = _band(px, RES, clock, hemHeight=hem_height, curtains=curtains, **over)
         sky = _band(px, RES, clock, hemHeight=hem_height, curtains=curtains, intensity=0.0, **over)
-        lowest = np.min([a.bandHemLine(x, clock, hem_height, 1.0, RES[0] / RES[1], k)
-                         - a.bandRag(x, RES[0] / RES[1], k) for k in range(curtains)], axis=0)
+        lowest = np.min(
+            [
+                a.bandHemLine(x, clock, hem_height, 1.0, RES[0] / RES[1], k) - a.bandRag(x, RES[0] / RES[1], k)
+                for k in range(curtains)
+            ],
+            axis=0,
+        )
         below = y < lowest
         assert below.mean() > 0.1
         assert np.array_equal(lit[below], sky[below]), "light below the hem: the outline is back"
@@ -418,11 +503,14 @@ def test_band_physical_palette_is_green_under_red():
     alts = np.linspace(106.0, 300.0, 60)
     hue = a.bandHue(alts, palette=1)
     redness = hue[:, 0] / np.maximum(hue[:, 1], 1e-9)
-    assert np.all(np.diff(redness) >= -1e-12) and redness[0] < 0.3 and redness[-1] > 3.0
+    assert np.all(np.diff(redness) >= -1e-12)
+    assert redness[0] < 0.3
+    assert redness[-1] > 3.0
 
 
 def _hue_deg(lin):
     from arsenal.shaders.twins import colour as C
+
     lab = C.oklabFromLinear(np.asarray(lin, dtype=np.float64))
     return np.degrees(np.arctan2(lab[..., 2], lab[..., 1])) % 360.0
 
@@ -435,12 +523,15 @@ def test_band_house_palette_is_analogous_with_one_coral_accent():
     a = _aurora()
     alts = np.linspace(106.5, 300.0, 120)
     cool = _hue_deg(a.bandHue(alts, palette=0))
-    assert np.all((cool > 180.0) & (cool < 300.0)) and np.ptp(cool) < 100.0, (cool.min(), cool.max())
-    token = np.array([0xE0, 0x72, 0x4F]) / 255.0                       # --wb-coral, arsenal/web/lib/workbench
+    assert np.all((cool > 180.0) & (cool < 300.0)), (cool.min(), cool.max())
+    assert np.ptp(cool) < 100.0, (cool.min(), cool.max())
+    token = np.array([0xE0, 0x72, 0x4F]) / 255.0  # --wb-coral, arsenal/web/lib/workbench
     from arsenal.shaders.twins import colour as C
+
     assert np.allclose(C.srgbEncode(a.CORAL), token, atol=0.002), "the accent is the house coral token"
     assert np.all((_hue_deg(a.CORAL) > 20.0) & (_hue_deg(a.CORAL) < 50.0)), "coral: a warm orange-pink"
     from arsenal.shaders.twins import atmos as AT
+
     z = np.linspace(-5.0, 60.0, 6501)
     # the sheets' layer (FRINGE_KM), and the band's at the depths a curtain is drawn (BAND_FRINGE_KM at unit depth,
     # times the curtain's scale: a fixed thickness on screen)
@@ -449,7 +540,9 @@ def test_band_house_palette_is_analogous_with_one_coral_accent():
             low = a.fringeEmission(z, fringe, km, scale)
             span = a.fringeKm(fringe, km, scale)
             body = AT.auroraProfile(z, span, a.BAND_SCALE_H)
-            assert low.max() > 0.0 and np.all(low[z > span] == 0.0) and np.all(low[z <= 0.0] == 0.0)
+            assert low.max() > 0.0
+            assert np.all(low[z > span] == 0.0)
+            assert np.all(low[z <= 0.0] == 0.0)
             assert np.all(low * body == 0.0), "the fringe and the body never share an altitude"
         assert np.all(a.fringeEmission(z, 0.0, km, scale) == 0.0), "no fringe asked, none drawn"
 
@@ -463,27 +556,36 @@ def test_aurora_is_never_silver_and_never_blown_to_white():
     fringe on blowing to (0.96, 0.96, 0.95) where a near arc's fringe crossed a farther arc's body: the sheets carry the
     fringe in every palette here too."""
     res = np.array([240.0, 135.0])
-    cases = [(_band, {}, "physical"), (_band, dict(palette=2), "chromatic"), (_band, dict(fringe=1.0), "physical"),
-             (_band, dict(palette=0), "house"), (_band, dict(palette=0, fringe=1.0), "house"),
-             (_band, dict(palette=2, fringe=1.0), "chromatic"),
-             (_sheets, {}, "physical"), (_sheets, dict(palette=2), "chromatic"), (_sheets, dict(palette=0), "house"),
-             (_sheets, dict(fringe=1.0), "physical"), (_sheets, dict(palette=0, fringe=1.0), "house"),
-             (_sheets, dict(palette=2, fringe=1.0), "chromatic")]
+    cases = [
+        (_band, {}, "physical"),
+        (_band, {"palette": 2}, "chromatic"),
+        (_band, {"fringe": 1.0}, "physical"),
+        (_band, {"palette": 0}, "house"),
+        (_band, {"palette": 0, "fringe": 1.0}, "house"),
+        (_band, {"palette": 2, "fringe": 1.0}, "chromatic"),
+        (_sheets, {}, "physical"),
+        (_sheets, {"palette": 2}, "chromatic"),
+        (_sheets, {"palette": 0}, "house"),
+        (_sheets, {"fringe": 1.0}, "physical"),
+        (_sheets, {"palette": 0, "fringe": 1.0}, "house"),
+        (_sheets, {"palette": 2, "fringe": 1.0}, "chromatic"),
+    ]
     for tier, over, kind in cases:
         for clock in (0.0, 4.0):
             rgb = _curtain_colours(tier, res, clock, **over)
             sat, white = np.percentile(_saturation(rgb), 2), rgb.min(-1).max()
             floor, ceiling = (0.4, 0.8) if kind == "house" else (0.6, 0.35)
-            assert sat > floor and white < ceiling, (tier.__name__, over, clock, round(sat, 3), round(white, 3))
+            assert sat > floor, (tier.__name__, over, clock, round(sat, 3), round(white, 3))
+            assert white < ceiling, (tier.__name__, over, clock, round(sat, 3), round(white, 3))
 
 
 # ---- the re-review of the look fix (2026-10-13): the fringe as an outline, white at the extremes, walls in the band
-CARD_RES = np.array([480.0, 270.0])                       # every aurora card renders at this size
-STAR = 0.3 * np.array([0.55, 0.65, 1.0])                 # the cards' brightest star (bandCardStars, sheetsCardStars)
-WHITE_CEILING = 0.9                                      # the brief: no finished channel trio all above this
+CARD_RES = np.array([480.0, 270.0])  # every aurora card renders at this size
+STAR = 0.3 * np.array([0.55, 0.65, 1.0])  # the cards' brightest star (bandCardStars, sheetsCardStars)
+WHITE_CEILING = 0.9  # the brief: no finished channel trio all above this
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _card_picture(tier, clock, items):
     """A tier's scene-linear light at the cards' 480 x 270 (rows bottom up), its knobs at the defaults but for
     `items`. Cached: several pins read the same pictures."""
@@ -496,7 +598,7 @@ def _card_picture(tier, clock, items):
 def _extreme(tier, palette):
     """Every light-making knob at its top: intensity 3, the full fringe, rays and folds, and (the band) three
     curtains, so near curtains' fringes cross far ones' bodies and creases, rays and folds pile up."""
-    over = dict(palette=palette, intensity=3.0, fringe=1.0, rays=1.0, fold=1.0)
+    over = {"palette": palette, "intensity": 3.0, "fringe": 1.0, "rays": 1.0, "fold": 1.0}
     if tier == "band":
         over["curtains"] = 3
     return tuple(sorted(over.items()))
@@ -520,8 +622,9 @@ def test_aurora_is_never_blown_to_white_at_any_knob_extreme():
             assert white <= WHITE_CEILING, (tier, palette, "extremes at 480 x 270", round(float(white), 3))
             for hem in knobs["hemHeight"]["range"]:
                 for width in knobs["curtainWidth"]["range"]:
-                    lin = fn(_grid(240, 135), np.array([240.0, 135.0]), 4.0,
-                             **dict(items, hemHeight=hem, curtainWidth=width))
+                    lin = fn(
+                        _grid(240, 135), np.array([240.0, 135.0]), 4.0, **dict(items, hemHeight=hem, curtainWidth=width)
+                    )
                     white = _finished(lin + STAR).min(-1).max()
                     assert white <= WHITE_CEILING, (tier, palette, hem, width, round(float(white), 3))
         for clock in (0.0, 4.0):
@@ -534,6 +637,7 @@ def _fringe_mask(rgb, palette):
     tint's, chroma above 0.045 and lightness above 0.18 (the house sky peaks at lightness 0.19 but chroma 0.026, so no
     sky pixel passes; the bodies' hues sit 60 degrees and more away)."""
     from arsenal.shaders.twins import colour as C
+
     lab = np.asarray(C.oklabFromLinear(C.srgbDecode(np.clip(rgb, 0.0, 1.0))), np.float64)
     hue = np.degrees(np.arctan2(lab[..., 2], lab[..., 1])) % 360.0
     off = np.abs((hue - _hue_deg(_aurora().fringeTint(palette)) + 180.0) % 360.0 - 180.0)
@@ -546,7 +650,7 @@ def _pieces(mask):
     h, w = mask.shape
     seen = np.zeros_like(mask)
     out = []
-    for y, x in zip(*np.nonzero(mask)):
+    for y, x in zip(*np.nonzero(mask), strict=False):
         if seen[y, x]:
             continue
         seen[y, x] = True
@@ -555,7 +659,7 @@ def _pieces(mask):
             cy, cx = todo.pop()
             lo, hi = min(lo, cx), max(hi, cx)
             ys, xs = slice(max(cy - 2, 0), min(cy + 3, h)), slice(max(cx - 2, 0), min(cx + 3, w))
-            for ny, nx in zip(*np.nonzero(mask[ys, xs] & ~seen[ys, xs])):
+            for ny, nx in zip(*np.nonzero(mask[ys, xs] & ~seen[ys, xs]), strict=False):
                 seen[ys.start + ny, xs.start + nx] = True
                 todo.append((ys.start + ny, xs.start + nx))
         out.append((lo, hi))
@@ -565,11 +669,12 @@ def _pieces(mask):
 def _run_lengths(mask):
     """For every pixel of the mask, the length of the vertical run it sits in (columns of the array)."""
     out = np.zeros(mask.shape, dtype=np.int64)
-    padded = np.concatenate([np.zeros((1, mask.shape[1]), np.int8), mask.astype(np.int8),
-                             np.zeros((1, mask.shape[1]), np.int8)], 0)
+    padded = np.concatenate(
+        [np.zeros((1, mask.shape[1]), np.int8), mask.astype(np.int8), np.zeros((1, mask.shape[1]), np.int8)], 0
+    )
     edges = np.diff(padded, axis=0)
     for x in range(mask.shape[1]):
-        for a, b in zip(np.nonzero(edges[:, x] == 1)[0], np.nonzero(edges[:, x] == -1)[0]):
+        for a, b in zip(np.nonzero(edges[:, x] == 1)[0], np.nonzero(edges[:, x] == -1)[0], strict=False):
             out[a:b, x] = b - a
     return out
 
@@ -595,8 +700,12 @@ def _check_fringe_is_an_edge(rgb, palette, label, thickness=(2, 3), across=None)
     spans = [hi - lo + 1 for lo, hi in _pieces(mask)] or [0]
     runs = _runs(mask) if mask.any() else np.zeros(1, np.int64)
     assert max(spans) <= width / 3.0, f"{label}: a fringe line {max(spans)} px long across {width}: an outline"
-    assert np.percentile(runs, 95) <= thickness[0] and runs.max() <= thickness[1], \
+    assert np.percentile(runs, 95) <= thickness[0], (
         f"{label}: the fringe is {np.percentile(runs, 95):.0f} px thick (95th percentile), {runs.max()} at most"
+    )
+    assert runs.max() <= thickness[1], (
+        f"{label}: the fringe is {np.percentile(runs, 95):.0f} px thick (95th percentile), {runs.max()} at most"
+    )
     if across is not None and mask.any():
         thick = np.zeros(mask.shape, np.int64)
         thick[mask] = runs
@@ -607,9 +716,10 @@ def _check_fringe_is_an_edge(rgb, palette, label, thickness=(2, 3), across=None)
             part = slice(third * size // 3, (third + 1) * size // 3)
             here = thick[:, part][mask[:, part]]
             if here.size >= 12:
-                assert np.percentile(here, 95) <= thickness[0], \
-                    f"{label}: the fringe is {np.percentile(here, 95):.0f} px thick (95th percentile) in the {name} " \
+                assert np.percentile(here, 95) <= thickness[0], (
+                    f"{label}: the fringe is {np.percentile(here, 95):.0f} px thick (95th percentile) in the {name} "
                     f"third of the frame"
+                )
     return max(spans)
 
 
@@ -624,8 +734,32 @@ def _fringe_items(tier, palette, **over):
 
 # The fringe pins' clocks: 24 spread over ten minutes, on no common step (the recipes' rates are incommensurate), each
 # palette taking every third. The pin before them sampled t = 0 and 4 only, two of the rare frames that held the rule.
-FRINGE_CLOCKS = (0.0, 4.0, 11.0, 25.0, 37.0, 50.0, 68.0, 90.0, 113.0, 141.0, 175.0, 199.0, 230.0, 262.0, 300.0, 350.0,
-                 366.0, 401.0, 437.0, 470.0, 505.0, 540.0, 575.0, 599.0)
+FRINGE_CLOCKS = (
+    0.0,
+    4.0,
+    11.0,
+    25.0,
+    37.0,
+    50.0,
+    68.0,
+    90.0,
+    113.0,
+    141.0,
+    175.0,
+    199.0,
+    230.0,
+    262.0,
+    300.0,
+    350.0,
+    366.0,
+    401.0,
+    437.0,
+    470.0,
+    505.0,
+    540.0,
+    575.0,
+    599.0,
+)
 FRINGE_ACROSS = {"band": "columns", "sheets": "rows"}
 FRINGE_CORNER_CLOCKS = (37.0, 175.0, 350.0, 575.0)
 # The narrowest curtain under the default hem, as (clock, palette): t = 4 and 37, where the second re-review found the
@@ -655,8 +789,9 @@ def test_aurora_fringe_is_short_and_thin_at_every_clock(tier):
         label = f"{tier}, palette {palette}, t = {clock:g}"
         drawn[palette] = max(drawn[palette], _check_fringe_is_an_edge(rgb, palette, label, across=FRINGE_ACROSS[tier]))
     for palette in (0, 1, 2):
-        assert drawn[palette] >= 0.04 * CARD_RES[0], f"{tier}, palette {palette}: the fringe is not drawn " \
-                                                     f"({drawn[palette]} px at most over eight clocks)"
+        assert drawn[palette] >= 0.04 * CARD_RES[0], (
+            f"{tier}, palette {palette}: the fringe is not drawn ({drawn[palette]} px at most over eight clocks)"
+        )
         longest = 0
         for clock in (4.0, 350.0):
             rgb = _finished(_card_picture(tier, clock, _extreme(tier, palette)))
@@ -682,8 +817,9 @@ def test_aurora_fringe_is_short_and_thin_at_the_hem_and_width_corners(tier):
     fn = _band if tier == "band" else _sheets
     late = FRINGE_CORNER_CLOCKS
     corners = [(h, w) for h in knobs["hemHeight"]["range"] for w in knobs["curtainWidth"]["range"]]
-    cases = [(hem, width, ((late[j], j % 3), (late[(j + 2) % 4], (j + 1) % 3))) for j, (hem, width) in
-             enumerate(corners)]
+    cases = [
+        (hem, width, ((late[j], j % 3), (late[(j + 2) % 4], (j + 1) % 3))) for j, (hem, width) in enumerate(corners)
+    ]
     cases.append((knobs["hemHeight"]["default"], knobs["curtainWidth"]["range"][0], FRINGE_NARROW_FRAMES))
     for hem, width, frames in cases:
         for clock, palette in frames:
@@ -708,14 +844,20 @@ def test_aurora_fringe_docs_say_what_the_twin_measures():
         h = _module(lib, file).header
         texts[f"{file} help"] = next(p["help"] for p in h["params"] if p["name"] == "fringe")
         texts[f"{file} contract"] = h["contract"]
-    said = re.compile(r"about (\d+) per\s?cent of (?:its|the curtain's|each arc's) length at (?:fringe )?0\.35,? "
-                      r"(?:and )?(\d+) at 1")
+    said = re.compile(
+        r"about (\d+) per\s?cent of (?:its|the curtain's|each arc's) length at (?:fringe )?0\.35,? "
+        r"(?:and )?(\d+) at 1"
+    )
     for name, text in texts.items():
         found = said.findall(" ".join(text.split()))
         assert found, f"{name}: no coverage given"
         for low, high in found:
-            assert abs(int(low) - measured[0.35]) <= 1.0 and abs(int(high) - measured[1.0]) <= 1.0, \
+            assert abs(int(low) - measured[0.35]) <= 1.0, (
                 f"{name} says {low} and {high} per cent; the twin measures {measured[0.35]:.1f} and {measured[1.0]:.1f}"
+            )
+            assert abs(int(high) - measured[1.0]) <= 1.0, (
+                f"{name} says {low} and {high} per cent; the twin measures {measured[0.35]:.1f} and {measured[1.0]:.1f}"
+            )
     doc = " ".join(a.fringeEmission.__doc__.split())
     assert f"{a.FRINGE_SCALE_KM:g} km scale" in doc, f"fringeEmission's docstring: {doc}"
 
@@ -744,7 +886,7 @@ def _band_gate_row(clock, curtainWidth, samples=1920):
     hem = _defaults("groups/aurora-band.glsl")["hemHeight"]
     y = a.bandHemLine(x, clock, hem, curtainWidth, res[0] / res[1]) + 12.0 / res[1]
     pixel = np.stack([x_px, (y * res[1] + res[1]) / 2.0], -1)
-    over = dict(curtains=1, rays=0.0, fringe=0.0, sky=0.0, curtainWidth=curtainWidth)
+    over = {"curtains": 1, "rays": 0.0, "fringe": 0.0, "sky": 0.0, "curtainWidth": curtainWidth}
     lit = _band(pixel, res, clock, **over) @ LUMA
     bare = _band(pixel, res, clock, view=2, **over) @ LUMA
     fabric = 4.0 * _band(pixel, res, clock, view=1, **over)[..., 0]
@@ -780,7 +922,8 @@ def test_band_curtain_ends_fade_never_walls():
         for clock in (0.0, 2.0, 4.0, 37.0, 123.0):
             x_px, gate = _band_gate_row(clock, width)
             ok = np.isfinite(gate)
-            assert ok.mean() > 0.9 and np.nanmax(gate) > 0.5, (width, clock, "the curtain is lit along the row")
+            assert ok.mean() > 0.9, (width, clock, "the curtain is lit along the row")
+            assert np.nanmax(gate) > 0.5, (width, clock, "the curtain is lit along the row")
             for span, at in _climbs(x_px[ok], gate[ok]):
                 seen += 1
                 assert span >= 8.0, f"width {width}, t = {clock}: a curtain ends in {span:.1f} px at x = {at:.0f}"
@@ -819,22 +962,41 @@ def test_band_debug_views_are_what_their_names_say():
     px = _grid(80, 45)
     res = np.array([80.0, 45.0])
     fabric = _band(px, res, 2.0, view=1)
-    assert np.allclose(fabric[..., 0], fabric[..., 1]) and np.allclose(fabric[..., 1], fabric[..., 2]), "grey"
+    assert np.allclose(fabric[..., 0], fabric[..., 1]), "grey"
+    assert np.allclose(fabric[..., 1], fabric[..., 2]), "grey"
     assert fabric.max() > 0.0
     bands = _band(px, res, 2.0, view=2)
-    assert np.all(np.isfinite(bands)) and bands.max() > 0.0
+    assert np.all(np.isfinite(bands))
+    assert bands.max() > 0.0
 
 
 # ---- aurora sheets
 def _sheets(pixels, res, clock, ro=(0.0, 0.0, 0.0), target=(0.0, 0.22, -1.0), focal=1.8, **over):
     a = _aurora()
     from arsenal.shaders.twins import ray as R
+
     k = dict(_defaults("groups/aurora-sheets.glsl"))
     k.update(over)
     basis = R.camLookAt(np.array(ro, dtype=np.float32), np.array(target, dtype=np.float32), 0.0)
-    return a.auroraSheets(pixels, res, np.array(ro), basis, focal, clock, k["intensity"], k["hemHeight"],
-                          k["curtainWidth"], k["fold"], k["rays"], k["fringe"], k["palette"], k["sky"], k["lake"],
-                          k["layers"], k["view"])
+    return a.auroraSheets(
+        pixels,
+        res,
+        np.array(ro),
+        basis,
+        focal,
+        clock,
+        k["intensity"],
+        k["hemHeight"],
+        k["curtainWidth"],
+        k["fold"],
+        k["rays"],
+        k["fringe"],
+        k["palette"],
+        k["sky"],
+        k["lake"],
+        k["layers"],
+        k["view"],
+    )
 
 
 SRES = np.array([96.0, 54.0])
@@ -843,7 +1005,9 @@ SRES = np.array([96.0, 54.0])
 def test_sheets_are_finite_non_negative_and_static_per_pixel():
     px = _grid(96, 54)
     c = _sheets(px, SRES, 4.0)
-    assert c.shape == (54, 96, 3) and np.all(np.isfinite(c)) and c.min() >= 0.0
+    assert c.shape == (54, 96, 3)
+    assert np.all(np.isfinite(c))
+    assert c.min() >= 0.0
     assert np.array_equal(c, _sheets(px, SRES, 4.0)), "the jitter is a function of the pixel alone"
 
 
@@ -864,17 +1028,19 @@ def test_sheets_rays_stand_straight_up_their_curtains(monkeypatch):
     a = _aurora()
     from arsenal.shaders.twins import ray as R
     from arsenal.shaders.twins import volume as V
+
     calls = []
     real = a.A.auroraRays
 
     def spy(along, t, seed):
         calls.append(np.array(along, dtype=np.float64, copy=True))
         return real(along, t, seed)
+
     monkeypatch.setattr(a.A, "auroraRays", spy)
     res = np.array([96.0, 54.0])
     px = np.array([[x, y] for x in (5.5, 30.5, 61.5, 90.5) for y in (20.5, 33.5, 50.5)])
     d = _defaults("groups/aurora-sheets.glsl")
-    _sheets(px, res, 4.0, view=4)                                        # jitter off: each sheet at its own height
+    _sheets(px, res, 4.0, view=4)  # jitter off: each sheet at its own height
     hem, count = d["hemHeight"], d["layers"]
     assert len(calls) == count, "one read of the rays per sheet, none once per pixel"
     basis = R.camLookAt(np.zeros(3, np.float32), np.array([0.0, 0.22, -1.0], np.float32), 0.0)
@@ -882,7 +1048,7 @@ def test_sheets_rays_stand_straight_up_their_curtains(monkeypatch):
     spacing = a.SHEET_TOP * hem / float(count - 1) ** a.SHEET_POWER
     for i, along in enumerate(calls):
         h = V.marchStepPoly(i, hem, spacing, a.SHEET_POWER)
-        plan_x = look[:, 0] * h / (2.0 * look[:, 1] + 0.4)                # where this sheet is met, eye at the origin
+        plan_x = look[:, 0] * h / (2.0 * look[:, 1] + 0.4)  # where this sheet is met, eye at the origin
         assert np.allclose(along, a.SHEET_RAYS[0] * plan_x / d["curtainWidth"], rtol=1e-9, atol=1e-9), i
 
 
@@ -932,7 +1098,7 @@ def test_sheets_fine_creases_blur_instead_of_aliasing():
     fine = np.stack([(xs + 0.5) / 3.0, (ys + 0.5) / 3.0], -1)
     for hem in hems:
         for width in widths:
-            over = dict(view=4, sky=0.0, lake=0.0, hemHeight=hem, curtainWidth=width)
+            over = {"view": 4, "sky": 0.0, "lake": 0.0, "hemHeight": hem, "curtainWidth": width}
             one = _finished(_sheets(_grid(160, 90), res, 4.0, **over)) @ LUMA
             many = (_finished(_sheets(fine, res, 4.0, **over)) @ LUMA).reshape(90, 3, 160, 3).mean(axis=(1, 3))
             lit = many > 0.02
@@ -958,11 +1124,11 @@ def test_sheets_below_the_horizon_mirror_the_sky_in_the_lake():
     the static jitter off: it belongs to the pixel, not the direction)."""
     res = np.array([64.0, 64.0])
     px = _grid(64, 64)
-    level = dict(target=(0.0, 0.0, -1.0), focal=1.2, view=4)
+    level = {"target": (0.0, 0.0, -1.0), "focal": 1.2, "view": 4}
     k = 0.6
     mirrored = _sheets(px, res, 4.0, lake=k, **level)
     plain = _sheets(px, res, 4.0, lake=0.0, **level)
-    top, bottom = mirrored[32:], mirrored[:32][::-1]        # rows run bottom up: row 32 + i mirrors row 31 - i
+    top, bottom = mirrored[32:], mirrored[:32][::-1]  # rows run bottom up: row 32 + i mirrors row 31 - i
     assert np.allclose(bottom, k * top, rtol=1e-6, atol=1e-9)
     sky_only = _sheets(px, res, 4.0, lake=0.0, intensity=0.0, **level)
     assert np.allclose(plain[:32], sky_only[:32]), "no lake, no curtain below the horizon"
@@ -973,13 +1139,16 @@ def test_sheets_colour_climbs_the_stack_in_order():
     a = _aurora()
     px = _grid(96, 54)
     idx = _sheets(px, SRES, 4.0, view=1)
-    assert np.all(np.isfinite(idx)) and idx.max() > 0.0
+    assert np.all(np.isfinite(idx))
+    assert idx.max() > 0.0
     fr = np.linspace(0.0, 1.0, 50)
     house = a.sheetHue(fr, palette=0)
     hue = _hue_deg(house)
-    assert np.all(np.diff(hue) > -1e-9) and np.ptp(hue) < 100.0, "hem to top climbs the wheel one way, analogous"
+    assert np.all(np.diff(hue) > -1e-9), "hem to top climbs the wheel one way, analogous"
+    assert np.ptp(hue) < 100.0, "hem to top climbs the wheel one way, analogous"
     phys = a.sheetHue(fr, palette=1)
-    assert phys[0, 1] > phys[0, 0] and phys[-1, 0] > phys[-1, 1], "green at the hem, red at the top"
+    assert phys[0, 1] > phys[0, 0], "green at the hem, red at the top"
+    assert phys[-1, 0] > phys[-1, 1], "green at the hem, red at the top"
 
 
 def test_sheets_debug_views_differ_from_the_picture_where_promised():
@@ -988,8 +1157,10 @@ def test_sheets_debug_views_differ_from_the_picture_where_promised():
     no_avg = _sheets(px, SRES, 4.0, view=3)
     no_jit = _sheets(px, SRES, 4.0, view=4)
     foot = _sheets(px, SRES, 4.0, view=2)
-    assert not np.allclose(pic, no_avg) and not np.allclose(pic, no_jit)
-    assert np.allclose(foot[..., 0], foot[..., 1]) and foot.max() > 0.0, "the footprint alone is a grey field"
+    assert not np.allclose(pic, no_avg)
+    assert not np.allclose(pic, no_jit)
+    assert np.allclose(foot[..., 0], foot[..., 1]), "the footprint alone is a grey field"
+    assert foot.max() > 0.0, "the footprint alone is a grey field"
 
 
 # ---- glow-xray
@@ -1004,11 +1175,26 @@ def _shell_scene(p):
 def _xray(pixels, res, scene=_shell_scene, ro=(0.0, 0.6, 4.0), **over):
     g = _glow()
     from arsenal.shaders.twins import ray as R
+
     k = dict(_defaults("groups/glow-xray.glsl"))
     k.update(over)
     basis = R.camLookAt(np.array(ro, dtype=np.float32), np.zeros(3, np.float32), 0.0)
-    return g.glowXray(pixels, res, np.array(ro), basis, 2.0, k["budget"], k["passthrough"], k["density"],
-                      k["sparkWidth"], k["palette"], k["hueSpeed"], k["rim"], k["view"], scene)
+    return g.glowXray(
+        pixels,
+        res,
+        np.array(ro),
+        basis,
+        2.0,
+        k["budget"],
+        k["passthrough"],
+        k["density"],
+        k["sparkWidth"],
+        k["palette"],
+        k["hueSpeed"],
+        k["rim"],
+        k["view"],
+        scene,
+    )
 
 
 XRES = np.array([64.0, 48.0])
@@ -1017,7 +1203,9 @@ XRES = np.array([64.0, 48.0])
 def test_xray_is_finite_non_negative_and_dark_where_nothing_is_near():
     px = _grid(64, 48)
     c = _xray(px, XRES)
-    assert np.all(np.isfinite(c)) and c.min() >= 0.0 and c.max() > 0.1
+    assert np.all(np.isfinite(c))
+    assert c.min() >= 0.0
+    assert c.max() > 0.1
     corners = np.concatenate([c[:4, :4].ravel(), c[-4:, -4:].ravel()])
     assert corners.max() < 0.02 * c.max(), "a ray that passes nothing gathers (almost) nothing"
 
@@ -1036,7 +1224,7 @@ def test_xray_the_budget_is_the_opacity():
     px = _grid(48, 36)
     res = np.array([48.0, 36.0])
     light = [_xray(px, res, budget=b, rim=0.0).sum(-1) for b in (24, 48, 96, 160)]
-    for a, b in zip(light, light[1:]):
+    for a, b in itertools.pairwise(light):
         assert np.all(b >= a - 1e-12), "more budget never dims a pixel"
     assert light[0].sum() < 0.9 * light[-1].sum(), "a short budget stops rays before the back of the scene"
 
@@ -1054,17 +1242,22 @@ def test_xray_hue_encodes_depth():
 
 def test_xray_steps_view_is_the_heat_of_the_loop():
     from arsenal.shaders.twins import core as C
+
     px = _grid(32, 24)
     res = np.array([32.0, 24.0])
     heat = _xray(px, res, view=1)
-    steps = _glow().xraySteps(px, res, np.array((0.0, 0.6, 4.0)), _basis((0.0, 0.6, 4.0)), 2.0,
-                              96, 0.012, 3.0, _shell_scene)
-    assert steps.shape == (24, 32) and steps.min() >= 1 and steps.max() <= 96
+    steps = _glow().xraySteps(
+        px, res, np.array((0.0, 0.6, 4.0)), _basis((0.0, 0.6, 4.0)), 2.0, 96, 0.012, 3.0, _shell_scene
+    )
+    assert steps.shape == (24, 32)
+    assert steps.min() >= 1
+    assert steps.max() <= 96
     assert np.allclose(heat, C.dbgHeatCount(steps, 96.0))
 
 
 def _basis(ro):
     from arsenal.shaders.twins import ray as R
+
     return R.camLookAt(np.array(ro, dtype=np.float32), np.zeros(3, np.float32), 0.0)
 
 
@@ -1110,6 +1303,7 @@ void mainImage(out vec4 color, in vec2 pixel) {
 def _twin_parity_image():
     a, g = _aurora(), _glow()
     from arsenal.shaders.twins import ray as R
+
     res = np.array([160.0, 90.0])
     px = _grid(160, 90)
     out = np.zeros((90, 800, 3))
@@ -1121,7 +1315,7 @@ def _twin_parity_image():
     out[:, 320:480] = g.glowXray(px, res, ro, _basis(ro), 2.0, 96, 0.012, 3.0, 0.015, 0, 0.35, 0.35, 0, _shell_scene)
     out[:, 480:640] = a.auroraBand(px, res, 37.0, 1.0, 0.9, 0.7, 0.8, 1.0, 1.0, 0, 1.0, 3, 0)
     out[:, 640:800] = a.auroraSheets(px, res, eye, basis, 1.8, 9.0, 1.2, 1.6, 0.5, 0.9, 0.8, 0.0, 1, 1.0, 0.55, 36, 2)
-    return np.round(np.tanh(np.clip(out, 0.0, 10.0)) * 255.0)[::-1]       # PNG rows run top down
+    return np.round(np.tanh(np.clip(out, 0.0, 10.0)) * 255.0)[::-1]  # PNG rows run top down
 
 
 # The aurora tiers with every light-making knob at its top (_extreme), one panel per palette, at the cards' 480 x 270,
@@ -1217,29 +1411,45 @@ def _twin_extremes_image():
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH (the headless driver)")
 def test_the_glsl_matches_its_twins_on_swiftshader(tmp_path):
     from PIL import Image
+
     cards_dir = tmp_path / "cards"
     cards_dir.mkdir()
     (cards_dir / "parity-groups-g1.card").write_text(PARITY_CARD, encoding="utf-8", newline="\n")
     (cards_dir / "parity-aurora-extremes.card").write_text(EXTREMES_CARD, encoding="utf-8", newline="\n")
     (cards_dir / "parity-aurora-fringe-late.card").write_text(FRINGE_LATE_CARD, encoding="utf-8", newline="\n")
-    report = K.render_cards(["parity-groups-g1", "parity-aurora-extremes", "parity-aurora-fringe-late"],
-                            cards_dir=cards_dir, out_root=tmp_path / "out", allow_tracked=True, lock_wait_min=5,
-                            quiet=True)
+    report = K.render_cards(
+        ["parity-groups-g1", "parity-aurora-extremes", "parity-aurora-fringe-late"],
+        cards_dir=cards_dir,
+        out_root=tmp_path / "out",
+        allow_tracked=True,
+        lock_wait_min=5,
+        quiet=True,
+    )
     if report["driver"].get("error") and "lock" in str(report["driver"]["error"]).lower():
         pytest.skip(f"the GPU lock stayed busy: {report['driver']['error']}")
     for row in report["cards"]:
-        assert row["compile_ok"] is True and row["nan_pixels"] == 0, row
+        assert row["compile_ok"] is True, row
+        assert row["nan_pixels"] == 0, row
     png = sorted((tmp_path / "out" / "parity-groups-g1").glob("t0*.png"))[0]
     gpu = np.asarray(Image.open(png).convert("RGB")).astype(np.float64)
     cpu = _twin_parity_image()
-    panels = (("band", slice(0, 160)), ("sheets", slice(160, 320)), ("xray", slice(320, 480)),
-              ("band house, 3 curtains, fringe 1", slice(480, 640)), ("sheets footprint view", slice(640, 800)))
+    panels = (
+        ("band", slice(0, 160)),
+        ("sheets", slice(160, 320)),
+        ("xray", slice(320, 480)),
+        ("band house, 3 curtains, fringe 1", slice(480, 640)),
+        ("sheets footprint view", slice(640, 800)),
+    )
     for name, cols in panels:
         miss = np.abs(gpu[:, cols] - cpu[:, cols])
         # measured 2026-10-13: every pixel of every panel within one 8-bit code. The margin lets a pixel on a crease
         # (float32 against float64 through a steep transfer) differ by two; a broken wiring differs everywhere
-        assert miss.max() <= 2 and np.mean(miss > 1) < 0.005, \
+        assert miss.max() <= 2, (
             f"{name}: {np.mean(miss > 1):.4f} of pixels off by more than one code, worst {miss.max()}"
+        )
+        assert np.mean(miss > 1) < 0.005, (
+            f"{name}: {np.mean(miss > 1):.4f} of pixels off by more than one code, worst {miss.max()}"
+        )
     # the extremes: the GPU against the twins, then the GPU's own picture against the brief. Measured 2026-10-13: at
     # most 0.03 per cent of a panel's pixels off by more than one code and 24 pixels (0.02 per cent) by more than two.
     # With every knob at its top the sheets are sensitive at a few pixels: moving a pixel by a thousandth of itself
@@ -1254,18 +1464,28 @@ def test_the_glsl_matches_its_twins_on_swiftshader(tmp_path):
         for tier, clock, rows in _extremes_rows():
             miss = np.abs(gpu[rows, cols] - cpu[rows, cols]).max(-1)
             label = f"{tier}, palette {palette}, every knob at its top, t = {clock:g}, on the GPU"
-            assert np.mean(miss > 2) < 0.0005 and np.mean(miss > 1) < 0.005 and miss.mean() < 0.2, \
-                f"{label}: {np.mean(miss > 2):.5f} of pixels off by more than two codes, {np.mean(miss > 1):.5f} by " \
+            assert np.mean(miss > 2) < 0.0005, (
+                f"{label}: {np.mean(miss > 2):.5f} of pixels off by more than two codes, {np.mean(miss > 1):.5f} by "
                 f"more than one, {miss.mean():.3f} on average"
+            )
+            assert np.mean(miss > 1) < 0.005, (
+                f"{label}: {np.mean(miss > 2):.5f} of pixels off by more than two codes, {np.mean(miss > 1):.5f} by "
+                f"more than one, {miss.mean():.3f} on average"
+            )
+            assert miss.mean() < 0.2, (
+                f"{label}: {np.mean(miss > 2):.5f} of pixels off by more than two codes, {np.mean(miss > 1):.5f} by "
+                f"more than one, {miss.mean():.3f} on average"
+            )
             g = gpu[rows, cols] / 255.0
             white = g.min(-1).max()
             assert white <= WHITE_CEILING, f"{label}: a pixel's weakest channel is {white:.3f}"
             longest = _check_fringe_is_an_edge(g[::-1], palette, label, thickness=(3, 5))
             drawn[tier] = max(drawn[tier], longest)
         for tier, longest in drawn.items():
-            assert longest >= 0.04 * 480, \
-                f"{tier}, palette {palette}, every knob at its top, on the GPU: the fringe is not drawn at t = 4 or " \
+            assert longest >= 0.04 * 480, (
+                f"{tier}, palette {palette}, every knob at its top, on the GPU: the fringe is not drawn at t = 4 or "
                 f"350 ({longest} px)"
+            )
     # the late clocks: the GPU's own picture against the brief in every panel, against the twin where the twin sweep
     # (test_aurora_fringe_is_short_and_thin_at_every_clock) renders the same panel, with the extremes' margins
     png = sorted((tmp_path / "out" / "parity-aurora-fringe-late").glob("t0*.png"))[0]
@@ -1287,8 +1507,17 @@ def test_the_glsl_matches_its_twins_on_swiftshader(tmp_path):
                     compared += 1
                     cpu = np.round(_finished(_card_picture(tier, clock, _fringe_items(tier, palette))) * 255.0)[::-1]
                     miss = np.abs(gpu[rows, cols] - cpu).max(-1)
-                    assert np.mean(miss > 2) < 0.0005 and np.mean(miss > 1) < 0.005 and miss.mean() < 0.2, \
-                        f"{label}: {np.mean(miss > 2):.5f} of pixels off the twin by more than two codes, " \
+                    assert np.mean(miss > 2) < 0.0005, (
+                        f"{label}: {np.mean(miss > 2):.5f} of pixels off the twin by more than two codes, "
                         f"{np.mean(miss > 1):.5f} by more than one, {miss.mean():.3f} on average"
+                    )
+                    assert np.mean(miss > 1) < 0.005, (
+                        f"{label}: {np.mean(miss > 2):.5f} of pixels off the twin by more than two codes, "
+                        f"{np.mean(miss > 1):.5f} by more than one, {miss.mean():.3f} on average"
+                    )
+                    assert miss.mean() < 0.2, (
+                        f"{label}: {np.mean(miss > 2):.5f} of pixels off the twin by more than two codes, "
+                        f"{np.mean(miss > 1):.5f} by more than one, {miss.mean():.3f} on average"
+                    )
         assert drawn >= 0.04 * 480, f"{tier} at the late clocks on the GPU: the fringe is not drawn ({drawn} px)"
     assert compared == 6, f"{compared} late panels compared with the twin sweep, six expected"

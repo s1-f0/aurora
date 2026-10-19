@@ -13,6 +13,7 @@ Apache-2.0, Akashic Aurora. Written fresh from the mathematics; credits are in e
 IEC 61966-2-1 (sRGB), ITU-R BT.709 (luminance), Bjorn Ottosson's OKLab (2020, bottosson.github.io/posts/oklab),
 Sam Hocevar's branch-free HSV (lolengine.net, 2013), the ASC and colourist practice for the grades.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -25,31 +26,43 @@ SRGB_KNEE_ENC = 0.04045
 REC709 = np.array([0.2126, 0.7152, 0.0722])
 
 # OKLab (Ottosson 2020): linear sRGB -> cone response (LMS), cube root, -> L, a, b. And back.
-OKLAB_M1 = np.array([[0.4122214708, 0.5363325363, 0.0514459929],
-                     [0.2119034982, 0.6806995451, 0.1073969566],
-                     [0.0883024619, 0.2817188376, 0.6299787005]])
-OKLAB_M2 = np.array([[0.2104542553, 0.7936177850, -0.0040720468],
-                     [1.9779984951, -2.4285922050, 0.4505937099],
-                     [0.0259040371, 0.7827717662, -0.8086757660]])
-OKLAB_M2_INV = np.array([[1.0, 0.3963377774, 0.2158037573],
-                         [1.0, -0.1055613458, -0.0638541728],
-                         [1.0, -0.0894841775, -1.2914855480]])
-OKLAB_M1_INV = np.array([[4.0767416621, -3.3077115913, 0.2309699292],
-                         [-1.2684380046, 2.6097574011, -0.3413193965],
-                         [-0.0041960863, -0.7034186147, 1.7076147010]])
+OKLAB_M1 = np.array(
+    [
+        [0.4122214708, 0.5363325363, 0.0514459929],
+        [0.2119034982, 0.6806995451, 0.1073969566],
+        [0.0883024619, 0.2817188376, 0.6299787005],
+    ]
+)
+OKLAB_M2 = np.array(
+    [
+        [0.2104542553, 0.7936177850, -0.0040720468],
+        [1.9779984951, -2.4285922050, 0.4505937099],
+        [0.0259040371, 0.7827717662, -0.8086757660],
+    ]
+)
+OKLAB_M2_INV = np.array(
+    [[1.0, 0.3963377774, 0.2158037573], [1.0, -0.1055613458, -0.0638541728], [1.0, -0.0894841775, -1.2914855480]]
+)
+OKLAB_M1_INV = np.array(
+    [
+        [4.0767416621, -3.3077115913, 0.2309699292],
+        [-1.2684380046, 2.6097574011, -0.3413193965],
+        [-0.0041960863, -0.7034186147, 1.7076147010],
+    ]
+)
 
-MAX_CHROMA_CEILING = 0.4     # above every sRGB chroma (the largest, magenta's, is about 0.32)
-MAX_CHROMA_STEPS = 24        # bisection steps for oklchMaxChroma (the piano's own count)
-CLIP_STEPS = 16              # bisection steps for oklchClip, over [0, C]
-CUSP_STEPS = 24              # bisection steps along the hue hexagon in oklchCusp
-POWERLESS_CHROMA = 1e-4      # below this a colour's hue means nothing (a grey); mixOklch takes the other end's hue
+MAX_CHROMA_CEILING = 0.4  # above every sRGB chroma (the largest, magenta's, is about 0.32)
+MAX_CHROMA_STEPS = 24  # bisection steps for oklchMaxChroma (the piano's own count)
+CLIP_STEPS = 16  # bisection steps for oklchClip, over [0, C]
+CUSP_STEPS = 24  # bisection steps along the hue hexagon in oklchCusp
+POWERLESS_CHROMA = 1e-4  # below this a colour's hue means nothing (a grey); mixOklch takes the other end's hue
 
 
 def _v(x):
     return np.asarray(x, dtype=float)
 
 
-# ----------------------------------------------------------------------------------------- colour/transfer.glsl (H1)
+# ------------------------------------------------------------------------------------------ colour/transfer.glsl, H1
 def srgbEncode(lin):
     """Linear light to sRGB code values, exactly IEC 61966-2-1. Negative light is black; values above 1 continue."""
     x = np.maximum(_v(lin), 0.0)
@@ -73,7 +86,7 @@ def cbrtSigned(x):
     return np.sign(x) * np.power(np.abs(x), 1.0 / 3.0)
 
 
-# ------------------------------------------------------------------------------------------- colour/oklab.glsl (H2)
+# -------------------------------------------------------------------------------------------- colour/oklab.glsl, H2
 def oklabFromLinear(lin):
     return cbrtSigned(_v(lin) @ OKLAB_M1.T) @ OKLAB_M2.T
 
@@ -203,7 +216,7 @@ def mixOklch(a, b, t):
     ha = np.where(la[..., 1] < POWERLESS_CHROMA, lb[..., 2], la[..., 2])
     hb = np.where(lb[..., 1] < POWERLESS_CHROMA, ha, lb[..., 2])
     t = _v(t)
-    L = la[..., 0] * (1.0 - t) + lb[..., 0] * t              # GLSL mix(x, y, t) = x (1 - t) + y t
+    L = la[..., 0] * (1.0 - t) + lb[..., 0] * t  # GLSL mix(x, y, t) = x (1 - t) + y t
     c = la[..., 1] * (1.0 - t) + lb[..., 1] * t
     h = ha + hueDelta(ha, hb) * t
     return oklchClip(np.stack(np.broadcast_arrays(L, c, h), axis=-1)) * s[..., None]
@@ -218,7 +231,7 @@ def hueRotateOklch(lin, turns):
     return oklchClip(lch) * s[..., None]
 
 
-# ---------------------------------------------------------------------------------------------- legacy/hsv.glsl (H3)
+# ----------------------------------------------------------------------------------------------- legacy/hsv.glsl, H3
 def hsvToRgb(hsv):
     """HSV (hue in turns) to RGB: the clamped triangle wave per channel, mixed toward white by 1 - S, scaled by V.
     Display knobs, not perception: V is the largest channel, not brightness."""
@@ -249,7 +262,7 @@ def rgbToHsv(rgb):
     return np.stack([np.abs(qz + (qw - qy) / (6.0 * spread + tiny)), spread / (qx + tiny), qx], axis=-1)
 
 
-# --------------------------------------------------------------------------------------------- colour/grade.glsl (H6)
+# ---------------------------------------------------------------------------------------------- colour/grade.glsl, H6
 def grdSaturation(lin, s):
     """Y + s (x - Y) with Rec. 709 luminance Y: s = 0 is the true grey, luminance never changes."""
     lin = _v(lin)

@@ -37,9 +37,11 @@ Run by hand::
 
     py scripts\\ops\\eye_ingest_task.py
 """
+
 from __future__ import annotations
 
 import sys
+from datetime import UTC
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -53,29 +55,33 @@ if str(ROOT) not in sys.path:
 def main() -> int:
     # FIRST, before argparse and before importing anything that prints at import time.
     from core.infrastructure.background_stdio import repair_background_stdio
+
     log = repair_background_stdio("eye-ingest")
 
     import json
     import time
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from core.eye import index as eye
 
     started = time.time()
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"[eye-ingest] {stamp} starting" + (f" (log: {log})" if log else ""))
 
     rc = 0
     try:
         rep = eye.ingest()
         cov = eye.corpus_coverage()
-    except Exception as e:                                                 # noqa: BLE001
+    except Exception as e:  # noqa: BLE001  # a crash becomes a receipt (see below)
         # A crash must be a RECEIPT, not an exit code nobody sees. The whole point of this file is
         # that the task's output reaches a reader.
         rep, cov = {}, {}
-        receipt = {"at": stamp, "ok": False,
-                   "error": f"{type(e).__name__}: {e}",
-                   "seconds": round(time.time() - started, 1)}
+        receipt = {
+            "at": stamp,
+            "ok": False,
+            "error": f"{type(e).__name__}: {e}",
+            "seconds": round(time.time() - started, 1),
+        }
         rc = 1
     else:
         receipt = {
@@ -98,17 +104,19 @@ def main() -> int:
         }
         if not receipt["ok"]:
             rc = 1
-        print(f"[eye-ingest] {receipt['events_new']:,} new event(s), "
-              f"{receipt['files_taken']} file(s) taken of {receipt['files_found']} found, "
-              f"{receipt['dropped_to_collision']} collision(s), "
-              f"{receipt['files_yielded_nothing']} barren, {receipt['seconds']}s")
+        print(
+            f"[eye-ingest] {receipt['events_new']:,} new event(s), "
+            f"{receipt['files_taken']} file(s) taken of {receipt['files_found']} found, "
+            f"{receipt['dropped_to_collision']} collision(s), "
+            f"{receipt['files_yielded_nothing']} barren, {receipt['seconds']}s"
+        )
 
     out_dir = ROOT / "state" / "eye" / "ingest-receipts"
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         # One file per MONTH, appended. A file per run buries the directory; a single file forever
         # makes the interesting part hard to reach.
-        dest = out_dir / (datetime.now(timezone.utc).strftime("%Y-%m") + ".jsonl")
+        dest = out_dir / (datetime.now(UTC).strftime("%Y-%m") + ".jsonl")
         with open(dest, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(receipt, ensure_ascii=False) + "\n")
         print(f"[eye-ingest] receipt -> {dest}")

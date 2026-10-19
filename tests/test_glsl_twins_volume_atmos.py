@@ -24,6 +24,7 @@ WHY THESE PINS. Two kinds, as in batch A:
 
 Apache-2.0, Akashic Aurora. Written fresh for the house; no corpus code.
 """
+
 from __future__ import annotations
 
 import json
@@ -79,10 +80,10 @@ SIGNATURES = {
 
 # The house parts each module must reuse rather than re-declare (module -> modules it must depend on).
 REUSES = {
-    "volume-phase": {"core-const"},                     # PI
-    "volume-march": {"volume-integrate"},              # the Beer law, volTransmittance
-    "atmos-fog": {"volume-integrate"},                 # the same law: fog is transmittance toward a colour
-    "atmos-aurora": {"noise-value", "hash-pcg"},       # rays are 1D value noise
+    "volume-phase": {"core-const"},  # PI
+    "volume-march": {"volume-integrate"},  # the Beer law, volTransmittance
+    "atmos-fog": {"volume-integrate"},  # the same law: fog is transmittance toward a colour
+    "atmos-aurora": {"noise-value", "hash-pcg"},  # rays are 1D value noise
 }
 
 
@@ -98,8 +99,10 @@ def library():
 
 def _module(lib, file):
     name = FAMILY[file][0]
-    assert name in lib.modules, f"no module named {name} (expected in arsenal/web/glsl/{file}); " \
-                                f"quarantined: {[p for p in lib.problems if file in p['path'].replace(chr(92), '/')]}"
+    assert name in lib.modules, (
+        f"no module named {name} (expected in arsenal/web/glsl/{file}); "
+        f"quarantined: {[p for p in lib.problems if file in p['path'].replace(chr(92), '/')]}"
+    )
     m = lib.modules[name]
     assert Path(m.path).resolve() == (LIB / file).resolve(), f"{name} lives in {m.path}, not {file}"
     return m
@@ -119,7 +122,8 @@ def test_envbreath_is_where_the_atlas_puts_it(library):
     row = next(r for r in _atlas()["manifest"] if "envBreath" in r["functions"])
     assert row["file"] == "motion/envelope.glsl"
     m = library.modules["motion-envelope"]
-    assert "envBreath" in m.functions and Path(m.path).resolve() == (LIB / row["file"]).resolve()
+    assert "envBreath" in m.functions
+    assert Path(m.path).resolve() == (LIB / row["file"]).resolve()
 
 
 def _definitions(m):
@@ -129,7 +133,7 @@ def _definitions(m):
         for raw in d.group(3).split(","):
             words = [w for w in raw.split() if w not in ("in", "const", "highp")]
             if words:
-                params.append(" ".join(words[:-1]))      # drop the parameter's name, keep out/inout and the type
+                params.append(" ".join(words[:-1]))  # drop the parameter's name, keep out/inout and the type
         out.setdefault(d.group(2), []).append((d.group(1), params))
     return out
 
@@ -139,8 +143,10 @@ def test_signatures_are_exactly_the_atlas_signatures(library, file):
     m = _module(library, file)
     defs = _definitions(m)
     for fn in m.functions:
-        assert fn in SIGNATURES, f"{file} defines {fn}(), which the atlas does not plan (a private helper could " \
-                                 "clash with a later family's name; keep the module to its planned parts)"
+        assert fn in SIGNATURES, (
+            f"{file} defines {fn}(), which the atlas does not plan (a private helper could "
+            "clash with a later family's name; keep the module to its planned parts)"
+        )
         assert sorted(defs[fn]) == sorted(SIGNATURES[fn]), f"{fn}: {defs[fn]} != planned {SIGNATURES[fn]}"
 
 
@@ -156,21 +162,31 @@ def test_the_accumulator_is_a_struct_of_light_and_transmittance(library):
 def test_headers_carry_every_library_field(library, file):
     m = _module(library, file)
     h = m.header
-    name, cat, twin = FAMILY[file]
+    _name, cat, twin = FAMILY[file]
     parts = [p for p in _atlas()["parts"] if p.get("module") == file]
-    assert h["cat"] == cat and h["family"] == "G"
-    assert h["kind"] == "helper" and re.fullmatch(r"\d+\.\d+\.\d+", h["version"])
+    assert h["cat"] == cat
+    assert h["family"] == "G"
+    assert h["kind"] == "helper"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", h["version"])
     assert h["license"] == "Apache-2.0"
-    assert isinstance(h["credits"], list) and h["credits"] and all("http" in c for c in h["credits"]), \
-        "credits name who taught the technique, each with a link"
-    assert h["cost"]["class"] in ("C0", "C1", "C2", "C3", "C4") and h["cost"]["tex"] == 0 and h["cost"]["loop"]
-    assert h["contract"] and h["note"] and h["status"] == "P0"
+    assert isinstance(h["credits"], list), "credits name who taught the technique, each with a link"
+    assert h["credits"], "credits name who taught the technique, each with a link"
+    assert all("http" in c for c in h["credits"]), "credits name who taught the technique, each with a link"
+    assert h["cost"]["class"] in ("C0", "C1", "C2", "C3", "C4")
+    assert h["cost"]["tex"] == 0
+    assert h["cost"]["loop"]
+    assert h["contract"]
+    assert h["note"]
+    assert h["status"] == "P0"
     assert h["targets"]["glsl"] == "300es"
-    assert (LIB / "cards" / h["card"]).is_file() and h["card"] == f"{m.name}.card"
-    assert h["twin"].split(":")[0] == twin and (REPO / twin).is_file(), f"the twin {twin} does not exist"
+    assert (LIB / "cards" / h["card"]).is_file()
+    assert h["card"] == f"{m.name}.card"
+    assert h["twin"].split(":")[0] == twin, f"the twin {twin} does not exist"
+    assert (REPO / twin).is_file(), f"the twin {twin} does not exist"
     p0 = [p for p in parts if p["status"] == "P0"]
     assert sorted(h["exemplars"]) == sorted({e for p in p0 for e in p["exemplars"]})
-    assert h["learn"] and set(h["learn"]) <= {x for p in parts for x in p["learn"]}
+    assert h["learn"]
+    assert set(h["learn"]) <= {x for p in parts for x in p["learn"]}
     assert 10 <= h["order"] <= 30
 
 
@@ -192,7 +208,8 @@ def test_the_family_reuses_the_house_instead_of_redeclaring_it(library):
         m = _module(library, file)
         assert not ({"PI", "TAU", "PHI"} & set(m.consts)), f"{file} re-declares a core constant"
     code = M.strip_comments(_module(library, "atmos/fog.glsl").body)
-    assert "volTransmittance" in code and "exp(" not in code, "fog is Beer's law: call it, do not write it again"
+    assert "volTransmittance" in code, "fog is Beer's law: call it, do not write it again"
+    assert "exp(" not in code, "fog is Beer's law: call it, do not write it again"
 
 
 def test_the_one_tap_light_declares_its_density_hook(library):
@@ -208,7 +225,8 @@ def test_the_one_tap_light_declares_its_density_hook(library):
 def test_each_module_has_a_card_that_builds(library, file):
     m = _module(library, file)
     card = K.load_card(m.name)
-    assert m.name in card.uses and card.note
+    assert m.name in card.uses
+    assert card.note
     built = K.build_card(card, library=library)
     assert m.name in built["card"]["modules"]
 
@@ -217,15 +235,17 @@ def test_each_module_has_a_card_that_builds(library, file):
 # Imported inside each test, so a missing twin fails its own pins and the module pins above still report.
 def _volume():
     from arsenal.shaders.twins import volume
+
     return volume
 
 
 def _atmos():
     from arsenal.shaders.twins import atmos
+
     return atmos
 
 
-# ---- integration (volume/integrate.glsl)
+# ---- integration: volume/integrate.glsl
 def test_beer_lambert_transmittances_multiply_and_one_mean_free_path_passes_one_over_e():
     v = _volume()
     assert v.volTransmittance(0.0, 5.0) == 1.0
@@ -242,9 +262,11 @@ def test_the_opacity_factor_is_stable_through_zero_and_matches_expm1():
     ref = np.array([1.0 if x == 0 else -math.expm1(-x) / x for x in xs])
     got = v.volOpacityFactor(xs)
     assert np.max(np.abs(got - ref) / ref) < 1e-9
-    assert v.volOpacityFactor(0.0) == 1.0 and np.all(np.diff(v.volOpacityFactor(np.sort(xs))) <= 0)
+    assert v.volOpacityFactor(0.0) == 1.0
+    assert np.all(np.diff(v.volOpacityFactor(np.sort(xs))) <= 0)
     vec = v.volOpacityFactor(np.array([0.0, 0.5, 3.0]))
-    assert vec.shape == (3,) and abs(vec[1] - (1 - math.exp(-0.5)) / 0.5) < 1e-15
+    assert vec.shape == (3,)
+    assert abs(vec[1] - (1 - math.exp(-0.5)) / 0.5) < 1e-15
 
 
 def test_the_opacity_factor_series_is_what_keeps_float32_honest():
@@ -300,7 +322,8 @@ def test_scattering_never_creates_energy_in_any_medium():
         for _ in range(steps):
             sigma_t = rng.exponential(2.0, 3) * rng.choice([0.0, 1.0, 30.0])
             v.volStepScatter(a, albedo * sigma_t, sigma_t, np.ones(3), float(rng.uniform(0.0, 0.5)))
-        assert np.all(a.L <= (1.0 - a.T) * albedo.max() + 1e-12) and np.all((a.T >= 0) & (a.T <= 1))
+        assert np.all((1.0 - a.T) * albedo.max() + 1e-12 >= a.L)
+        assert np.all((a.T >= 0) & (a.T <= 1))
 
 
 def test_a_smooth_medium_converges_as_the_steps_shrink():
@@ -310,11 +333,13 @@ def test_a_smooth_medium_converges_as_the_steps_shrink():
         a = v.volAccumInit()
         dt = 2.0 / steps
         for i in range(steps):
-            s = 1.5 * (1.0 + math.sin(3.0 * (i + 0.5) * dt))          # density sampled mid-step
+            s = 1.5 * (1.0 + math.sin(3.0 * (i + 0.5) * dt))  # density sampled mid-step
             v.volStepScatter(a, np.full(3, 0.8 * s), np.full(3, s), np.ones(3), dt)
         return a.L[0]
+
     coarse, fine, finer = run(8), run(256), run(4096)
-    assert abs(fine - finer) < 1e-4 and abs(coarse - finer) < 0.03
+    assert abs(fine - finer) < 1e-4
+    assert abs(coarse - finer) < 0.03
 
 
 def test_emission_sums_plainly_when_thin_and_saturates_when_thick():
@@ -323,8 +348,9 @@ def test_emission_sums_plainly_when_thin_and_saturates_when_thick():
     for steps in (1, 5, 50):
         a = v.volAccumInit()
         for _ in range(steps):
-            v.volStepEmit(a, eps, np.zeros(3), 2.0 / steps)          # an aurora: no absorption at all
-        assert np.allclose(a.L, 2.0 * eps, atol=1e-14) and np.all(a.T == 1.0)
+            v.volStepEmit(a, eps, np.zeros(3), 2.0 / steps)  # an aurora: no absorption at all
+        assert np.allclose(a.L, 2.0 * eps, atol=1e-14)
+        assert np.all(a.T == 1.0)
         b = v.volAccumInit()
         sigma = np.array([0.5, 1.0, 4.0])
         for _ in range(steps):
@@ -335,9 +361,12 @@ def test_emission_sums_plainly_when_thin_and_saturates_when_thick():
 def test_saturation_resolve_and_the_starting_state():
     v = _volume()
     a = v.volAccumInit()
-    assert np.all(a.L == 0.0) and np.all(a.T == 1.0) and not v.volSaturated(a, 0.01)
+    assert np.all(a.L == 0.0)
+    assert np.all(a.T == 1.0)
+    assert not v.volSaturated(a, 0.01)
     a.T = np.array([0.005, 0.009, 0.02])
-    assert not v.volSaturated(a, 0.01) and v.volSaturated(a, 0.03)
+    assert not v.volSaturated(a, 0.01)
+    assert v.volSaturated(a, 0.03)
     a.L = np.array([0.1, 0.2, 0.3])
     assert np.allclose(v.volResolve(a, np.array([1.0, 2.0, 3.0])), [0.105, 0.218, 0.36])
 
@@ -362,7 +391,8 @@ def test_the_isotropic_phase_is_one_over_four_pi():
 def test_henyey_greenstein_integrates_to_one_with_mean_cosine_g(g):
     v = _volume()
     total, mean = _sphere_mean(lambda mu: v.phaseHG(mu, g))
-    assert abs(total - 1.0) < 1e-6 and abs(mean - g) < 1e-6
+    assert abs(total - 1.0) < 1e-6
+    assert abs(mean - g) < 1e-6
 
 
 def test_henyey_greenstein_peaks_toward_the_light_by_the_textbook_values():
@@ -388,27 +418,32 @@ def test_henyey_greenstein_stays_finite_at_the_edges_in_float32():
     textbook = np.float32(1.0) + g * g - np.float32(2.0) * g * mu
     assert textbook.min() <= 0.0
     house = v.phaseHG32(mu, g)
-    assert np.all(np.isfinite(house)) and house.min() > 0.0
+    assert np.all(np.isfinite(house))
+    assert house.min() > 0.0
     edges = v.phaseHG(np.array([-1.0, 1.0, 1.5, -2.0]), np.array([1.0, 1.0, -1.0, 0.5]))
-    assert np.all(np.isfinite(edges)) and np.all(edges > 0)
+    assert np.all(np.isfinite(edges))
+    assert np.all(edges > 0)
 
 
-# ---- density (volume/density.glsl)
+# ---- density: volume/density.glsl
 def test_density_from_a_distance_field_ramps_inward_over_the_softness():
     v = _volume()
     sdf = np.array([2.0, 0.0, -0.05, -0.1, -0.2, -5.0])
     assert np.allclose(v.densFromSDF(sdf, 0.2), [0.0, 0.0, 0.25, 0.5, 1.0, 1.0])
-    assert np.array_equal(v.densFromSDF(np.array([0.01, -0.01]), 0.0), [0.0, 1.0])     # softness 0 is a hard edge
+    assert np.array_equal(v.densFromSDF(np.array([0.01, -0.01]), 0.0), [0.0, 1.0])  # softness 0 is a hard edge
     xs = np.linspace(-1, 1, 1001)
     d = v.densFromSDF(xs, 0.3)
-    assert np.all(np.diff(d) <= 0) and d.min() == 0.0 and d.max() == 1.0
+    assert np.all(np.diff(d) <= 0)
+    assert d.min() == 0.0
+    assert d.max() == 1.0
 
 
-# ---- marching (volume/march.glsl)
+# ---- marching: volume/march.glsl
 def test_polynomial_layers_are_dense_low_and_sparse_high():
     v = _volume()
     ys = np.array([v.marchStepPoly(i, 0.7, 0.01, 1.4) for i in range(30)])
-    assert ys[0] == 0.7 and abs(ys[10] - (0.7 + 0.01 * 10 ** 1.4)) < 1e-15
+    assert ys[0] == 0.7
+    assert abs(ys[10] - (0.7 + 0.01 * 10**1.4)) < 1e-15
     gaps = np.diff(ys)
     assert np.all(np.diff(gaps) > 0), "gaps widen with height when power > 1"
     lin = np.diff([v.marchStepPoly(i, 0.0, 0.5, 1.0) for i in range(10)])
@@ -420,20 +455,22 @@ def test_the_one_tap_light_is_beer_at_the_midpoint_with_a_floor():
     v = _volume()
     p, light = np.array([0.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0])
 
-    def ramp(q):                                    # extinction growing linearly upward: 0.5 + 2 y
+    def ramp(q):  # extinction growing linearly upward: 0.5 + 2 y
         return 0.5 + 2.0 * q[..., 1]
+
     for dist in (0.1, 1.0, 2.5):
-        tau = 0.5 * dist + dist ** 2                    # the exact optical depth of the ramp over [0, dist]
+        tau = 0.5 * dist + dist**2  # the exact optical depth of the ramp over [0, dist]
         expect = 0.15 + 0.85 * math.exp(-tau)
-        assert abs(v.volLightOneTap(p, light, dist, 0.15, ramp) - expect) < 1e-12   # midpoint rule: exact on a ramp
+        assert abs(v.volLightOneTap(p, light, dist, 0.15, ramp) - expect) < 1e-12  # midpoint rule: exact on a ramp
     assert v.volLightOneTap(p, light, 1.0, 0.15, lambda q: 0.0 * q[..., 0]) == 1.0
     assert abs(v.volLightOneTap(p, light, 1.0, 0.15, lambda q: 1e4 + 0.0 * q[..., 0]) - 0.15) < 1e-12
     calls = []
     v.volLightOneTap(p, light, 1.0, 0.0, lambda q: calls.append(q) or 1.0)
-    assert len(calls) == 1 and np.allclose(calls[0], [0.0, 0.5, 0.0]), "one probe, at the segment's midpoint"
+    assert len(calls) == 1, "one probe, at the segment's midpoint"
+    assert np.allclose(calls[0], [0.0, 0.5, 0.0]), "one probe, at the segment's midpoint"
 
 
-# ---- fog (atmos/fog.glsl)
+# ---- fog: atmos/fog.glsl
 def test_fog_is_transmittance_toward_a_colour_and_composes_over_distance():
     at = _atmos()
     col, fog = np.array([0.9, 0.2, 0.1]), np.array([0.1, 0.3, 0.6])
@@ -446,16 +483,18 @@ def test_fog_is_transmittance_toward_a_colour_and_composes_over_distance():
     assert np.allclose(at.fogExp(col, fog, -4.0, 0.3), col), "a point behind the eye takes no fog"
 
 
-# ---- aurora (atmos/aurora.glsl)
+# ---- aurora: atmos/aurora.glsl
 def test_the_aurora_profile_has_a_sharp_hem_a_unit_peak_and_an_e_folding_top():
     at = _atmos()
     edge, h = 95.0, 40.0
     alts = np.linspace(60.0, 400.0, 34001)
     prof = at.auroraProfile(alts, edge, h)
-    assert np.all(prof[alts <= edge] == 0.0) and prof.min() >= 0.0
+    assert np.all(prof[alts <= edge] == 0.0)
+    assert prof.min() >= 0.0
     r = at.AURORA_RISE_KM
     z_peak = r * math.log((r + h) / r)
-    assert abs(at.auroraProfile(edge + z_peak, edge, h) - 1.0) < 1e-12 and prof.max() <= 1.0 + 1e-12
+    assert abs(at.auroraProfile(edge + z_peak, edge, h) - 1.0) < 1e-12
+    assert prof.max() <= 1.0 + 1e-12
     assert 10.0 <= z_peak <= 20.0, "VA 7.3: the brightest emission sits 10-20 km above the hem"
     assert at.auroraProfile(edge + 3.0, edge, h) > 0.35, "the hem is sharp: a third of the peak within 3 km"
     far = edge + 150.0
@@ -467,6 +506,7 @@ def test_the_aurora_profile_has_a_sharp_hem_a_unit_peak_and_an_e_folding_top():
 def peak_heights_stated_wrongly(contract: str) -> list:
     """The '(a to b km for scaleH h1 to h2)' figures in a contract that the profile's own peak formula contradicts."""
     import re
+
     wrong = []
     for a, b, h1, h2 in re.findall(r"\(([\d.]+) to ([\d.]+) km for scaleH ([\d.]+) to ([\d.]+)\)", contract):
         for stated, h in ((float(a), float(h1)), (float(b), float(h2))):
@@ -480,22 +520,29 @@ def test_the_aurora_contract_states_the_peak_height_its_formula_gives():
     # Batch-B review, defect 10: the contract said the peak sits "12 to 16 km for scaleH 40 to 60" above the hem; its
     # own formula 6 ln((6 + scaleH) / 6) gives 12.2 to 14.4 km.
     import json
+
     text = (LIB / "atmos" / "aurora.glsl").read_text(encoding="utf-8")
     header = json.loads(" ".join(line[3:] for line in text.splitlines() if line.startswith("//!")))
     assert "km for scaleH" in header["contract"]
     assert peak_heights_stated_wrongly(header["contract"]) == []
-    assert peak_heights_stated_wrongly("(12 to 16 km for scaleH 40 to 60)") == [(12.0, 40.0, 12.22),
-                                                                                 (16.0, 60.0, 14.39)]   # the old words
+    assert peak_heights_stated_wrongly("(12 to 16 km for scaleH 40 to 60)") == [
+        (12.0, 40.0, 12.22),
+        (16.0, 60.0, 14.39),
+    ]  # the old words
 
 
 def _cie_line_rgb(nm):
     """A second writing of each emission line's colour: Wyman, Sloan and Shirley's analytic fit of the CIE 1931 2-degree
     observer (JCGT 2(2), 2013), the sRGB matrix of IEC 61966-2-1, negative channels clipped, brightest channel 1."""
+
     def g(x, mu, s1, s2):
         return math.exp(-0.5 * ((x - mu) / (s1 if x < mu else s2)) ** 2)
-    xyz = (1.056 * g(nm, 599.8, 37.9, 31.0) + 0.362 * g(nm, 442.0, 16.0, 26.7) - 0.065 * g(nm, 501.1, 20.4, 26.2),
-           0.821 * g(nm, 568.8, 46.9, 40.5) + 0.286 * g(nm, 530.9, 16.3, 31.1),
-           1.217 * g(nm, 437.0, 11.8, 36.0) + 0.681 * g(nm, 459.0, 26.0, 13.8))
+
+    xyz = (
+        1.056 * g(nm, 599.8, 37.9, 31.0) + 0.362 * g(nm, 442.0, 16.0, 26.7) - 0.065 * g(nm, 501.1, 20.4, 26.2),
+        0.821 * g(nm, 568.8, 46.9, 40.5) + 0.286 * g(nm, 530.9, 16.3, 31.1),
+        1.217 * g(nm, 437.0, 11.8, 36.0) + 0.681 * g(nm, 459.0, 26.0, 13.8),
+    )
     m = ((3.2406, -1.5372, -0.4986), (-0.9689, 1.8758, 0.0415), (0.0557, -0.2040, 1.0570))
     rgb = np.array([max(sum(m[i][j] * xyz[j] for j in range(3)), 0.0) for i in range(3)])
     return rgb / rgb.max()
@@ -517,7 +564,9 @@ def test_the_aurora_colours_stack_in_physical_order():
     top = at.auroraLineColor(300.0, 1.0)
     assert np.allclose(top, at.LINE_RED_6300)
     quiet_hem, active_hem = at.auroraLineColor(96.0, 0.0), at.auroraLineColor(96.0, 1.0)
-    assert active_hem[2] > 0.5 and active_hem[0] > 0.4 and quiet_hem[2] < 0.05
+    assert active_hem[2] > 0.5
+    assert active_hem[0] > 0.4
+    assert quiet_hem[2] < 0.05
     assert np.allclose(at.auroraLineColor(96.0, 0.5) - quiet_hem, 0.5 * (active_hem - quiet_hem))
     reds = [at.auroraLineColor(a, 0.0)[0] / max(at.auroraLineColor(a, 0.0)[1], 1e-9) for a in (120, 180, 220, 260)]
     assert reds == sorted(reds), "red takes over from green with height"
@@ -526,23 +575,26 @@ def test_the_aurora_colours_stack_in_physical_order():
 
 def test_rays_are_sparse_bright_columns_that_drift():
     at = _atmos()
-    along = np.linspace(0.0, 4000.0, 400001)            # about 4000 coarse cells: the statistics, not one seed's luck
+    along = np.linspace(0.0, 4000.0, 400001)  # about 4000 coarse cells: the statistics, not one seed's luck
     r = at.auroraRays(along, 3.0, 11)
-    assert r.min() >= 0.0 and r.max() <= 1.0
+    assert r.min() >= 0.0
+    assert r.max() <= 1.0
     assert 0.12 <= r.mean() <= 0.25, r.mean()
     assert 0.4 <= np.mean(r == 0.0) <= 0.6, "about half the curtain lies between rays"
     assert 0.03 <= np.mean(r > 0.8) <= 0.1, "about one place in sixteen is a bright core"
     # continuous across (no seam between noise cells): halving the sample spacing halves the largest step
     step, double = np.max(np.abs(np.diff(r))), np.max(np.abs(np.diff(r[::2])))
     spacing = along[1] - along[0]
-    assert step / spacing < 15.0 and 1.8 < double / step < 2.2, (step, double)    # a ray's edge spans >= 1/15 unit
+    assert step / spacing < 15.0, (step, double)  # a ray's edge spans >= 1/15 unit
+    assert 1.8 < double / step < 2.2, (step, double)
     later = at.auroraRays(along, 3.1, 11)
     much_later = at.auroraRays(along, 300.0, 11)
     assert 0.9 < np.corrcoef(r, later)[0, 1] < 1.0, "a tenth of a second later the rays have moved a little"
-    assert abs(np.corrcoef(r, much_later)[0, 1]) < 0.1 and abs(np.corrcoef(r, at.auroraRays(along, 3.0, 12))[0, 1]) < 0.1
+    assert abs(np.corrcoef(r, much_later)[0, 1]) < 0.1
+    assert abs(np.corrcoef(r, at.auroraRays(along, 3.0, 12))[0, 1]) < 0.1
 
 
-# ---- sky (atmos/sky.glsl)
+# ---- sky: atmos/sky.glsl
 def _dir(az, el):
     return np.stack([np.cos(el) * np.sin(az), np.sin(el), -np.cos(el) * np.cos(az)], axis=-1)
 
@@ -567,9 +619,10 @@ def test_the_warm_band_is_wider_toward_a_low_sun_and_fades_when_the_sun_is_high(
     low_sun, high_sun = _dir(0.0, math.radians(2.0)), _dir(0.0, math.radians(60.0))
     el = math.radians(12.0)
 
-    def horizon_share(rd, sun):        # how far from the zenith colour, along the blue channel
+    def horizon_share(rd, sun):  # how far from the zenith colour, along the blue channel
         c = at.skyGradient(rd, sun, ZENITH, HORIZON, HORIZON)
         return (c[2] - ZENITH[2]) / (HORIZON[2] - ZENITH[2])
+
     assert horizon_share(_dir(0.0, el), low_sun) > 1.5 * horizon_share(_dir(math.pi, el), low_sun)
     warm_low = at.skyGradient(_dir(0.0, 0.0), low_sun, ZENITH, HORIZON, SUNTINT)
     warm_high = at.skyGradient(_dir(0.0, 0.0), high_sun, ZENITH, HORIZON, SUNTINT)
@@ -643,7 +696,7 @@ void mainImage(out vec4 color, in vec2 pixel) {
 def _twin_parity_image():
     v, at = _volume(), _atmos()
     ys, xs = np.mgrid[0:64, 0:64].astype(np.float64)
-    lx, ly = xs + 0.5, ys + 0.5                                     # gl_FragCoord: pixel centres, y up
+    lx, ly = xs + 0.5, ys + 0.5  # gl_FragCoord: pixel centres, y up
     out = np.zeros((64, 320, 3))
     # panel 0: integration
     tau = np.floor(lx) / 12.0
@@ -665,45 +718,62 @@ def _twin_parity_image():
     out[:, 0:64] = p0
     # panel 1: phase and density
     p = v.phaseHG(lx / 32.0 - 1.0, ly / 32.0 - 1.0)
-    out[:, 64:128] = np.stack([p / (p + 1.0), np.full_like(p, 3.0 * v.phaseIso()),
-                               v.densFromSDF((lx - 32.0) / 16.0, np.floor(ly) / 64.0)], -1)
+    out[:, 64:128] = np.stack(
+        [p / (p + 1.0), np.full_like(p, 3.0 * v.phaseIso()), v.densFromSDF((lx - 32.0) / 16.0, np.floor(ly) / 64.0)], -1
+    )
     # panel 2: aurora
     alt = 80.0 + 4.0 * ly
     line = at.auroraLineColor(alt, np.floor(lx) / 63.0)
-    out[:, 128:192] = np.stack([at.auroraProfile(alt, 95.0 + 0.2 * lx, 30.0 + 0.5 * lx),
-                                at.auroraRays(lx / 8.0, 1.7, 5), line @ np.array([0.3, 0.5, 0.2]) / 1.2], -1)
+    out[:, 128:192] = np.stack(
+        [
+            at.auroraProfile(alt, 95.0 + 0.2 * lx, 30.0 + 0.5 * lx),
+            at.auroraRays(lx / 8.0, 1.7, 5),
+            line @ np.array([0.3, 0.5, 0.2]) / 1.2,
+        ],
+        -1,
+    )
     # panel 3: sky
     az = lx / 64.0 * 2.0 * math.pi - math.pi
     el = ly / 64.0 * 1.6 - 0.1
     sun = np.array([0.3, 0.06, -1.0]) / np.linalg.norm([0.3, 0.06, -1.0])
-    out[:, 192:256] = at.skyGradient(_dir(az, el), sun, np.array([0.05, 0.12, 0.35]), np.array([0.35, 0.45, 0.6]),
-                                     np.array([1.0, 0.5, 0.2]))
+    out[:, 192:256] = at.skyGradient(
+        _dir(az, el), sun, np.array([0.05, 0.12, 0.35]), np.array([0.35, 0.45, 0.6]), np.array([1.0, 0.5, 0.2])
+    )
     # panel 4: fog, layers, the one-tap light
     fogged = at.fogExp(np.array([0.9, 0.2, 0.1]), np.array([0.1, 0.3, 0.6]), lx * 0.5, ly / 64.0)
     layer = np.vectorize(v.marchStepPoly)(np.floor(lx).astype(int) - 4, 0.1, 0.002, 1.0 + np.floor(ly) / 32.0)
     pts = np.stack([np.zeros_like(ly), ly / 64.0, np.zeros_like(ly)], -1)
     lit = v.volLightOneTap(pts, np.array([0.0, 1.0, 0.0]), lx / 32.0, 0.15, lambda q: 0.5 + 2.0 * q[..., 1])
     out[:, 256:320] = np.stack([fogged[..., 0], layer, lit], -1)
-    return np.round(np.clip(out, 0, 1) * 255.0)[::-1]            # PNG rows run top down
+    return np.round(np.clip(out, 0, 1) * 255.0)[::-1]  # PNG rows run top down
 
 
 @pytest.mark.slow
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH (the headless driver)")
 def test_the_glsl_matches_its_twin_on_swiftshader(tmp_path):
     from PIL import Image
+
     cards_dir = tmp_path / "cards"
     cards_dir.mkdir()
     (cards_dir / "parity-volume-atmos.card").write_text(PARITY_CARD, encoding="utf-8", newline="\n")
-    report = K.render_cards(["parity-volume-atmos"], cards_dir=cards_dir, out_root=tmp_path / "out",
-                            allow_tracked=True, lock_wait_min=5, quiet=True)
+    report = K.render_cards(
+        ["parity-volume-atmos"],
+        cards_dir=cards_dir,
+        out_root=tmp_path / "out",
+        allow_tracked=True,
+        lock_wait_min=5,
+        quiet=True,
+    )
     if report["driver"].get("error") and "lock" in str(report["driver"]["error"]).lower():
         pytest.skip(f"the GPU lock stayed busy: {report['driver']['error']}")
     row = report["cards"][0]
-    assert row["compile_ok"] is True and row["nan_pixels"] == 0, row
+    assert row["compile_ok"] is True, row
+    assert row["nan_pixels"] == 0, row
     png = sorted((tmp_path / "out" / "parity-volume-atmos").glob("t0*.png"))[0]
     gpu = np.asarray(Image.open(png).convert("RGB")).astype(np.float64)
     cpu = _twin_parity_image()
     miss = np.abs(gpu - cpu)
     for k, name in enumerate(("integrate", "phase-density", "aurora", "sky", "fog-march")):
-        panel = miss[:, 64 * k:64 * (k + 1)]
-        assert panel.max() <= 2 and np.mean(panel > 1) < 0.002, f"{name}: max {panel.max()}"
+        panel = miss[:, 64 * k : 64 * (k + 1)]
+        assert panel.max() <= 2, f"{name}: max {panel.max()}"
+        assert np.mean(panel > 1) < 0.002, f"{name}: max {panel.max()}"

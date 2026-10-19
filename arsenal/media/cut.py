@@ -45,9 +45,12 @@ second with other builders loading the machine:
 verify picks the frames it compares by their own pts, so it does not share a seek error with the cut it checks:
 on that TS the unfixed cut started 2.000 s late in every mode and the frame-counting verify still said ok.
 """
+
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -56,41 +59,56 @@ import subprocess
 import tempfile
 import time
 from fractions import Fraction
+from functools import partial
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING
 
 from . import ff, probe, receipt
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 MODES = ("copy", "smart", "exact")
 CONTAINERS = (".mp4", ".mkv", ".mov", ".m4v")
 #: codec -> (encoders, best first; Annex-B bitstream filter; raw muxer/demuxer name)
-CODECS = {"hevc": (("hevc_amf", "libx265"), "hevc_mp4toannexb", "hevc"),
-          "h264": (("h264_amf", "libx264"), "h264_mp4toannexb", "h264")}
+CODECS = {
+    "hevc": (("hevc_amf", "libx265"), "hevc_mp4toannexb", "hevc"),
+    "h264": (("h264_amf", "libx264"), "h264_mp4toannexb", "h264"),
+}
 HEAD_QP = 18
-COMPARE_MAX = 1800              # verify compares every frame up to this many, then head + tail samples
-SAMPLE = 300                    # frames per sample when the output is longer than COMPARE_MAX
-GPU_LOCK_AFTER_S = 30.0         # an encode estimated longer than this holds the house GPU lock
-PSNR_FLOOR_DB = 30.0            # a re-encoded frame below this is not the frame it replaces (CQP 18 measures 48-52)
+COMPARE_MAX = 1800  # verify compares every frame up to this many, then head + tail samples
+SAMPLE = 300  # frames per sample when the output is longer than COMPARE_MAX
+GPU_LOCK_AFTER_S = 30.0  # an encode estimated longer than this holds the house GPU lock
+PSNR_FLOOR_DB = 30.0  # a re-encoded frame below this is not the frame it replaces (CQP 18 measures 48-52)
 _CHUNK = 1 << 20
-_FACTS_VERSION = 3              # 2: format_start; 3: every time on the file clock
+_FACTS_VERSION = 3  # 2: format_start; 3: every time on the file clock
 
 #: The wall-time model behind est_s, fitted 2026-10-12 on the 33-min 1080p60 HEVC OBS recording (per-frame terms
 #: scale with pixels relative to 1080p): copy 120 s = 0.43 s; smart 10.5 s (160-frame head) = 1.07 s, smart 119 s =
 #: 1.60 s; exact 20 s = 5.35 s (224 fps: software decode + AMF encode). verify_est_s: 326 / 630 frames (every frame
 #: decoded three times) 1.71 / 2.04 s; 7200 frames (sampled: 600-760 frames decoded for errors, 600 compared) 2.94 s
 #: copy, 3.58 s smart.
-COST = {"copy_base_s": 0.08, "smart_base_s": 0.75, "exact_base_s": 0.30, "head_fps": 450.0, "exact_fps": 224.0,
-        "copy_bytes_per_s": 350e6, "verify_base_s": 1.3, "verify_decode_fps": 2700.0, "verify_s_per_frame": 1.3e-4}
+COST = {
+    "copy_base_s": 0.08,
+    "smart_base_s": 0.75,
+    "exact_base_s": 0.30,
+    "head_fps": 450.0,
+    "exact_fps": 224.0,
+    "copy_bytes_per_s": 350e6,
+    "verify_base_s": 1.3,
+    "verify_decode_fps": 2700.0,
+    "verify_s_per_frame": 1.3e-4,
+}
 
 
 # =================================================================================================
 # facts: video stream, audio tracks, keyframes -- cached per (path, size, mtime)
 # =================================================================================================
 
-_memo: Dict[tuple, dict] = {}
+_memo: dict[tuple, dict] = {}
 
 
-def _tag(tags: dict, *names: str) -> Optional[str]:
+def _tag(tags: dict, *names: str) -> str | None:
     low = {k.lower(): v for k, v in (tags or {}).items()}
     for n in names:
         if low.get(n):
@@ -120,8 +138,10 @@ def _duration(stream: dict) -> float:
 def _read_facts(path: Path) -> dict:
     j = ff.probe_json(path, entries=("-show_format", "-show_streams"))
     streams = j.get("streams") or []
-    v = next((s for s in streams if s.get("codec_type") == "video"
-              and not (s.get("disposition") or {}).get("attached_pic")), None)
+    v = next(
+        (s for s in streams if s.get("codec_type") == "video" and not (s.get("disposition") or {}).get("attached_pic")),
+        None,
+    )
     if v is None:
         raise ff.MediaError(f"no video stream in {path}: cut trims video files (audio-only cuts are not built)")
     avg = _fraction(v.get("avg_frame_rate"))
@@ -130,26 +150,47 @@ def _read_facts(path: Path) -> dict:
     vfr = bool(rfps and avg and abs(float(rfps) - float(avg)) > 0.01 * float(rfps))
     fps = avg if (vfr or not rfps) else rfps
     fmt = j.get("format") or {}
-    f0 = float(fmt.get("start_time") or 0.0)           # the container's own start: file time 0
+    f0 = float(fmt.get("start_time") or 0.0)  # the container's own start: file time 0
     v_start = float(v.get("start_time") or f0) - f0
     v_dur = _duration(v) or float(fmt.get("duration") or 0.0)
     audio = []
     for s in streams:
         if s.get("codec_type") != "audio":
             continue
-        audio.append({"a_index": len(audio), "index": s["index"], "codec": s.get("codec_name"),
-                      "channels": s.get("channels"), "sample_rate": int(s.get("sample_rate") or 0),
-                      "title": _tag(s.get("tags"), "title", "name"),
-                      "start": float(s.get("start_time") or f0) - f0, "duration": _duration(s)})
-    video = {"index": v["index"], "codec": v.get("codec_name"), "w": int(v.get("width") or 0),
-             "h": int(v.get("height") or 0), "fps": f"{fps.numerator}/{fps.denominator}",
-             "vfr": vfr,
-             "has_b_frames": int(v.get("has_b_frames") or 0), "pix_fmt": v.get("pix_fmt"),
-             "profile": v.get("profile"), "start": v_start, "duration": v_dur,
-             "color": {k: v.get(k) for k in ("color_range", "color_space", "color_transfer", "color_primaries")},
-             "bit_rate": int(v.get("bit_rate") or fmt.get("bit_rate") or 0)}
-    return {"video": video, "audio": audio, "container": fmt.get("format_name"),
-            "format_start": f0, "duration": float(fmt.get("duration") or v_dur)}
+        audio.append(
+            {
+                "a_index": len(audio),
+                "index": s["index"],
+                "codec": s.get("codec_name"),
+                "channels": s.get("channels"),
+                "sample_rate": int(s.get("sample_rate") or 0),
+                "title": _tag(s.get("tags"), "title", "name"),
+                "start": float(s.get("start_time") or f0) - f0,
+                "duration": _duration(s),
+            }
+        )
+    video = {
+        "index": v["index"],
+        "codec": v.get("codec_name"),
+        "w": int(v.get("width") or 0),
+        "h": int(v.get("height") or 0),
+        "fps": f"{fps.numerator}/{fps.denominator}",
+        "vfr": vfr,
+        "has_b_frames": int(v.get("has_b_frames") or 0),
+        "pix_fmt": v.get("pix_fmt"),
+        "profile": v.get("profile"),
+        "start": v_start,
+        "duration": v_dur,
+        "color": {k: v.get(k) for k in ("color_range", "color_space", "color_transfer", "color_primaries")},
+        "bit_rate": int(v.get("bit_rate") or fmt.get("bit_rate") or 0),
+    }
+    return {
+        "video": video,
+        "audio": audio,
+        "container": fmt.get("format_name"),
+        "format_start": f0,
+        "duration": float(fmt.get("duration") or v_dur),
+    }
 
 
 def _facts_file(key: tuple) -> Path:
@@ -206,19 +247,20 @@ def facts(src, *, refresh: bool = False, cache: bool = True) -> dict:
 # frame arithmetic: frame k of the source sits at the video's first file time + k / fps
 # =================================================================================================
 
+
 def _fps(f: dict) -> Fraction:
     return _fraction(f["video"]["fps"])
 
 
 def _index(t: float, f: dict) -> int:
     """The index of the frame whose pts is t (a keyframe, a real start)."""
-    return int(round((t - f["video"]["start"]) * _fps(f)))
+    return round((t - f["video"]["start"]) * _fps(f))
 
 
 def _first_at(t: float, f: dict) -> int:
     """The first frame whose pts >= t - 1 ms: frames.at_times' convention (ffmpeg's `-ss t -frames:v 1`), so a cut
     starts on exactly the frame a grab or a sheet cell at t shows. The 1 ms also absorbs MKV's ms-rounded pts."""
-    return int(math.ceil((t - f["video"]["start"] - 1e-3) * _fps(f) - 1e-9))
+    return math.ceil((t - f["video"]["start"] - 1e-3) * _fps(f) - 1e-9)
 
 
 def _time(k: int, f: dict) -> float:
@@ -226,7 +268,7 @@ def _time(k: int, f: dict) -> float:
 
 
 def _n_frames(f: dict) -> int:
-    return int(round(f["video"]["duration"] * _fps(f)))
+    return round(f["video"]["duration"] * _fps(f))
 
 
 def _keyframe_at_or_before(f: dict, t: float) -> float:
@@ -236,7 +278,7 @@ def _keyframe_at_or_before(f: dict, t: float) -> float:
     return cands[-1] if cands else kfs[0]
 
 
-def _keyframe_after(f: dict, t: float) -> Optional[float]:
+def _keyframe_after(f: dict, t: float) -> float | None:
     half = 0.5 / float(_fps(f))
     return next((k for k in f["keyframes"] if k > t + half), None)
 
@@ -246,7 +288,7 @@ def _ss(f: dict, t: float) -> str:
     return f"{max(0.0, t):.6f}"
 
 
-def _seek(f: dict, keyframe: float) -> List[str]:
+def _seek(f: dict, keyframe: float) -> list[str]:
     """Input-seek args that land exactly on `keyframe` (with -noaccurate_seek): a quarter frame past it, so ffprobe's
     6-decimal rounding of the keyframe's time can never make the demuxer pick the keyframe before. Nothing when it is
     the first one."""
@@ -259,10 +301,10 @@ def _seek(f: dict, keyframe: float) -> List[str]:
 # plan
 # =================================================================================================
 
-_has_encoder: Dict[tuple, bool] = {}
+_has_encoder: dict[tuple, bool] = {}
 
 
-def _encoder(codec: str) -> Optional[str]:
+def _encoder(codec: str) -> str | None:
     """The best encoder this ffmpeg has for codec (AMF first), remembered per binary: plan() runs on every drag."""
     binary = ff.ffmpeg()
     for name in CODECS.get(codec, ((), None, None))[0]:
@@ -280,7 +322,7 @@ def _raw_ok(f: dict) -> bool:
     return v["codec"] in CODECS and not v["has_b_frames"] and not v["vfr"]
 
 
-def _smart_blocker(f: dict, encoder: Optional[str]) -> Optional[str]:
+def _smart_blocker(f: dict, encoder: str | None) -> str | None:
     v = f["video"]
     if v["codec"] not in CODECS:
         return f"codec {v['codec']} has no smart path (hevc and h264 do)"
@@ -303,8 +345,7 @@ def _range(f: dict, start: float, end: float) -> tuple:
     n = _n_frames(f)
     fs, fe = max(0, _first_at(start, f)), _first_at(end, f)
     if start < -1e-3 or fs >= n:
-        raise ff.MediaError(f"bad range: start {start} s lies outside the video ({v['start']:.3f}-"
-                            f"{_time(n, f):.3f} s)")
+        raise ff.MediaError(f"bad range: start {start} s lies outside the video ({v['start']:.3f}-{_time(n, f):.3f} s)")
     if fe > n + 1:
         raise ff.MediaError(f"bad range: end {end} s is past the end of the video ({_time(n, f):.3f} s)")
     fe = min(fe, n)
@@ -324,14 +365,15 @@ def _est(f: dict, mode: str, *, encode: int = 0, copy_frames: int = 0) -> float:
     return round(COST["exact_base_s"] + encode * px / COST["exact_fps"], 2)
 
 
-def _verify_est(f: dict, frames: int, copied_from: Optional[int]) -> float:
+def _verify_est(f: dict, frames: int, copied_from: int | None) -> float:
     """verify()'s wall time: the decode-error pass over its windows plus the PSNR pass (output and source)."""
     v = f["video"]
     px = max(0.05, v["w"] * v["h"] / (1920 * 1080))
     decoded = sum(c for _, c in _windows(frames, copied_from, COMPARE_MAX))
     decoded += 2 * (frames if frames <= COMPARE_MAX else 2 * SAMPLE)
-    return round(COST["verify_base_s"] + decoded * px / COST["verify_decode_fps"]
-                 + frames * COST["verify_s_per_frame"], 2)
+    return round(
+        COST["verify_base_s"] + decoded * px / COST["verify_decode_fps"] + frames * COST["verify_s_per_frame"], 2
+    )
 
 
 def _plan(f: dict, start: float, end: float) -> dict:
@@ -345,13 +387,23 @@ def _plan(f: dict, start: float, end: float) -> dict:
     on_key = k0f == fs
     encoder = _encoder(f["video"]["codec"]) or _encoder("h264")
     blocker = _smart_blocker(f, _encoder(f["video"]["codec"]))
-    reasons: List[str] = []
+    reasons: list[str] = []
     copy_frames = fe - k0f
     modes = {
-        "copy": {"start_real": round(k0, 6), "early_s": round(t_first - k0, 6), "frames": copy_frames,
-                 "lossless": True, "est_s": _est(f, "copy", copy_frames=copy_frames)},
-        "exact": {"start_real": round(t_first, 6), "frames": fe - fs, "lossless": False,
-                  "head_frames": fe - fs, "est_s": _est(f, "exact", encode=fe - fs)},
+        "copy": {
+            "start_real": round(k0, 6),
+            "early_s": round(t_first - k0, 6),
+            "frames": copy_frames,
+            "lossless": True,
+            "est_s": _est(f, "copy", copy_frames=copy_frames),
+        },
+        "exact": {
+            "start_real": round(t_first, 6),
+            "frames": fe - fs,
+            "lossless": False,
+            "head_frames": fe - fs,
+            "est_s": _est(f, "exact", encode=fe - fs),
+        },
     }
     if on_key:
         head = 0
@@ -360,9 +412,14 @@ def _plan(f: dict, start: float, end: float) -> dict:
     else:
         head = k1f - fs
     if not blocker:
-        modes["smart"] = {"start_real": round(t_first, 6), "frames": fe - fs, "lossless": head == 0,
-                          "head_frames": head, "copied_frames": fe - fs - head,
-                          "est_s": _est(f, "smart", encode=head, copy_frames=fe - fs - head)}
+        modes["smart"] = {
+            "start_real": round(t_first, 6),
+            "frames": fe - fs,
+            "lossless": head == 0,
+            "head_frames": head,
+            "copied_frames": fe - fs - head,
+            "est_s": _est(f, "smart", encode=head, copy_frames=fe - fs - head),
+        }
     if on_key:
         suggested = "copy"
         reasons.append("start lies on a keyframe: a copy is frame-exact and lossless")
@@ -374,34 +431,55 @@ def _plan(f: dict, start: float, end: float) -> dict:
         reasons.append("no keyframe inside the range: the whole range is the head, so it is re-encoded")
     else:
         suggested = "smart"
-        reasons.append(f"start is {t_first - k0:.3f} s after the keyframe at {k0:.3f} s: re-encode "
-                       f"{head} frames ({head / float(fps):.3f} s) up to the keyframe at {k1:.3f} s, copy the rest")
+        reasons.append(
+            f"start is {t_first - k0:.3f} s after the keyframe at {k0:.3f} s: re-encode "
+            f"{head} frames ({head / float(fps):.3f} s) up to the keyframe at {k1:.3f} s, copy the rest"
+        )
     head_s = {"copy": 0.0, "exact": (fe - fs) / float(fps), "smart": head / float(fps)}[suggested]
     est = modes[suggested]["est_s"]
     verify_est = _verify_est(f, modes[suggested]["frames"], {"copy": 0, "smart": head, "exact": None}[suggested])
     gpu = suggested == "exact" and est > GPU_LOCK_AFTER_S
     if gpu:
         reasons.append(f"the encode is estimated over {GPU_LOCK_AFTER_S:.0f} s: it will hold the house GPU lock")
-    return {"mode_suggested": suggested, "start": start, "end": end, "first_frame": fs, "end_frame": fe,
-            "frames": fe - fs, "start_real": modes[suggested]["start_real"], "start_keyframe": round(k0, 6),
-            "next_keyframe": None if k1 is None else round(k1, 6), "on_keyframe": on_key,
-            "head_reencode_s": round(head_s, 6), "est_s": est, "verify_est_s": verify_est,
-            "encoder": encoder if suggested != "copy" else None,
-            "gpu_lock": gpu, "smart_blocker": blocker, "modes": modes, "reasons": reasons,
-            "fps": f["video"]["fps"], "keyint_s": _keyint(f)}
+    return {
+        "mode_suggested": suggested,
+        "start": start,
+        "end": end,
+        "first_frame": fs,
+        "end_frame": fe,
+        "frames": fe - fs,
+        "start_real": modes[suggested]["start_real"],
+        "start_keyframe": round(k0, 6),
+        "next_keyframe": None if k1 is None else round(k1, 6),
+        "on_keyframe": on_key,
+        "head_reencode_s": round(head_s, 6),
+        "est_s": est,
+        "verify_est_s": verify_est,
+        "encoder": encoder if suggested != "copy" else None,
+        "gpu_lock": gpu,
+        "smart_blocker": blocker,
+        "modes": modes,
+        "reasons": reasons,
+        "fps": f["video"]["fps"],
+        "keyint_s": _keyint(f),
+    }
 
 
-def _keyint(f: dict) -> Optional[float]:
+def _keyint(f: dict) -> float | None:
     k = f["keyframes"]
     if len(k) < 2:
         return None
-    gaps = sorted(b - a for a, b in zip(k, k[1:]))
+    gaps = sorted(b - a for a, b in itertools.pairwise(k))
     return round(gaps[len(gaps) // 2], 6)
 
 
-_PLAN_BLIND = ["est_s (the cut) and verify_est_s (verify=True adds it) are a model calibrated on one machine "
-               "(cut.COST), not a measurement of this call",
-               "a variable-frame-rate file is detected by r_frame_rate != avg_frame_rate only"]
+_PLAN_BLIND = [
+    (
+        "est_s (the cut) and verify_est_s (verify=True adds it) are a model calibrated on one machine "
+        "(cut.COST), not a measurement of this call"
+    ),
+    "a variable-frame-rate file is detected by r_frame_rate != avg_frame_rate only",
+]
 
 
 def plan(src, start: float, end: float) -> dict:
@@ -411,15 +489,22 @@ def plan(src, start: float, end: float) -> dict:
     f = facts(src)
     p = _plan(f, float(start), float(end))
     # no receipt: the editor asks on every trim-handle rest, and a plan changes nothing on disk
-    return receipt.result("cut", f["source"], {"start": float(start), "end": float(end), "plan": True}, p,
-                          _PLAN_BLIND, write_receipt=False)
+    return receipt.result(
+        "cut",
+        f["source"],
+        {"start": float(start), "end": float(end), "plan": True},
+        p,
+        _PLAN_BLIND,
+        write_receipt=False,
+    )
 
 
 # =================================================================================================
 # cut
 # =================================================================================================
 
-def _tracks(f: dict, tracks) -> List[dict]:
+
+def _tracks(f: dict, tracks) -> list[dict]:
     audio = f["audio"]
     if tracks in (None, "all"):
         return list(audio)
@@ -433,8 +518,8 @@ def _tracks(f: dict, tracks) -> List[dict]:
     return [audio[t] for t in want]
 
 
-def _audio_args(sel: List[dict], input_no: int) -> List[str]:
-    args: List[str] = []
+def _audio_args(sel: list[dict], input_no: int) -> list[str]:
+    args: list[str] = []
     for a in sel:
         args += ["-map", f"{input_no}:a:{a['a_index']}"]
     if sel:
@@ -444,7 +529,7 @@ def _audio_args(sel: List[dict], input_no: int) -> List[str]:
     return args
 
 
-def _encode_args(f: dict, encoder: str) -> List[str]:
+def _encode_args(f: dict, encoder: str) -> list[str]:
     v = f["video"]
     if encoder.endswith("_amf"):
         args = ["-c:v", encoder, "-quality", "quality", "-rc", "cqp", "-qp_i", str(HEAD_QP), "-qp_p", str(HEAD_QP)]
@@ -456,14 +541,18 @@ def _encode_args(f: dict, encoder: str) -> List[str]:
     pix = v["pix_fmt"] if v["pix_fmt"] in ("yuv420p", "p010le", "yuv420p10le") else "yuv420p"
     args += ["-pix_fmt", pix]
     c = v["color"]
-    for opt, key in (("-color_range", "color_range"), ("-colorspace", "color_space"),
-                     ("-color_trc", "color_transfer"), ("-color_primaries", "color_primaries")):
+    for opt, key in (
+        ("-color_range", "color_range"),
+        ("-colorspace", "color_space"),
+        ("-color_trc", "color_transfer"),
+        ("-color_primaries", "color_primaries"),
+    ):
         if c.get(key) and c[key] not in ("unknown", "reserved"):
             args += [opt, c[key]]
     return args
 
 
-def _video_tag(codec: str, container: str) -> List[str]:
+def _video_tag(codec: str, container: str) -> list[str]:
     """hev1: parameter sets may sit in band, which the spliced head needs (hvc1 promises they never change)."""
     if container in (".mp4", ".mov", ".m4v") and codec == "hevc":
         return ["-tag:v", "hev1"]
@@ -485,31 +574,29 @@ def _check_out(src: Path, out: Path) -> str:
     return container
 
 
-def _pump(producers: Sequence[tuple], consumer: List[str]) -> List[List[str]]:
+def _pump(producers: Sequence[tuple], consumer: list[str]) -> list[list[str]]:
     """Run each (args, gpu label or None) producer in turn, one heavy process at a time, and stream its stdout into
     the consumer's stdin."""
-    argvs: List[List[str]] = []
+    argvs: list[list[str]] = []
     cons = ff.popen(consumer, stdin=subprocess.PIPE)
-    argvs.append(cons.arsenal_argv)          # type: ignore[attr-defined]
+    argvs.append(cons.arsenal_argv)  # type: ignore[attr-defined]
     broken = False
     try:
         for args, gpu in producers:
             prod = ff.popen(args, gpu=gpu)
             argvs.append(prod.arsenal_argv)  # type: ignore[attr-defined]
             try:
-                for chunk in iter(lambda: prod.stdout.read(_CHUNK), b""):
+                for chunk in iter(partial(prod.stdout.read, _CHUNK), b""):
                     if broken:
                         continue
                     try:
                         cons.stdin.write(chunk)
                     except (BrokenPipeError, OSError):
-                        broken = True        # the muxer stopped reading (it reached -t): drain and finish
+                        broken = True  # the muxer stopped reading (it reached -t): drain and finish
             finally:
                 ff.finish(prod, check=not broken, timeout=None)
-        try:
+        with contextlib.suppress(OSError):
             cons.stdin.close()
-        except OSError:
-            pass
     except BaseException:
         if cons.poll() is None:
             cons.kill()
@@ -519,8 +606,18 @@ def _pump(producers: Sequence[tuple], consumer: List[str]) -> List[List[str]]:
     return argvs
 
 
-def _run_spliced(f: dict, src: Path, out: Path, container: str, fs: int, fe: int, head: int, encoder: Optional[str],
-                 sel: List[dict], start_from: int) -> List[List[str]]:
+def _run_spliced(
+    f: dict,
+    src: Path,
+    out: Path,
+    container: str,
+    fs: int,
+    fe: int,
+    head: int,
+    encoder: str | None,
+    sel: list[dict],
+    start_from: int,
+) -> list[list[str]]:
     """copy (head == 0, start_from = keyframe frame) and smart: raw Annex-B video through a pipe, audio from src."""
     v = f["video"]
     codec = v["codec"]
@@ -533,13 +630,54 @@ def _run_spliced(f: dict, src: Path, out: Path, container: str, fs: int, fe: int
         k0f = _index(k0, f)
         # a head is at most one keyframe interval (OBS: 250 frames, ~0.5 s of AMF): the lock only for a huge GOP
         gpu = "cut smart head" if _est(f, "exact", encode=head) > GPU_LOCK_AFTER_S else None
-        producers.append((["-v", "error", "-noaccurate_seek", *_seek(f, k0), "-i", str(src), "-map", "0:v:0",
-                           "-vf", f"trim=start_frame={fs - k0f}:end_frame={fs + head - k0f},setpts=PTS-STARTPTS",
-                           *_encode_args(f, encoder), "-bsf:v", bsf, "-f", raw, "pipe:1"], gpu))
+        producers.append(
+            (
+                [
+                    "-v",
+                    "error",
+                    "-noaccurate_seek",
+                    *_seek(f, k0),
+                    "-i",
+                    str(src),
+                    "-map",
+                    "0:v:0",
+                    "-vf",
+                    f"trim=start_frame={fs - k0f}:end_frame={fs + head - k0f},setpts=PTS-STARTPTS",
+                    *_encode_args(f, encoder),
+                    "-bsf:v",
+                    bsf,
+                    "-f",
+                    raw,
+                    "pipe:1",
+                ],
+                gpu,
+            )
+        )
         first = fs + head
     if fe > first:
-        producers.append((["-v", "error", *_seek(f, _time(first, f)), "-i", str(src), "-map", "0:v:0",
-                           "-frames:v", str(fe - first), "-c:v", "copy", "-bsf:v", bsf, "-f", raw, "pipe:1"], None))
+        producers.append(
+            (
+                [
+                    "-v",
+                    "error",
+                    *_seek(f, _time(first, f)),
+                    "-i",
+                    str(src),
+                    "-map",
+                    "0:v:0",
+                    "-frames:v",
+                    str(fe - first),
+                    "-c:v",
+                    "copy",
+                    "-bsf:v",
+                    bsf,
+                    "-f",
+                    raw,
+                    "pipe:1",
+                ],
+                None,
+            )
+        )
     t_a = _time(start_from if not head else fs, f)
     n = fe - (start_from if not head else fs)
     dur = n / float(_fraction(fps))
@@ -552,17 +690,22 @@ def _run_spliced(f: dict, src: Path, out: Path, container: str, fs: int, fe: int
     return _pump(producers, consumer)
 
 
-def _run_exact(f: dict, src: Path, out: Path, container: str, fs: int, fe: int, encoder: str,
-               sel: List[dict]) -> List[List[str]]:
-    v = f["video"]
+def _run_exact(
+    f: dict, src: Path, out: Path, container: str, fs: int, fe: int, encoder: str, sel: list[dict]
+) -> list[list[str]]:
     k0 = _keyframe_at_or_before(f, _time(fs, f))
     k0f = _index(k0, f)
     dur = (fe - fs) / float(_fps(f))
     args = ["-v", "error", "-y", "-noaccurate_seek", *_seek(f, k0), "-i", str(src)]
     if sel:
         args += ["-ss", _ss(f, _time(fs, f)), "-t", f"{dur + 0.1:.6f}", "-i", str(src)]
-    args += ["-map", "0:v:0", "-vf", f"trim=start_frame={fs - k0f}:end_frame={fe - k0f},setpts=PTS-STARTPTS",
-             *_encode_args(f, encoder)]
+    args += [
+        "-map",
+        "0:v:0",
+        "-vf",
+        f"trim=start_frame={fs - k0f}:end_frame={fe - k0f},setpts=PTS-STARTPTS",
+        *_encode_args(f, encoder),
+    ]
     args += _audio_args(sel, 1)
     args += ["-map_metadata", "1" if sel else "-1", "-map_chapters", "-1", "-t", f"{dur:.6f}", str(out)]
     long = _est(f, "exact", encode=fe - fs) > GPU_LOCK_AFTER_S
@@ -570,8 +713,9 @@ def _run_exact(f: dict, src: Path, out: Path, container: str, fs: int, fe: int, 
     return [ff.argv_for(args)]
 
 
-def _run_copy_remux(f: dict, src: Path, out: Path, container: str, k0: float, fe: int,
-                    sel: List[dict]) -> List[List[str]]:
+def _run_copy_remux(
+    f: dict, src: Path, out: Path, container: str, k0: float, fe: int, sel: list[dict]
+) -> list[list[str]]:
     """copy for sources the raw path cannot carry (B-frames, other codecs): a container-level copy from the keyframe."""
     dur = _time(fe, f) - k0
     args = ["-v", "error", "-y", *_seek(f, k0), "-i", str(src), "-map", "0:v:0", "-c:v", "copy"]
@@ -589,15 +733,26 @@ _CUT_BLIND = [
 ]
 
 
-def cut(src, start: float, end: float, out=None, *, mode: str = "smart", tracks: Union[str, Sequence[int]] = "all",
-        verify: bool = True, preset: Optional[str] = None) -> dict:
+def cut(
+    src,
+    start: float,
+    end: float,
+    out=None,
+    *,
+    mode: str = "smart",
+    tracks: str | Sequence[int] = "all",
+    verify: bool = True,
+    preset: str | None = None,
+) -> dict:
     """Trim [start, end) (file seconds) into out (.mp4, .mkv or .mov). Returns the house result: the mode that ran,
     the real start, frame counts, the audio tracks kept, the argv of every process and, with verify=True, verify()."""
     if mode not in MODES:
         raise ff.MediaError(f"unknown mode {mode!r}: {', '.join(MODES)}")
     if preset is not None:
-        raise ff.MediaError("preset: export presets are not wired into cut yet; leave preset=None (the house "
-                            "intermediate: same codec, CQP 18)")
+        raise ff.MediaError(
+            "preset: export presets are not wired into cut yet; leave preset=None (the house "
+            "intermediate: same codec, CQP 18)"
+        )
     t0 = time.perf_counter()
     srcp = Path(src)
     f = facts(srcp)
@@ -606,7 +761,7 @@ def cut(src, start: float, end: float, out=None, *, mode: str = "smart", tracks:
     sel = _tracks(f, tracks)
     outp = Path(out) if out else _default_out(srcp, float(start), float(end), mode)
     container = _check_out(srcp, outp)
-    reasons: List[str] = []
+    reasons: list[str] = []
     ran = mode
     if mode == "smart":
         if p["on_keyframe"]:
@@ -625,13 +780,16 @@ def cut(src, start: float, end: float, out=None, *, mode: str = "smart", tracks:
         if not _raw_ok(f):
             tolerance = f["video"]["has_b_frames"] + 1
             argvs = _run_copy_remux(f, srcp, outp, container, k0, fe, sel)
-            reasons.append("copied at container level (B-frames or a codec without a raw path): the end is "
-                           "accurate to the packet, not guaranteed to the frame")
+            reasons.append(
+                "copied at container level (B-frames or a codec without a raw path): the end is "
+                "accurate to the packet, not guaranteed to the frame"
+            )
         else:
             argvs = _run_spliced(f, srcp, outp, container, fs, fe, 0, None, sel, _index(k0, f))
         if k0 < _time(fs, f) - 1e-6:
-            reasons.append(f"copy starts on the keyframe at {k0:.3f} s, {_time(fs, f) - k0:.3f} s before the "
-                           f"requested start")
+            reasons.append(
+                f"copy starts on the keyframe at {k0:.3f} s, {_time(fs, f) - k0:.3f} s before the requested start"
+            )
     elif ran == "smart":
         head = p["modes"]["smart"]["head_frames"]
         argvs = _run_spliced(f, srcp, outp, container, fs, fe, head, encoder, sel, fs)
@@ -642,22 +800,48 @@ def cut(src, start: float, end: float, out=None, *, mode: str = "smart", tracks:
         argvs = _run_exact(f, srcp, outp, container, fs, fe, encoder, sel)
     wall = round(time.perf_counter() - t0, 3)
     first = _index(start_real, f)
-    payload = {"out": str(outp), "mode": ran, "mode_requested": mode, "start_real": round(start_real, 6),
-               "end_real": round(_time(fe, f), 6), "frames": fe - first, "head_frames": head,
-               "copied_frames": (fe - first - head) if ran != "exact" else 0,
-               "encoder": encoder if ran != "copy" else None,
-               "audio": [{"a_index": a["a_index"], "title": a["title"], "codec": a["codec"]} for a in sel],
-               "reasons": reasons, "wall_s": wall, "plan": p, "argv": argvs}
+    payload = {
+        "out": str(outp),
+        "mode": ran,
+        "mode_requested": mode,
+        "start_real": round(start_real, 6),
+        "end_real": round(_time(fe, f), 6),
+        "frames": fe - first,
+        "head_frames": head,
+        "copied_frames": (fe - first - head) if ran != "exact" else 0,
+        "encoder": encoder if ran != "copy" else None,
+        "audio": [{"a_index": a["a_index"], "title": a["title"], "codec": a["codec"]} for a in sel],
+        "reasons": reasons,
+        "wall_s": wall,
+        "plan": p,
+        "argv": argvs,
+    }
     if verify:
         copied_from = {"copy": 0, "smart": head, "exact": None}[ran]
-        v = _verify(srcp, start_real, _time(fe, f), outp, tracks=tracks, copied_from=copied_from,
-                    frames_tolerance=tolerance, write_receipt=False)
-        payload["verify"] = {k: v[k] for k in v if k not in ("api", "source", "params", "computed_with", "blind",
-                                                             "receipt")}
+        v = _verify(
+            srcp,
+            start_real,
+            _time(fe, f),
+            outp,
+            tracks=tracks,
+            copied_from=copied_from,
+            frames_tolerance=tolerance,
+            write_receipt=False,
+        )
+        payload["verify"] = {
+            k: v[k] for k in v if k not in ("api", "source", "params", "computed_with", "blind", "receipt")
+        }
         payload["verify_wall_s"] = v["wall_s"]
-    params = {"start": float(start), "end": float(end), "out": str(outp), "mode": mode,
-              "tracks": tracks if isinstance(tracks, str) else list(tracks), "verify": verify, "preset": preset,
-              "head_qp": HEAD_QP}
+    params = {
+        "start": float(start),
+        "end": float(end),
+        "out": str(outp),
+        "mode": mode,
+        "tracks": tracks if isinstance(tracks, str) else list(tracks),
+        "verify": verify,
+        "preset": preset,
+        "head_qp": HEAD_QP,
+    }
     return receipt.result("cut", f["source"], params, payload, _CUT_BLIND)
 
 
@@ -681,44 +865,64 @@ def _window(f: dict, k_first: int, count: int) -> tuple:
     # margin is a rounding tie (1234.558333 s * 60 = 74073.49998 kept the frame before; measured on the recording)
     q = 0.25 / float(fps)
     # pts = frame index on a 1/fps timebase: ms-rounded (MKV) and exact (MP4) timestamps then pair frame for frame
-    return (["-noaccurate_seek", *_seek(f, kf)],
+    return (
+        ["-noaccurate_seek", *_seek(f, kf)],
+        (
             f"trim=start={_time(k_first, f) - q + f0:.6f}:end={_time(k_first + count, f) - q + f0:.6f},"
-            f"settb={fps.denominator}/{fps.numerator},setpts=N")
+            f"settb={fps.denominator}/{fps.numerator},setpts=N"
+        ),
+    )
 
 
-def _psnr_frames(src: Path, fsrc: dict, src_first: int, out: Path, fout: dict, out_first: int,
-                 count: int) -> List[tuple]:
+def _psnr_frames(
+    src: Path, fsrc: dict, src_first: int, out: Path, fout: dict, out_first: int, count: int
+) -> list[tuple]:
     """Per-frame (out index, mse, psnr dB) of out frames [out_first, +count) against source frames
     [src_first, +count), both decoded in software."""
     o_seek, o_trim = _window(fout, out_first, count)
     s_seek, s_trim = _window(fsrc, src_first, count)
     graph = f"[0:v]{o_trim}[a];[1:v]{s_trim}[b];[a][b]psnr=stats_file=-"
-    res = ff.run(["-v", "error", "-copyts", *o_seek, "-i", str(out), *s_seek, "-i", str(src), "-lavfi", graph,
-                  "-f", "null", "-"])
+    res = ff.run(
+        ["-v", "error", "-copyts", *o_seek, "-i", str(out), *s_seek, "-i", str(src), "-lavfi", graph, "-f", "null", "-"]
+    )
     rows = []
     for line in res.stdout.splitlines():
         m = _PSNR_LINE.search(line)
         if m:
             mse = float(m.group(2))
-            rows.append((out_first + int(m.group(1)) - 1, mse, float("inf") if m.group(3) == "inf"
-                         else float(m.group(3))))
+            rows.append(
+                (out_first + int(m.group(1)) - 1, mse, float("inf") if m.group(3) == "inf" else float(m.group(3)))
+            )
     return rows
 
 
 def _count_frames(path: Path) -> int:
-    res = ff.run(["-v", "error", "-select_streams", "v:0", "-count_packets", "-show_entries",
-                  "stream=nb_read_packets", "-of", "csv=p=0", str(path)], tool="ffprobe")
+    res = ff.run(
+        [
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-count_packets",
+            "-show_entries",
+            "stream=nb_read_packets",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        tool="ffprobe",
+    )
     try:
         return int(res.stdout.strip().split(",")[0])
     except ValueError:
         return 0
 
 
-def _db(x: float) -> Optional[float]:
+def _db(x: float) -> float | None:
     return None if x is None else ("inf" if x == float("inf") else round(x, 2))
 
 
-def _windows(n: int, copied_from: Optional[int], compare_max: int) -> List[tuple]:
+def _windows(n: int, copied_from: int | None, compare_max: int) -> list[tuple]:
     """(first, count) output windows that verify decodes: all n frames up to compare_max; past that the head
     through SAMPLE frames after the splice, and the last SAMPLE frames (the middle is the source's own packets)."""
     if n <= compare_max:
@@ -728,24 +932,34 @@ def _windows(n: int, copied_from: Optional[int], compare_max: int) -> List[tuple
     return [(0, head_end)] + ([(tail, n - tail)] if n > tail else [])
 
 
-def _decode_errors(path: Path, f: dict, windows: Sequence[tuple], n_total: int) -> List[str]:
+def _decode_errors(path: Path, f: dict, windows: Sequence[tuple], n_total: int) -> list[str]:
     """ffmpeg's error lines from decoding the video and every audio track over each (first frame, count) window."""
-    errors: List[str] = []
+    errors: list[str] = []
     for first, count in windows:
-        span: List[str] = []
+        span: list[str] = []
         if (first, count) != (0, n_total):
             kf = _keyframe_at_or_before(f, _time(first, f))
             dur = (first + count - _index(kf, f) + 1) / float(_fps(f))
             span = ["-noaccurate_seek", *_seek(f, kf), "-t", f"{dur:.6f}"]
-        res = ff.run(["-v", "error", *span, "-i", str(path), "-map", "0:v:0", "-map", "0:a?", "-f", "null", "-"],
-                     check=False)
+        res = ff.run(
+            ["-v", "error", *span, "-i", str(path), "-map", "0:v:0", "-map", "0:a?", "-f", "null", "-"], check=False
+        )
         errors += [ln for ln in res.stderr.splitlines() if ln.strip()]
     return errors
 
 
-def verify(src, start: float, end: float, out, *, tracks: Union[str, Sequence[int]] = "all",
-           copied_from: Union[int, str, None] = "auto", compare_max: int = COMPARE_MAX,
-           frames_tolerance: int = 0, psnr_floor_db: float = PSNR_FLOOR_DB) -> dict:
+def verify(
+    src,
+    start: float,
+    end: float,
+    out,
+    *,
+    tracks: str | Sequence[int] = "all",
+    copied_from: int | str | None = "auto",
+    compare_max: int = COMPARE_MAX,
+    frames_tolerance: int = 0,
+    psnr_floor_db: float = PSNR_FLOOR_DB,
+) -> dict:
     """Check a cut against its source: frame count, decode errors, per-frame PSNR of the first and last frames,
     whether the copied frames are bit-identical (mse 0 in software decode), and every audio track and its title.
     Written as a receipt.
@@ -755,12 +969,33 @@ def verify(src, start: float, end: float, out, *, tracks: Union[str, Sequence[in
     keyframe, else the next keyframe), None means nothing was copied (exact). frames_tolerance is how many frames
     the count may miss by and still be ok (a container-level copy of a B-frame source ends on a packet). A
     re-encoded frame under psnr_floor_db is a different frame, not a lossy copy of the right one."""
-    return _verify(src, start, end, out, tracks=tracks, copied_from=copied_from, compare_max=compare_max,
-                   frames_tolerance=frames_tolerance, psnr_floor_db=psnr_floor_db, write_receipt=True)
+    return _verify(
+        src,
+        start,
+        end,
+        out,
+        tracks=tracks,
+        copied_from=copied_from,
+        compare_max=compare_max,
+        frames_tolerance=frames_tolerance,
+        psnr_floor_db=psnr_floor_db,
+        write_receipt=True,
+    )
 
 
-def _verify(src, start: float, end: float, out, *, tracks, copied_from, compare_max: int = COMPARE_MAX,
-            frames_tolerance: int = 0, psnr_floor_db: float = PSNR_FLOOR_DB, write_receipt: bool) -> dict:
+def _verify(
+    src,
+    start: float,
+    end: float,
+    out,
+    *,
+    tracks,
+    copied_from,
+    compare_max: int = COMPARE_MAX,
+    frames_tolerance: int = 0,
+    psnr_floor_db: float = PSNR_FLOOR_DB,
+    write_receipt: bool,
+) -> dict:
     """verify(); cut() embeds the result in its own receipt (and its `verify` flag shadows the public name)."""
     t0 = time.perf_counter()
     srcp, outp = Path(src), Path(out)
@@ -771,12 +1006,15 @@ def _verify(src, start: float, end: float, out, *, tracks, copied_from, compare_
     n_out = _count_frames(outp)
     if copied_from == "auto":
         k1 = _keyframe_after(fsrc, _time(fs, fsrc))
-        copied_from = 0 if _index(_keyframe_at_or_before(fsrc, _time(fs, fsrc)), fsrc) == fs else (
-            None if k1 is None or _index(k1, fsrc) >= fe else _index(k1, fsrc) - fs)
+        copied_from = (
+            0
+            if _index(_keyframe_at_or_before(fsrc, _time(fs, fsrc)), fsrc) == fs
+            else (None if k1 is None or _index(k1, fsrc) >= fe else _index(k1, fsrc) - fs)
+        )
     n = min(n_out, expected)
     windows = _windows(n_out, copied_from, compare_max)
     errors = _decode_errors(outp, fout, windows, n_out)
-    rows: List[tuple] = []
+    rows: list[tuple] = []
     want_compared = 0
     if n > 0:
         if n <= compare_max:
@@ -796,35 +1034,64 @@ def _verify(src, start: float, end: float, out, *, tracks, copied_from, compare_
     got_titles = [a["title"] for a in out_audio]
     v_start = fout["video"]["start"]
     payload = {
-        "frames_expected": expected, "frames_out": n_out, "frames_compared": len(by_index),
+        "frames_expected": expected,
+        "frames_out": n_out,
+        "frames_compared": len(by_index),
         "frames_compared_expected": want_compared,
-        "decode_errors": len(errors), "decode_error_lines": errors[:5],
-        "decode_checked": [list(w) for w in windows], "decode_checked_frames": sum(c for _, c in windows),
+        "decode_errors": len(errors),
+        "decode_error_lines": errors[:5],
+        "decode_checked": [list(w) for w in windows],
+        "decode_checked_frames": sum(c for _, c in windows),
         "head_psnr_db": _db(by_index[0][1]) if 0 in by_index else None,
         "tail_psnr_db": _db(by_index[n - 1][1]) if (n - 1) in by_index else None,
         "head_min_psnr_db": _db(min(head)) if head else None,
-        "copied_from": copied_from, "copied_compared": len(copied), "copied_identical": len(identical),
+        "copied_from": copied_from,
+        "copied_compared": len(copied),
+        "copied_identical": len(identical),
         "copied_identical_sample": (len(identical) == len(copied)) if copied else None,
-        "audio_streams_in": len(sel), "audio_streams_out": len(out_audio),
-        "titles_in": want_titles, "titles_out": got_titles, "titles_kept": want_titles == got_titles,
+        "audio_streams_in": len(sel),
+        "audio_streams_out": len(out_audio),
+        "titles_in": want_titles,
+        "titles_out": got_titles,
+        "titles_kept": want_titles == got_titles,
         "audio_start_offset_ms": [round((a["start"] - v_start) * 1000, 1) for a in out_audio],
         "audio_duration_s": [round(a["duration"], 3) for a in out_audio],
         "video_duration_s": round(fout["video"]["duration"], 3),
-        "ok": (abs(n_out - expected) <= frames_tolerance and not errors and want_titles == got_titles
-               and len(out_audio) == len(sel) and len(by_index) == want_compared
-               and (not head or min(head) >= psnr_floor_db)
-               and (not copied or len(identical) == len(copied))),
+        "ok": (
+            abs(n_out - expected) <= frames_tolerance
+            and not errors
+            and want_titles == got_titles
+            and len(out_audio) == len(sel)
+            and len(by_index) == want_compared
+            and (not head or min(head) >= psnr_floor_db)
+            and (not copied or len(identical) == len(copied))
+        ),
         "wall_s": round(time.perf_counter() - t0, 3),
     }
-    blind = ["PSNR and identity are measured on software-decoded frames; a player's hardware decode may differ by a "
-             "few luma levels",
-             f"outputs longer than {compare_max} frames are compared, and decoded for errors, on the first and last "
-             f"{SAMPLE} frames (plus the re-encoded head) only",
-             f"a re-encoded frame is only checked against the {psnr_floor_db:g} dB floor: on a still scene the frame "
-             f"next to the right one can score above it"]
-    params = {"start": float(start), "end": float(end), "out": str(outp),
-              "tracks": tracks if isinstance(tracks, str) else list(tracks), "copied_from": copied_from,
-              "compare_max": compare_max, "frames_tolerance": frames_tolerance, "psnr_floor_db": psnr_floor_db}
+    blind = [
+        (
+            "PSNR and identity are measured on software-decoded frames; a player's hardware decode may differ by a "
+            "few luma levels"
+        ),
+        (
+            f"outputs longer than {compare_max} frames are compared, and decoded for errors, on the first and last "
+            f"{SAMPLE} frames (plus the re-encoded head) only"
+        ),
+        (
+            f"a re-encoded frame is only checked against the {psnr_floor_db:g} dB floor: on a still scene the frame "
+            f"next to the right one can score above it"
+        ),
+    ]
+    params = {
+        "start": float(start),
+        "end": float(end),
+        "out": str(outp),
+        "tracks": tracks if isinstance(tracks, str) else list(tracks),
+        "copied_from": copied_from,
+        "compare_max": compare_max,
+        "frames_tolerance": frames_tolerance,
+        "psnr_floor_db": psnr_floor_db,
+    }
     return receipt.result("cut", fsrc["source"], params, payload, blind, write_receipt=write_receipt)
 
 
@@ -832,10 +1099,13 @@ def _verify(src, start: float, end: float, out, *, tracks, copied_from, compare_
 # concat
 # =================================================================================================
 
+
 def _signature(f: dict) -> dict:
     v = f["video"]
-    return {"video": [v["codec"], v["w"], v["h"], v["pix_fmt"], v["fps"]],
-            "audio": [[a["codec"], a["sample_rate"], a["channels"]] for a in f["audio"]]}
+    return {
+        "video": [v["codec"], v["w"], v["h"], v["pix_fmt"], v["fps"]],
+        "audio": [[a["codec"], a["sample_rate"], a["channels"]] for a in f["audio"]],
+    }
 
 
 def _concat_line(p: Path) -> str:
@@ -851,12 +1121,14 @@ def concat(parts: Sequence, out=None, *, verify_decode: bool = True) -> dict:
     paths = [Path(p) for p in parts]
     infos = [facts(p) for p in paths]
     sig0 = _signature(infos[0])
-    for p, info in zip(paths[1:], infos[1:]):
+    for p, info in zip(paths[1:], infos[1:], strict=False):
         sig = _signature(info)
         for key in ("video", "audio"):
             if sig[key] != sig0[key]:
-                raise ff.MediaError(f"concat refuses {p.name}: its {key} {sig[key]} differs from {paths[0].name}'s "
-                                    f"{sig0[key]}; re-encode it with cut(mode='exact') first")
+                raise ff.MediaError(
+                    f"concat refuses {p.name}: its {key} {sig[key]} differs from {paths[0].name}'s "
+                    f"{sig0[key]}; re-encode it with cut(mode='exact') first"
+                )
     outp = Path(out) if out else ff.state_dir() / "cut" / f"{paths[0].stem}_concat{len(paths)}{paths[0].suffix}"
     container = outp.suffix.lower()
     if container not in CONTAINERS:
@@ -871,32 +1143,62 @@ def concat(parts: Sequence, out=None, *, verify_decode: bool = True) -> dict:
             fh.write("ffconcat version 1.0\n")
             for p in paths:
                 fh.write(_concat_line(p))
-        args = ["-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-map", "0:v:0", "-map", "0:a?",
-                "-c", "copy", *_video_tag(infos[0]["video"]["codec"], container)]
+        args = [
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(lst),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-c",
+            "copy",
+            *_video_tag(infos[0]["video"]["codec"], container),
+        ]
         for i, t in enumerate(titles):
             args += [f"-metadata:s:a:{i}", f"title={t or ''}"]
         args += [str(outp)]
         ff.run(args)
     expected = sum(_count_frames(p) for p in paths)
     n_out = _count_frames(outp)
-    errors: List[str] = []
+    errors: list[str] = []
     if verify_decode:
-        dec = ff.run(["-v", "error", "-i", str(outp), "-map", "0:v:0", "-map", "0:a?", "-f", "null", "-"],
-                     check=False)
+        dec = ff.run(["-v", "error", "-i", str(outp), "-map", "0:v:0", "-map", "0:a?", "-f", "null", "-"], check=False)
         errors = [ln for ln in dec.stderr.splitlines() if ln.strip()]
     fout = facts(outp, cache=False)
-    payload = {"out": str(outp), "parts": [str(p) for p in paths], "frames_expected": expected, "frames_out": n_out,
-               "decode_errors": len(errors) if verify_decode else None, "decode_error_lines": errors[:5],
-               "titles_out": [a["title"] for a in fout["audio"]], "titles_kept": [a["title"] for a in
-                                                                                  fout["audio"]] == titles,
-               "duration_s": round(fout["duration"], 3), "wall_s": round(time.perf_counter() - t0, 3),
-               "argv": [ff.argv_for(args)]}
-    blind = ["no fades or crossfades at the joins (the EDL renderer owns those)",
-             "parts with different parameter sets need them in band (hev1, as cut writes); an hvc1 part from "
-             "another encoder can fail to decode after the join"]
-    return receipt.result("cut", [str(p) for p in paths], {"parts": [str(p) for p in paths], "out": str(outp),
-                                                           "verify_decode": verify_decode, "op": "concat"},
-                          payload, blind)
+    payload = {
+        "out": str(outp),
+        "parts": [str(p) for p in paths],
+        "frames_expected": expected,
+        "frames_out": n_out,
+        "decode_errors": len(errors) if verify_decode else None,
+        "decode_error_lines": errors[:5],
+        "titles_out": [a["title"] for a in fout["audio"]],
+        "titles_kept": [a["title"] for a in fout["audio"]] == titles,
+        "duration_s": round(fout["duration"], 3),
+        "wall_s": round(time.perf_counter() - t0, 3),
+        "argv": [ff.argv_for(args)],
+    }
+    blind = [
+        "no fades or crossfades at the joins (the EDL renderer owns those)",
+        (
+            "parts with different parameter sets need them in band (hev1, as cut writes); an hvc1 part from "
+            "another encoder can fail to decode after the join"
+        ),
+    ]
+    return receipt.result(
+        "cut",
+        [str(p) for p in paths],
+        {"parts": [str(p) for p in paths], "out": str(outp), "verify_decode": verify_decode, "op": "concat"},
+        payload,
+        blind,
+    )
 
 
 # =================================================================================================
@@ -904,13 +1206,18 @@ def concat(parts: Sequence, out=None, *, verify_decode: bool = True) -> dict:
 #      py -m arsenal.media cut --concat <part> <part> ... --out <out>
 # =================================================================================================
 
-def cli(verb: str, argv: List[str]) -> int:
+
+def cli(verb: str, argv: list[str]) -> int:
     import argparse
+
     from .frames import parse_time
-    ap = argparse.ArgumentParser(prog="py -m arsenal.media cut",
-                                 description="trim/cut a video to the exact frame: copy (lossless, from the keyframe), "
-                                             "smart (re-encode only the head, copy the rest) or exact; keeps every "
-                                             "audio track and its name; --plan shows the cost without cutting")
+
+    ap = argparse.ArgumentParser(
+        prog=f"{ff.pyl()} -m arsenal.media cut",
+        description="trim/cut a video to the exact frame: copy (lossless, from the keyframe), "
+        "smart (re-encode only the head, copy the rest) or exact; keeps every "
+        "audio track and its name; --plan shows the cost without cutting",
+    )
     ap.add_argument("src", nargs="?")
     ap.add_argument("start", nargs="?", help="seconds or m:ss(.fff) from the file's start")
     ap.add_argument("end", nargs="?", help="seconds or m:ss(.fff) from the file's start")
@@ -936,13 +1243,41 @@ def cli(verb: str, argv: List[str]) -> int:
     if a.json:
         print(json.dumps(res, indent=2, default=str))
         return 0
-    keep = ("mode_suggested", "start_real", "start_keyframe", "next_keyframe", "head_reencode_s", "est_s",
-            "verify_est_s", "reasons",
-            "out", "mode", "frames", "head_frames", "copied_frames", "audio", "wall_s", "frames_expected",
-            "frames_out", "decode_errors", "titles_kept", "receipt")
+    keep = (
+        "mode_suggested",
+        "start_real",
+        "start_keyframe",
+        "next_keyframe",
+        "head_reencode_s",
+        "est_s",
+        "verify_est_s",
+        "reasons",
+        "out",
+        "mode",
+        "frames",
+        "head_frames",
+        "copied_frames",
+        "audio",
+        "wall_s",
+        "frames_expected",
+        "frames_out",
+        "decode_errors",
+        "titles_kept",
+        "receipt",
+    )
     view = {k: res[k] for k in keep if k in res}
     if "verify" in res:
-        view["verify"] = {k: res["verify"][k] for k in ("ok", "frames_expected", "frames_out", "decode_errors",
-                                                         "head_psnr_db", "copied_identical_sample", "titles_kept")}
+        view["verify"] = {
+            k: res["verify"][k]
+            for k in (
+                "ok",
+                "frames_expected",
+                "frames_out",
+                "decode_errors",
+                "head_psnr_db",
+                "copied_identical_sample",
+                "titles_kept",
+            )
+        }
     print(json.dumps(view, indent=2, default=str))
     return 0 if res.get("verify", {}).get("ok", True) else 1

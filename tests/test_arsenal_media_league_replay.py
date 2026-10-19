@@ -2,6 +2,7 @@
 
 Live proof needs a replay open in the client (Daniel's step); these pins hold the request shapes and the waits so the
 first live take changes only what the swagger says is different."""
+
 from __future__ import annotations
 
 import io
@@ -15,14 +16,51 @@ import pytest
 from arsenal.media.league import replay_api as ra
 
 ROWS = [
-    {"plan_id": "R4", "shot": "s056", "game_in": "26:27.00", "game_out": "26:33.40", "camera": "follow",
-     "target": "Draven", "replay_speed": 0.25, "look": "clean", "what": "two axes", "shots": ["s056", "s062"]},
-    {"plan_id": "R9", "shot": "s033", "game_in": "23:58.00", "game_out": "24:04.40", "camera": "push_in",
-     "target": "Draven", "replay_speed": 0.25, "look": "clean", "what": "the burst"},
-    {"plan_id": "R8", "shot": "thumbnail", "game_in": "26:33.40", "game_out": "26:35.40", "camera": "stills",
-     "target": "Draven", "replay_speed": 0.0, "look": "clean, HUD off", "what": "ACE frame"},
-    {"plan_id": "R10", "shot": "s024", "game_in": "15:44.00", "game_out": "15:59.00", "camera": "top",
-     "target": "Yuumi", "replay_speed": 0.5, "look": "clean", "what": "15:50"},
+    {
+        "plan_id": "R4",
+        "shot": "s056",
+        "game_in": "26:27.00",
+        "game_out": "26:33.40",
+        "camera": "follow",
+        "target": "Draven",
+        "replay_speed": 0.25,
+        "look": "clean",
+        "what": "two axes",
+        "shots": ["s056", "s062"],
+    },
+    {
+        "plan_id": "R9",
+        "shot": "s033",
+        "game_in": "23:58.00",
+        "game_out": "24:04.40",
+        "camera": "push_in",
+        "target": "Draven",
+        "replay_speed": 0.25,
+        "look": "clean",
+        "what": "the burst",
+    },
+    {
+        "plan_id": "R8",
+        "shot": "thumbnail",
+        "game_in": "26:33.40",
+        "game_out": "26:35.40",
+        "camera": "stills",
+        "target": "Draven",
+        "replay_speed": 0.0,
+        "look": "clean, HUD off",
+        "what": "ACE frame",
+    },
+    {
+        "plan_id": "R10",
+        "shot": "s024",
+        "game_in": "15:44.00",
+        "game_out": "15:59.00",
+        "camera": "top",
+        "target": "Yuumi",
+        "replay_speed": 0.5,
+        "look": "clean",
+        "what": "15:50",
+    },
 ]
 ORACLE_PLAN = Path(r"E:\AI-Setup\state\arsenal\media-oracles\capture\draven-penta.capture.json")
 
@@ -47,19 +85,22 @@ def test_follow_take_requests_in_order():
     assert calls == [
         ("POST", "/replay/playback", {"paused": True, "time": start}),
         ("POST", "/replay/sequence", {}),
-        ("POST", "/replay/render", {"cameraMode": "fps", "cameraAttached": True, "selectionName": "Draven",
-                                    "interfaceAll": True}),
+        (
+            "POST",
+            "/replay/render",
+            {"cameraMode": "fps", "cameraAttached": True, "selectionName": "Draven", "interfaceAll": True},
+        ),
         ("POST", "/replay/playback", {"speed": 0.25}),
         ("POST", "/replay/playback", {"paused": False}),
         ("POST", "/replay/render", {"interfaceAll": False}),
         ("POST", "/replay/playback", {"paused": True}),
     ]
     assert take["record_s"] == pytest.approx((26 * 60 + 33.4 + 4 - start) / 0.25, abs=0.1)
-    assert res["waited_s"] == pytest.approx(take["record_s"], abs=0.2)     # the whole roll, pre-roll included
+    assert res["waited_s"] == pytest.approx(take["record_s"], abs=0.2)  # the whole roll, pre-roll included
 
 
 def test_push_in_is_a_field_of_view_sequence():
-    take, res = _dry(ROWS[1])
+    _take, res = _dry(ROWS[1])
     seqs = [e["body"] for e in res["log"] if e["path"] == "/replay/sequence"]
     assert seqs[0] == {}
     fov = seqs[1]["fieldOfView"]
@@ -75,9 +116,10 @@ def test_stills_pause_on_the_frame_and_never_roll():
 
 
 def test_top_camera_names_no_target():
-    take, res = _dry(ROWS[3])
-    render = [e["body"] for e in res["log"] if e["path"] == "/replay/render"][0]
-    assert render["cameraMode"] == "top" and "selectionName" not in render
+    _take, res = _dry(ROWS[3])
+    render = next(e["body"] for e in res["log"] if e["path"] == "/replay/render")
+    assert render["cameraMode"] == "top"
+    assert "selectionName" not in render
 
 
 def test_bad_rows_refuse():
@@ -92,10 +134,16 @@ def test_run_sheet_is_in_game_order_and_counts_down():
     assert "**9 day(s) left**" in text
     order = [line.split("|")[2].strip() for line in text.splitlines() if line.startswith("| ") and "| ID |" not in line]
     assert order == ["R10", "R9", "R4", "R8"]
-    assert "`R4_s056`" in text and "`R8_thumbnail`" in text and "fieldOfView" in text
-    ins = ra.run_sheet(ROWS, today=date(2026, 10, 12),
-                       insurance=[{"id": "FULL-A", "range": ["0:00", "27:09"], "camera": "director", "hud": "on"}])
-    assert "FULL-A" in ins and "About 27 min" in ins
+    assert "`R4_s056`" in text
+    assert "`R8_thumbnail`" in text
+    assert "fieldOfView" in text
+    ins = ra.run_sheet(
+        ROWS,
+        today=date(2026, 10, 12),
+        insurance=[{"id": "FULL-A", "range": ["0:00", "27:09"], "camera": "director", "hud": "on"}],
+    )
+    assert "FULL-A" in ins
+    assert "About 27 min" in ins
 
 
 class FakeLeague:
@@ -132,7 +180,8 @@ def test_live_take_polls_the_playhead_until_the_end():
     take = ra.plan_take(ROWS[0])
     prompts = []
     ra.run_take(api, take, confirm=prompts.append, sleep=lambda s: None)
-    assert prompts[0].startswith("start the OBS recording") and prompts[-1] == "stop the OBS recording"
+    assert prompts[0].startswith("start the OBS recording")
+    assert prompts[-1] == "stop the OBS recording"
     assert fake.time >= 26 * 60 + 33.4 + 4.0
     assert fake.paused is True
 
@@ -140,7 +189,8 @@ def test_live_take_polls_the_playhead_until_the_end():
 def test_status_keeps_the_fields_a_first_check_needs():
     st = ra.ReplayApi(opener=FakeLeague()).status()
     assert st["game"] == {"processID": 1234}
-    assert st["render"]["selectionName"] == "Draven" and "extra" not in st["render"]
+    assert st["render"]["selectionName"] == "Draven"
+    assert "extra" not in st["render"]
 
 
 def test_no_replay_open_says_what_to_do():

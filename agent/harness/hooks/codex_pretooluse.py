@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Codex-native PreToolUse adapter for Bash and canonical ``apply_patch`` events."""
+
 from __future__ import annotations
 
 import json
 import os
 import sys
-from typing import Any, Dict
+from typing import Any
+
+# Run as a bare script (by .codex/hooks.json or the scripts/hooks/ shim), so the repo root is
+# not on sys.path until we put it there.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from agent.harness.hooks.codex_common import (
-    action_paths,
     capture_payload,
     dedup_should_skip,
     event_in_scope,
@@ -18,23 +22,34 @@ from agent.harness.hooks.codex_common import (
     touch_working,
 )
 
-
 TOOLS = {"Bash", "apply_patch"}
 
 
 def deny(reason: str) -> None:
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "deny",
-        "permissionDecisionReason": reason,
-    }}))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
+                }
+            }
+        )
+    )
 
 
 def emit_context(text: str) -> None:
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "additionalContext": text,
-    }}))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "additionalContext": text,
+                }
+            }
+        )
+    )
 
 
 def lock_reason(path: str, seat: str) -> str:
@@ -46,7 +61,7 @@ def lock_reason(path: str, seat: str) -> str:
         return ""
 
 
-def bash_reason(data: Dict[str, Any]) -> str:
+def bash_reason(data: dict[str, Any]) -> str:
     try:
         from agent.harness.guards import git_veto
 
@@ -66,7 +81,7 @@ def id_fact(path: str) -> str:
         return ""
 
 
-def recall_context(data: Dict[str, Any], seat: str, primary_path: str = "") -> str:
+def recall_context(data: dict[str, Any], seat: str, primary_path: str = "") -> str:
     if os.getenv("AKASHIC_RECALL_AT_ACTION", "1") == "0":
         return ""
     ti = data.get("tool_input")
@@ -76,8 +91,8 @@ def recall_context(data: Dict[str, Any], seat: str, primary_path: str = "") -> s
         return ""
     sid = str(data.get("session_id") or "")
     try:
-        from core.recall.at_action import recall_at, render, mark_impression, normalize_target, log_injection
         from agent.harness.seen import load_seen, mark_seen
+        from core.recall.at_action import log_injection, mark_impression, normalize_target, recall_at, render
 
         res = recall_at(
             path=primary_path or None,

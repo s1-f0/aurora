@@ -51,14 +51,13 @@ Run::
 
     py -m pytest tests/test_recall_audit_has_a_door.py -q
 """
+
 from __future__ import annotations
 
 import json
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -67,9 +66,14 @@ CLI = str(ROOT / "agent_cli.py")
 
 
 def _run(*args, timeout=180):
-    return subprocess.run([sys.executable, "-X", "utf8", CLI, *args],
-                          capture_output=True, text=True, cwd=str(ROOT), timeout=timeout,
-                          stdin=subprocess.DEVNULL)
+    return subprocess.run(
+        [sys.executable, "-X", "utf8", CLI, *args],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        timeout=timeout,
+        stdin=subprocess.DEVNULL,
+    )
 
 
 # ----------------------------------------------------------------- the door exists at all
@@ -80,7 +84,8 @@ def test_the_verb_is_registered():
     assert "recall-audit" in (r.stdout + r.stderr), (
         "agent_cli has no `recall-audit` verb. core/recall/precision_audit.py is built, "
         "tested, holds 1,564 harvested impressions, and has an explicit unwired exception at "
-        "scripts/checkers/check_wiring.py:179 -- which is exactly why it has never been run.")
+        "scripts/checkers/check_wiring.py:179 -- which is exactly why it has never been run."
+    )
 
 
 def test_pack_renders_a_blind_labelling_pack():
@@ -109,8 +114,9 @@ def test_the_pack_is_blind_by_construction():
     low = r.stdout.lower()
     for leak in ("helped", "useful=", "votes", "credited", "noise="):
         assert leak not in low, (
-            "the pack leaks the ranker's prior opinion (%r) -- a labeller reading it is "
-            "measuring our agreement with ourselves, not relevance" % leak)
+            f"the pack leaks the ranker's prior opinion ({leak!r}) -- a labeller reading it is "
+            "measuring our agreement with ourselves, not relevance"
+        )
 
 
 def test_the_same_seed_draws_the_same_sample():
@@ -130,25 +136,31 @@ def test_score_with_no_labels_CONFESSES_rather_than_returning_zero():
     r = _run("recall-audit", "score", "--labels", "{}", "--json")
     assert r.returncode == 0, r.stderr[:300]
     doc = json.loads(r.stdout)
-    assert doc.get("status") == "STARVED", (
-        "an audit with no labels did not report STARVED: %r" % (doc.get("status"),))
+    assert doc.get("status") == "STARVED", "an audit with no labels did not report STARVED: {!r}".format(
+        doc.get("status")
+    )
     assert doc.get("precision") is None, (
-        "precision rendered as %r for zero labelled observations -- that is a manufactured "
-        "number" % (doc.get("precision"),))
+        "precision rendered as {!r} for zero labelled observations -- that is a manufactured number".format(
+            doc.get("precision")
+        )
+    )
 
 
 def test_score_reports_agreement_across_labellers():
     """The fleet shape. Two labellers disagreeing on an item must surface as DISPUTED rather
     than being averaged into a number that hides it -- N-version blind review only pays if the
     disagreement survives to the reader."""
-    labels = json.dumps({
-        "alice": {"1:a": "on", "1:b": "off"},
-        "bob":   {"1:a": "off", "1:b": "off"},
-    })
+    labels = json.dumps(
+        {
+            "alice": {"1:a": "on", "1:b": "off"},
+            "bob": {"1:a": "off", "1:b": "off"},
+        }
+    )
     r = _run("recall-audit", "score", "--labels", labels, "--json")
     assert r.returncode == 0, r.stderr[:300]
     doc = json.loads(r.stdout)
     assert doc.get("status") != "STARVED", doc
     assert doc.get("agreement") is not None, "agreement not reported across two labellers"
     assert "1:a" in json.dumps(doc.get("disputed") or []), (
-        "the item the two labellers disagreed on is not listed as disputed: %r" % (doc,))
+        f"the item the two labellers disagreed on is not listed as disputed: {doc!r}"
+    )

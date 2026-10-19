@@ -10,16 +10,20 @@ faithfulness). The CLEAN instrument of record is the live bench: pre-fix keys fr
 tests/fixtures/recall_eval/moments.json why_not_forty_yet vs post-fix run. Kept for the
 falsification re-measure in `stats` and the field_probe mechanism data, both of which stand.
 """
-import json, os, sys, re
+
+import json
+import os
+import re
+import sys
 from collections import Counter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 OUT = os.path.join(ROOT, "research", "in-flight", "filing-schema-navi-bench-out.json")
 
-from core.recall import bench as _b
-from core.learning.learning_store import get_learning_store
-import core.recall.at_action as aa
+import core.recall.at_action as aa  # noqa: E402  # sys.path bootstrap
+from core.learning.learning_store import get_learning_store  # noqa: E402  # sys.path bootstrap
+from core.recall import bench as _b  # noqa: E402  # sys.path bootstrap
 
 
 def frozen_items():
@@ -44,7 +48,7 @@ def main():
     # --- falsification of brief numbers #1/#2, re-measured from the store itself
     fc = Counter(field_choice(r) for r in recs)
     present = {f: sum(1 for r in recs if r.get(f)) for f in ("recommendation", "actual", "what_tried")}
-    proj = [i for i in items]  # after graduated/benched filtering
+    proj = list(items)  # after graduated/benched filtering
     total = matched = 0
     for r in recs:
         f = field_choice(r)
@@ -53,10 +57,16 @@ def main():
             total += len(v)
             if name == f:
                 matched += len(v)
-    stats = {"rows": len(recs), "projected": len(proj), "field_choice": dict(fc),
-             "present": present, "chars_total": total, "chars_matched": matched,
-             "chars_unmatched": total - matched,
-             "pct_unmatched": round(100 * (total - matched) / total, 1) if total else None}
+    stats = {
+        "rows": len(recs),
+        "projected": len(proj),
+        "field_choice": dict(fc),
+        "present": present,
+        "chars_total": total,
+        "chars_matched": matched,
+        "chars_unmatched": total - matched,
+        "pct_unmatched": round(100 * (total - matched) / total, 1) if total else None,
+    }
 
     meta = _b.load(None)
     moments = meta["moments"]
@@ -98,23 +108,39 @@ def main():
 
     def make_fn(match_map):
         return lambda path=None, command=None, limit=5: {
-            "lessons": rank({"path": path, "command": command}, match_map, limit)}
+            "lessons": rank({"path": path, "command": command}, match_map, limit)
+        }
 
     res = {}
     for name, mm in (("control_single_field", control), ("treatment_all_three", treatment)):
         fn = make_fn(mm)
         probe = make_fn(mm)
         d = _b.score(moments, fn, k=5, probe_fn=probe)
-        res[name] = {"recall_at_1": d["recall_at_1"], "recall_at_k": d["recall_at_k"],
-                     "hits1": sum(1 for r in d["rows"] if r["verdict"] == "HIT@1"),
-                     "hitsk": sum(1 for r in d["rows"] if r["verdict"] in ("HIT@1", "HIT@5")),
-                     "scored": d["scored"],
-                     "ceiling": {k2: d["ceiling"][k2] for k2 in
-                                 ("delivered", "rankable", "unmatchable", "unmatchable_ids",
-                                  "rankable_ids", "cap_at_1", "best_possible_at_1") if k2 in d["ceiling"]},
-                     "ceiling_amb": (d["ceiling"].get("ambiguity") or {}).get("cap_at_1"),
-                     "rows": [{"id": r["id"], "verdict": r["verdict"],
-                               "expected": r.get("expected"), "got": r.get("got")} for r in d["rows"]]}
+        res[name] = {
+            "recall_at_1": d["recall_at_1"],
+            "recall_at_k": d["recall_at_k"],
+            "hits1": sum(1 for r in d["rows"] if r["verdict"] == "HIT@1"),
+            "hitsk": sum(1 for r in d["rows"] if r["verdict"] in ("HIT@1", "HIT@5")),
+            "scored": d["scored"],
+            "ceiling": {
+                k2: d["ceiling"][k2]
+                for k2 in (
+                    "delivered",
+                    "rankable",
+                    "unmatchable",
+                    "unmatchable_ids",
+                    "rankable_ids",
+                    "cap_at_1",
+                    "best_possible_at_1",
+                )
+                if k2 in d["ceiling"]
+            },
+            "ceiling_amb": (d["ceiling"].get("ambiguity") or {}).get("cap_at_1"),
+            "rows": [
+                {"id": r["id"], "verdict": r["verdict"], "expected": r.get("expected"), "got": r.get("got")}
+                for r in d["rows"]
+            ],
+        }
 
     # mechanism probe: for each scored moment, which FIELD holds the winning tokens under treatment
     field_probe = {}
@@ -132,9 +158,13 @@ def main():
         chosen = field_choice(r)
         field_probe[m["id"]] = {"chosen_field": chosen, "overlap_by_field": overlaps}
 
-    out = {"stats": stats, "results": res, "field_probe": field_probe,
-           "note": "LEXICAL PROXY for the live ranker: corpus frozen from production _project_items; "
-                   "only the match surface varies. Counts, not percentages (n=18 scored)."}
+    out = {
+        "stats": stats,
+        "results": res,
+        "field_probe": field_probe,
+        "note": "LEXICAL PROXY for the live ranker: corpus frozen from production _project_items; "
+        "only the match surface varies. Counts, not percentages (n=18 scored).",
+    }
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2, default=str)

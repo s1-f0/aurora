@@ -4,11 +4,17 @@
 Unlike Claude Code, Codex emits PostToolUse after non-zero Bash commands.  This adapter uses
 that event directly and never reconstructs failures from Codex's unstable rollout transcript.
 """
+
 from __future__ import annotations
 
 import json
+import os
 import sys
-from typing import Any, Dict
+from typing import Any
+
+# Run as a bare script (by .codex/hooks.json or the scripts/hooks/ shim), so the repo root is
+# not on sys.path until we put it there.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from agent.harness.hooks.codex_common import (
     action_targets,
@@ -20,11 +26,10 @@ from agent.harness.hooks.codex_common import (
     touch_working,
 )
 
-
 TOOLS = {"Bash", "apply_patch"}
 
 
-def is_success(data: Dict[str, Any]) -> bool:
+def is_success(data: dict[str, Any]) -> bool:
     response = data.get("tool_response")
     if isinstance(response, dict):
         if response.get("is_error") is True or response.get("isError") is True:
@@ -39,9 +44,7 @@ def is_success(data: Dict[str, Any]) -> bool:
                     return int(response[key]) == 0
                 except (TypeError, ValueError):
                     return False
-    if data.get("is_error") is True or data.get("isError") is True or data.get("error"):
-        return False
-    return True
+    return not (data.get("is_error") is True or data.get("isError") is True or data.get("error"))
 
 
 def resolve(session_id: str, target: str, success: bool, seat: str) -> None:

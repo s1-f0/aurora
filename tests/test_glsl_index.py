@@ -9,8 +9,10 @@ content-addressed archive copy of every module version under state/ (a receipt c
 The hash is of the file's text with line endings normalised to LF: *.glsl is not pinned by .gitattributes and this
 machine checks out with core.autocrlf=true, so hashing raw bytes would make a CRLF checkout look stale.
 """
+
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -40,11 +42,13 @@ def test_the_index_lists_library_files_by_posix_path_with_the_hash_of_their_lf_t
     lib = tmp_path / "glsl"
     (lib / "noise").mkdir(parents=True)
     value, core = module_text("value", "float v(float x){ return x; }"), module_text("core", "float c(){ return 1.; }")
-    (lib / "noise" / "value.glsl").write_bytes(value.replace("\n", "\r\n").encode("utf-8"))   # a CRLF checkout
+    (lib / "noise" / "value.glsl").write_bytes(value.replace("\n", "\r\n").encode("utf-8"))  # a CRLF checkout
     (lib / "core.glsl").write_bytes(core.encode("utf-8"))
     (lib / "README.md").write_text("not a module", encoding="utf-8")
-    assert M.build_index(lib) == {"api": M.API, "files": [{"path": "core.glsl", "sha256": sha(core)},
-                                                          {"path": "noise/value.glsl", "sha256": sha(value)}]}
+    assert M.build_index(lib) == {
+        "api": M.API,
+        "files": [{"path": "core.glsl", "sha256": sha(core)}, {"path": "noise/value.glsl", "sha256": sha(value)}],
+    }
 
 
 def test_a_stale_index_is_caught(tmp_path):
@@ -71,7 +75,8 @@ def test_write_index_keeps_a_content_addressed_archive_copy_of_every_version(tmp
     report = M.write_index(lib, archive_dir=archive)
     for text in (v1, v2):
         kept = archive / "wave" / f"{sha(text)}.glsl"
-        assert kept.exists() and hashlib.sha256(kept.read_bytes()).hexdigest() == sha(text)
+        assert kept.exists()
+        assert hashlib.sha256(kept.read_bytes()).hexdigest() == sha(text)
     assert json.loads((lib / "index.json").read_text(encoding="utf-8")) == report["index"]
 
 
@@ -86,8 +91,9 @@ def test_a_truncated_archive_copy_is_rewritten_not_trusted(tmp_path):
     kept.parent.mkdir(parents=True)
     kept.write_bytes(text.encode("utf-8")[:10])
     report = M.write_index(lib, archive_dir=archive)
-    assert kept.read_bytes() == text.encode("utf-8") and report["archived"] == [kept.as_posix()]
-    assert M.write_index(lib, archive_dir=archive)["archived"] == []     # a good copy is never rewritten
+    assert kept.read_bytes() == text.encode("utf-8")
+    assert report["archived"] == [kept.as_posix()]
+    assert M.write_index(lib, archive_dir=archive)["archived"] == []  # a good copy is never rewritten
 
 
 def test_an_interrupted_archive_write_leaves_nothing_at_the_hash_path(tmp_path, monkeypatch):
@@ -98,11 +104,10 @@ def test_an_interrupted_archive_write_leaves_nothing_at_the_hash_path(tmp_path, 
 
     def interrupted(src, dst):
         raise OSError("power cut")
+
     monkeypatch.setattr(M.os, "replace", interrupted)
-    try:
+    with contextlib.suppress(OSError):
         M.write_index(lib, archive_dir=archive)
-    except OSError:
-        pass
     leftovers = [p for p in archive.rglob("*") if p.is_file()]
     assert leftovers == [], leftovers
     assert not (lib / "index.json").exists()
@@ -121,9 +126,11 @@ def test_index_and_archive_files_are_created_for_the_umask_not_as_owner_only(tmp
         if flags & os.O_CREAT:
             created.append((os.path.basename(path), mode))
         return real_open(path, flags, mode, *args, **kwargs)
+
     monkeypatch.setattr(M.os, "open", recording_open)
     M.write_index(lib, archive_dir=archive)
-    assert len(created) == 2 and all(mode == 0o666 for _, mode in created), created
+    assert len(created) == 2, created
+    assert all(mode == 0o666 for _, mode in created), created
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
@@ -143,4 +150,6 @@ def test_the_index_verb_reports_whether_the_committed_index_is_current(capsys):
     ns = SimpleNamespace(action="index", names=[], write=False, dir=None, json=True, target=None)
     assert M._cmd(ns) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["current"] is True and out["index"] == M.build_index() and out["written"] is False
+    assert out["current"] is True
+    assert out["index"] == M.build_index()
+    assert out["written"] is False

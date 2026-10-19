@@ -43,10 +43,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 _IMPORT_ERROR = None  # so the skipif reason string is safe when the import SUCCEEDS
 try:
-    from core.screenspace import capture  # noqa: F401
-    from core.screenspace import peek, read_text  # noqa: F401
+    from core.screenspace import (  # noqa: F401  # imported to prove the seam exists; a failure is reported by the skipif
+        capture,
+        peek,
+        read_text,
+    )
+
     _IMPORT_OK = True
-except Exception as exc:  # noqa: BLE001
+except Exception as exc:  # noqa: BLE001  # any import failure is the RED, reported by the skipif
     _IMPORT_OK = False
     _IMPORT_ERROR = exc
 
@@ -54,7 +58,7 @@ except Exception as exc:  # noqa: BLE001
 pytestmark = pytest.mark.skipif(
     not _IMPORT_OK,
     reason="core/screenspace not yet built — RED: engine must satisfy this contract "
-           f"(import failed: {_IMPORT_ERROR!r})",
+    f"(import failed: {_IMPORT_ERROR!r})",
 )
 
 

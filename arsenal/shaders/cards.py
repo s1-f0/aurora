@@ -56,6 +56,7 @@ each other and say nothing about a GPU.
 
 LICENCE. Apache-2.0, our own code. Card bodies are house code too: written fresh, never copied from the corpus.
 """
+
 from __future__ import annotations
 
 import json
@@ -65,26 +66,29 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING
 
 from . import cli
 from . import modules as M
 from . import render as R
 from . import serve as S
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
 CARD_API = "arsenal.shader-card/v1"
 CARDS_DIR = M.LIBRARY_DIR / "cards"
 CARDS_OUT = R.STATE / "cards"
 CARD_SUFFIX = ".card"
-TARGET = "toy"                   # the shader lab's runtime: what renders a card
+TARGET = "toy"  # the shader lab's runtime: what renders a card
 DEFAULT_TIMES = (0.0,)
 DEFAULT_SIZE = (320, 180)
-CARD_TIMEOUT_S = 60              # one job (one card, every t); a burst still ends under three minutes (render.py)
-FLAT_STD = 2.0                   # a frame whose every channel's standard deviation is below this is one flat colour
-MAGENTA_MIN, MAGENTA_MAX = 250, 5    # a probe pixel is NaN-magenta when red and blue >= 250 and green <= 5
-PROBE_PREFIX = "nan_"            # the probe's frames: nan_t0.00.png beside t0.00.png
-PROBE_ENTRY = "cardProbeImage"   # what the card's own mainImage is renamed to inside the probe
-SHADER_OUTPUT = {"id": "4dfGRr", "channel": 0}   # the Image pass's output, as Shadertoy saves it (render.wrap_frag)
+CARD_TIMEOUT_S = 60  # one job (one card, every t); a burst still ends under three minutes (render.py)
+FLAT_STD = 2.0  # a frame whose every channel's standard deviation is below this is one flat colour
+MAGENTA_MIN, MAGENTA_MAX = 250, 5  # a probe pixel is NaN-magenta when red and blue >= 250 and green <= 5
+PROBE_PREFIX = "nan_"  # the probe's frames: nan_t0.00.png beside t0.00.png
+PROBE_ENTRY = "cardProbeImage"  # what the card's own mainImage is renamed to inside the probe
+SHADER_OUTPUT = {"id": "4dfGRr", "channel": 0}  # the Image pass's output, as Shadertoy saves it (render.wrap_frag)
 MAIN_IMAGE_RE = re.compile(r"\bvoid\s+mainImage\s*\(")
 
 PROBE_WRAPPER = f"""\
@@ -115,9 +119,9 @@ class Card:
     path: str
     header: dict
     body: str
-    uses: Tuple[str, ...]
-    times: Tuple[float, ...]
-    size: Tuple[int, int]
+    uses: tuple[str, ...]
+    times: tuple[float, ...]
+    size: tuple[int, int]
     note: str = ""
 
 
@@ -126,15 +130,18 @@ def _is_number(x) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
-def _header(text: str, path: str) -> Tuple[dict, str]:
+def _header(text: str, path: str) -> tuple[dict, str]:
     """(header, body): the leading `//!` lines read exactly as modules.parse_module reads a module's (one dialect)."""
     lines = M._source_lines(text)
     n = M._header_line_count(lines)
     if not n:
         raise CardError(f'{path}: no //! header on the first line (a card starts //! {{"card": "<module name>", ...}})')
     try:
-        header = json.loads(" ".join(line.lstrip(" \t")[3:] for line in lines[:n]),
-                            parse_constant=M._reject_constant, parse_int=M._json_int)
+        header = json.loads(
+            " ".join(line.lstrip(" \t")[3:] for line in lines[:n]),
+            parse_constant=M._reject_constant,
+            parse_int=M._json_int,
+        )
     except json.JSONDecodeError as exc:
         raise CardError(f"{path}: the //! header is not JSON ({exc.msg} at column {exc.colno})") from None
     except (ValueError, RecursionError) as exc:
@@ -152,38 +159,56 @@ def parse_card(text: str, path: str = "<text>") -> Card:
         raise CardError(f"{path}: a card's name is a module's name: letters, digits, '.', '_' or '-' (not {name!r})")
     p = Path(str(path))
     if p.suffix == CARD_SUFFIX and p.stem != name:
-        raise CardError(f"{path}: the header names the card '{name}' but the file is '{p.name}'; a card lives in "
-                        f"<module-name>{CARD_SUFFIX}")
+        raise CardError(
+            f"{path}: the header names the card '{name}' but the file is '{p.name}'; a card lives in "
+            f"<module-name>{CARD_SUFFIX}"
+        )
     uses = header.get("uses", [name])
     if not isinstance(uses, list) or not all(isinstance(u, str) and M.NAME_RE.fullmatch(u) for u in uses):
         raise CardError(f'{path}: "uses" must be a list of module names (default: ["{name}"])')
     times = header.get("t", list(DEFAULT_TIMES))
-    if (not isinstance(times, list) or not times or len(times) > R.MAX_TIMES
-            or not all(_is_number(t) and math.isfinite(t) and t >= 0 for t in times)):
+    if (
+        not isinstance(times, list)
+        or not times
+        or len(times) > R.MAX_TIMES
+        or not all(_is_number(t) and math.isfinite(t) and t >= 0 for t in times)
+    ):
         raise CardError(f'{path}: "t" must be a list of 1 to {R.MAX_TIMES} times in seconds, each a number >= 0')
     size = header.get("size", list(DEFAULT_SIZE))
-    if (not isinstance(size, list) or len(size) != 2
-            or not all(isinstance(s, int) and not isinstance(s, bool) and 1 <= s <= R.MAX_SIDE for s in size)):
+    if (
+        not isinstance(size, list)
+        or len(size) != 2
+        or not all(isinstance(s, int) and not isinstance(s, bool) and 1 <= s <= R.MAX_SIDE for s in size)
+    ):
         raise CardError(f'{path}: "size" must be [width, height], whole pixels from 1 to {R.MAX_SIDE}')
     note = header.get("note", "")
     if not isinstance(note, str):
         raise CardError(f'{path}: "note" must be text (what a person should see)')
     if not MAIN_IMAGE_RE.search(M.strip_comments(body)):
-        raise CardError(f"{path}: the card's body must define void mainImage(out vec4 color, in vec2 pixel), "
-                        "Shadertoy style (any parameter names)")
-    return Card(name=name, path=str(path), header=header, body=body, uses=tuple(dict.fromkeys(uses)),
-                times=tuple(float(t) for t in times), size=(size[0], size[1]),
-                note=" ".join(note.split()))   # a note wrapped across //! lines keeps no runs of indent
+        raise CardError(
+            f"{path}: the card's body must define void mainImage(out vec4 color, in vec2 pixel), "
+            "Shadertoy style (any parameter names)"
+        )
+    return Card(
+        name=name,
+        path=str(path),
+        header=header,
+        body=body,
+        uses=tuple(dict.fromkeys(uses)),
+        times=tuple(float(t) for t in times),
+        size=(size[0], size[1]),
+        note=" ".join(note.split()),
+    )  # a note wrapped across //! lines keeps no runs of indent
 
 
-def card_path(name: str, cards_dir: Optional[Path] = None) -> Path:
+def card_path(name: str, cards_dir: Path | None = None) -> Path:
     """Where the card named `name` lives. A name is a name, never a path."""
     if not isinstance(name, str) or not M.NAME_RE.fullmatch(name):
         raise CardError(f"not a card name: {name!r} (letters, digits, '.', '_' or '-')")
     return Path(cards_dir if cards_dir is not None else CARDS_DIR) / f"{name}{CARD_SUFFIX}"
 
 
-def list_cards(cards_dir: Optional[Path] = None) -> List[str]:
+def list_cards(cards_dir: Path | None = None) -> list[str]:
     """Every card's name in the folder, sorted; [] when the folder does not exist yet."""
     d = Path(cards_dir if cards_dir is not None else CARDS_DIR)
     if not d.is_dir():
@@ -191,7 +216,7 @@ def list_cards(cards_dir: Optional[Path] = None) -> List[str]:
     return sorted(p.stem for p in d.glob(f"*{CARD_SUFFIX}") if p.is_file())
 
 
-def load_card(name: str, cards_dir: Optional[Path] = None) -> Card:
+def load_card(name: str, cards_dir: Path | None = None) -> Card:
     p = card_path(name, cards_dir)
     if not p.is_file():
         raise CardError(f"no card named '{name}' in {p.parent}")
@@ -220,7 +245,7 @@ def _missing_module(card: Card, name: str, lib: M.Library) -> str:
     return msg
 
 
-def _calls_outside(card: Card, lib: M.Library, closure: Iterable[str]) -> List[str]:
+def _calls_outside(card: Card, lib: M.Library, closure: Iterable[str]) -> list[str]:
     """Library functions (and struct constructors) the body calls from modules outside `uses` and what they need: the
     compiler would only say "no matching function"; this says which module to add. A call nothing provides is left to
     the compiler, which names it."""
@@ -235,8 +260,13 @@ def _calls_outside(card: Card, lib: M.Library, closure: Iterable[str]) -> List[s
     return out
 
 
-def build_card(card, library: Optional[M.Library] = None, cards_dir: Optional[Path] = None,
-               lib_dirs: Optional[Iterable] = None, probe: bool = False) -> dict:
+def build_card(
+    card,
+    library: M.Library | None = None,
+    cards_dir: Path | None = None,
+    lib_dirs: Iterable | None = None,
+    probe: bool = False,
+) -> dict:
     """The card as a Shadertoy-shaped shader: Common = the library's composition of `uses` (absent when it uses none),
     Image = the body (or, with probe, the NaN probe around it), and a "card" block naming exactly what was composed.
     `card` is a Card or a name; the library is loaded leniently from lib_dirs when none is given, so one bad file
@@ -253,29 +283,54 @@ def build_card(card, library: Optional[M.Library] = None, cards_dir: Optional[Pa
         raise CardError(f"card '{c.name}' ({c.path}): {exc}") from None
     outside = _calls_outside(c, lib, order)
     if outside:
-        raise CardError(f"card '{c.name}' ({c.path}) calls the library outside its \"uses\": " + "; ".join(outside)
-                        + "; add those modules to \"uses\"")
+        raise CardError(
+            f"card '{c.name}' ({c.path}) calls the library outside its \"uses\": "
+            + "; ".join(outside)
+            + '; add those modules to "uses"'
+        )
     sha = None
     if common:
         head = common.splitlines()[2] if len(common.splitlines()) > 2 else ""
         sha = head.split(":", 1)[1].strip() if head.startswith("// sha256:") else None
     passes = []
     if common:
-        passes.append({"name": "Common", "type": "common", "code": common, "inputs": [], "outputs": [],
-                       "description": ""})
-    passes.append({"name": "Image", "type": "image", "code": probe_code(c.body) if probe else c.body, "inputs": [],
-                   "outputs": [dict(SHADER_OUTPUT)], "description": ""})
+        passes.append(
+            {"name": "Common", "type": "common", "code": common, "inputs": [], "outputs": [], "description": ""}
+        )
+    passes.append(
+        {
+            "name": "Image",
+            "type": "image",
+            "code": probe_code(c.body) if probe else c.body,
+            "inputs": [],
+            "outputs": [dict(SHADER_OUTPUT)],
+            "description": "",
+        }
+    )
     return {
         "ver": "0.1",
-        "info": {"id": f"card-{c.name}" + ("-nan" if probe else ""),
-                 "name": f"card {c.name}" + (" (NaN probe)" if probe else ""),
-                 "username": "akashic-house", "description": c.note,
-                 "tags": ["card"] + (["nan-probe"] if probe else [])},
+        "info": {
+            "id": f"card-{c.name}" + ("-nan" if probe else ""),
+            "name": f"card {c.name}" + (" (NaN probe)" if probe else ""),
+            "username": "akashic-house",
+            "description": c.note,
+            "tags": ["card"] + (["nan-probe"] if probe else []),
+        },
         "renderpass": passes,
-        "card": {"api": CARD_API, "name": c.name, "uses": list(c.uses), "modules": list(order),
-                 "versions": {n: lib.modules[n].version for n in order}, "composed_sha256": sha,
-                 "t": list(c.times), "size": list(c.size), "note": c.note, "source": _rel(c.path), "probe": bool(probe),
-                 "library_problems": len(lib.problems)},
+        "card": {
+            "api": CARD_API,
+            "name": c.name,
+            "uses": list(c.uses),
+            "modules": list(order),
+            "versions": {n: lib.modules[n].version for n in order},
+            "composed_sha256": sha,
+            "t": list(c.times),
+            "size": list(c.size),
+            "note": c.note,
+            "source": _rel(c.path),
+            "probe": bool(probe),
+            "library_problems": len(lib.problems),
+        },
     }
 
 
@@ -289,8 +344,13 @@ def _rel(path: str) -> str:
 def _meta(card: Card, probe: bool = False) -> dict:
     """What a render receipt says about the subject: a house card, under the house licence."""
     tail = ("-nan", " (NaN probe)") if probe else ("", "")
-    return {"id": f"card-{card.name}{tail[0]}", "name": f"card {card.name}{tail[1]}", "author": "akashic-house",
-            "license": {"license": "Apache-2.0", "explicit": True, "line": ""}, "url": None}
+    return {
+        "id": f"card-{card.name}{tail[0]}",
+        "name": f"card {card.name}{tail[1]}",
+        "author": "akashic-house",
+        "license": {"license": "Apache-2.0", "explicit": True, "line": ""},
+        "url": None,
+    }
 
 
 def _check_out(out_root: Path, allow_tracked: bool) -> None:
@@ -305,9 +365,14 @@ def _out_root(out_root) -> Path:
     return p if p.is_absolute() else p.absolute()
 
 
-def write_card(card, out_root: Optional[Path] = None, library: Optional[M.Library] = None,
-               cards_dir: Optional[Path] = None, lib_dirs: Optional[Iterable] = None,
-               allow_tracked: bool = False) -> dict:
+def write_card(
+    card,
+    out_root: Path | None = None,
+    library: M.Library | None = None,
+    cards_dir: Path | None = None,
+    lib_dirs: Iterable | None = None,
+    allow_tracked: bool = False,
+) -> dict:
     """Build the card and its probe and write <out_root>/<name>/card.json and probe.json. Returns a summary row."""
     root = _out_root(out_root)
     _check_out(root, allow_tracked)
@@ -319,16 +384,29 @@ def write_card(card, out_root: Optional[Path] = None, library: Optional[M.Librar
     R._write_json(out / "card.json", shader)
     R._write_json(out / "probe.json", probe)
     facts = shader["card"]
-    return {"name": c.name, "ok": True, "stage": "build", "card_json": str(out / "card.json"),
-            "probe_json": str(out / "probe.json"), "uses": facts["uses"], "modules": facts["modules"],
-            "composed_sha256": facts["composed_sha256"], "t": facts["t"], "size": facts["size"], "note": c.note,
-            "shader": shader, "probe": probe, "card": c}
+    return {
+        "name": c.name,
+        "ok": True,
+        "stage": "build",
+        "card_json": str(out / "card.json"),
+        "probe_json": str(out / "probe.json"),
+        "uses": facts["uses"],
+        "modules": facts["modules"],
+        "composed_sha256": facts["composed_sha256"],
+        "t": facts["t"],
+        "size": facts["size"],
+        "note": c.note,
+        "shader": shader,
+        "probe": probe,
+        "card": c,
+    }
 
 
 # ----------------------------------------------------------------------------------------------------- the pictures
 def image_facts(png) -> dict:
     """{std: [r, g, b], flat, mean_luma}: flat when every channel's standard deviation (0..255) is below FLAT_STD."""
     from PIL import Image, ImageStat
+
     with Image.open(png) as im:
         rgb = im.convert("RGB")
         std = [round(s, 3) for s in ImageStat.Stat(rgb).stddev]
@@ -339,15 +417,20 @@ def image_facts(png) -> dict:
 def magenta_pixels(png) -> int:
     """How many pixels are the probe's NaN magenta (red and blue at least MAGENTA_MIN, green at most MAGENTA_MAX)."""
     from PIL import Image, ImageChops
+
     with Image.open(png) as im:
         r, g, b = im.convert("RGB").split()
-        hot = lambda v: 255 if v >= MAGENTA_MIN else 0      # noqa: E731
-        mask = ImageChops.multiply(ImageChops.multiply(r.point(hot), g.point(lambda v: 255 if v <= MAGENTA_MAX else 0)),
-                                   b.point(hot))
+
+        def hot(v):
+            return 255 if v >= MAGENTA_MIN else 0
+
+        mask = ImageChops.multiply(
+            ImageChops.multiply(r.point(hot), g.point(lambda v: 255 if v <= MAGENTA_MAX else 0)), b.point(hot)
+        )
         return mask.histogram()[255]
 
 
-def _compile_ok(receipt: dict) -> Optional[bool]:
+def _compile_ok(receipt: dict) -> bool | None:
     """True when every drawn pass compiled; None when the page never reached the compile (nothing to judge)."""
     comp = receipt.get("compile")
     if not isinstance(comp, dict):
@@ -378,29 +461,67 @@ def card_verdict(card: Card, shader: dict, plain: dict, probe: dict) -> dict:
     ok = bool(plain.get("ok") and probe.get("ok") and compile_ok is True and flat is False and nan == 0)
     error = plain.get("first_error") or probe.get("first_error")
     if not error and not ok:
-        error = ("flat: a frame is one flat colour" if flat else
-                 f"{nan} NaN or Inf pixel(s), magenta in the probe frames" if nan else
-                 "the NaN probe did not render" if nan is None else None)
-    return {"api": CARD_API, "name": card.name, "ok": ok, "compile_ok": compile_ok, "flat": flat, "nan_pixels": nan,
-            "ms": warm if _is_number(warm) else (round(sum(ms) / len(ms), 1) if ms else None),
-            "ms_note": "SwiftShader (the CPU): ranks cards against each other; says nothing about a GPU",
-            "error": error, "uses": list(card.uses), "modules": shader["card"]["modules"],
-            "versions": shader["card"]["versions"], "composed_sha256": shader["card"]["composed_sha256"],
-            "note": card.note, "source": shader["card"]["source"], "frames": frames,
-            "probe": {"ok": probe.get("ok"), "status": probe.get("status"), "first_error": probe.get("first_error"),
-                      "compile_ok": _compile_ok(probe)},
-            "thresholds": {"flat_std": FLAT_STD, "magenta_red_blue_min": MAGENTA_MIN, "magenta_green_max": MAGENTA_MAX}}
+        error = (
+            "flat: a frame is one flat colour"
+            if flat
+            else f"{nan} NaN or Inf pixel(s), magenta in the probe frames"
+            if nan
+            else "the NaN probe did not render"
+            if nan is None
+            else None
+        )
+    return {
+        "api": CARD_API,
+        "name": card.name,
+        "ok": ok,
+        "compile_ok": compile_ok,
+        "flat": flat,
+        "nan_pixels": nan,
+        "ms": warm if _is_number(warm) else (round(sum(ms) / len(ms), 1) if ms else None),
+        "ms_note": "SwiftShader (the CPU): ranks cards against each other; says nothing about a GPU",
+        "error": error,
+        "uses": list(card.uses),
+        "modules": shader["card"]["modules"],
+        "versions": shader["card"]["versions"],
+        "composed_sha256": shader["card"]["composed_sha256"],
+        "note": card.note,
+        "source": shader["card"]["source"],
+        "frames": frames,
+        "probe": {
+            "ok": probe.get("ok"),
+            "status": probe.get("status"),
+            "first_error": probe.get("first_error"),
+            "compile_ok": _compile_ok(probe),
+        },
+        "thresholds": {"flat_std": FLAT_STD, "magenta_red_blue_min": MAGENTA_MIN, "magenta_green_max": MAGENTA_MAX},
+    }
 
 
-def _summary(verdict: dict, receipt_path: Optional[Path], card_json: Optional[str]) -> dict:
+def _summary(verdict: dict, receipt_path: Path | None, card_json: str | None) -> dict:
     keys = ("name", "ok", "compile_ok", "flat", "nan_pixels", "ms", "error")
-    return dict({k: verdict.get(k) for k in keys}, stage="render", frames=len(verdict.get("frames") or []),
-                receipt=str(receipt_path) if receipt_path else None, card_json=card_json)
+    return dict(
+        {k: verdict.get(k) for k in keys},
+        stage="render",
+        frames=len(verdict.get("frames") or []),
+        receipt=str(receipt_path) if receipt_path else None,
+        card_json=card_json,
+    )
 
 
 def _build_failure(name: str, error: str) -> dict:
-    return {"name": name, "ok": False, "compile_ok": None, "flat": None, "nan_pixels": None, "ms": None,
-            "error": error, "stage": "build", "frames": 0, "receipt": None, "card_json": None}
+    return {
+        "name": name,
+        "ok": False,
+        "compile_ok": None,
+        "flat": None,
+        "nan_pixels": None,
+        "ms": None,
+        "error": error,
+        "stage": "build",
+        "frames": 0,
+        "receipt": None,
+        "card_json": None,
+    }
 
 
 @dataclass
@@ -413,20 +534,31 @@ class _Planned:
     request: dict = field(default_factory=dict)
 
 
-def render_cards(names: Sequence[str], *, cards_dir: Optional[Path] = None, lib_dirs: Optional[Iterable] = None,
-                 library: Optional[M.Library] = None, out_root: Optional[Path] = None, allow_tracked: bool = False,
-                 port: int = S.DEFAULT_PORT, lock_wait_min: float = 10, timeout_s: Optional[float] = None,
-                 fps: int = R.DEFAULT_FPS, page: str = R.DEFAULT_PAGE, parity: bool = True,
-                 quiet: bool = False) -> dict:
+def render_cards(
+    names: Sequence[str],
+    *,
+    cards_dir: Path | None = None,
+    lib_dirs: Iterable | None = None,
+    library: M.Library | None = None,
+    out_root: Path | None = None,
+    allow_tracked: bool = False,
+    port: int = S.DEFAULT_PORT,
+    lock_wait_min: float = 10,
+    timeout_s: float | None = None,
+    fps: int = R.DEFAULT_FPS,
+    page: str = R.DEFAULT_PAGE,
+    parity: bool = True,
+    quiet: bool = False,
+) -> dict:
     """Build every named card, render each twice (the picture, the NaN probe) in ONE run of render.py's driver -- which
     takes the house GPU lock and splits the work into bursts under three minutes -- and write each card's receipt.
     A card that does not build is reported and the rest still render. Returns {api, cards: [row], driver, out_root}."""
     root = _out_root(out_root)
-    _check_out(root, allow_tracked)              # before any work: never a render into a folder the rules refuse
+    _check_out(root, allow_tracked)  # before any work: never a render into a folder the rules refuse
     lib = library if library is not None else M.load_library(lib_dirs, strict=False)
     timeout_ms = int(min(max(5.0, timeout_s or CARD_TIMEOUT_S), R.BURST_CAP_S) * 1000)
-    rows: Dict[str, dict] = {}
-    planned: List[_Planned] = []
+    rows: dict[str, dict] = {}
+    planned: list[_Planned] = []
     for name in dict.fromkeys(names):
         try:
             built = write_card(name, root, library=lib, cards_dir=cards_dir, allow_tracked=allow_tracked)
@@ -434,12 +566,29 @@ def render_cards(names: Sequence[str], *, cards_dir: Optional[Path] = None, lib_
             rows[name] = _build_failure(name, str(exc))
             continue
         c, out = built["card"], root / name
-        plain = R.Source(key=f"card-{name}", kind="json", path=out / "card.json",
-                         src=R.stage_job(built["shader"], f"card-{name}"), meta=_meta(c))
-        probe = R.Source(key=f"card-{name}-nan", kind="json", path=out / "probe.json",
-                         src=R.stage_job(built["probe"], f"card-{name}-nan"), meta=_meta(c, probe=True))
-        request = {"t": list(c.times), "w": c.size[0], "h": c.size[1], "fps": fps, "page": page,
-                   "timeout_ms": timeout_ms, "parity": parity}
+        plain = R.Source(
+            key=f"card-{name}",
+            kind="json",
+            path=out / "card.json",
+            src=R.stage_job(built["shader"], f"card-{name}"),
+            meta=_meta(c),
+        )
+        probe = R.Source(
+            key=f"card-{name}-nan",
+            kind="json",
+            path=out / "probe.json",
+            src=R.stage_job(built["probe"], f"card-{name}-nan"),
+            meta=_meta(c, probe=True),
+        )
+        request = {
+            "t": list(c.times),
+            "w": c.size[0],
+            "h": c.size[1],
+            "fps": fps,
+            "page": page,
+            "timeout_ms": timeout_ms,
+            "parity": parity,
+        }
         planned.append(_Planned(c, out, built["shader"], plain, probe, request))
     merged = {"run_dir": None, "bursts": [], "refused": None, "error": None, "software": None, "rows": {}}
     started = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -449,28 +598,41 @@ def render_cards(names: Sequence[str], *, cards_dir: Optional[Path] = None, lib_
             jobs = []
             for p in planned:
                 for src, prefix in ((p.plain, ""), (p.probe, PROBE_PREFIX)):
-                    url = R.page_url(base, page, src.src, p.card.times, p.card.size, fps,
-                                     max(5000, timeout_ms - 5000), parity)
-                    jobs.append(R.Job(src.key, url, p.out, prefix, timeout_ms, p.card.size,
-                                      allow_tracked=R.leaves_state(p.out)))
+                    url = R.page_url(
+                        base, page, src.src, p.card.times, p.card.size, fps, max(5000, timeout_ms - 5000), parity
+                    )
+                    jobs.append(
+                        R.Job(src.key, url, p.out, prefix, timeout_ms, p.card.size, allow_tracked=R.leaves_state(p.out))
+                    )
             merged = R.run_jobs(jobs, f"shader card ({len(planned)})", lock_wait_min, quiet=quiet)
     for p in planned:
         missing = {"status": "error", "error": merged.get("error") or "the driver returned no row"}
         plain = R.build_receipt(p.plain, dict(p.request), merged["rows"].get(p.plain.key) or missing, merged, started)
-        probe = R.build_receipt(p.probe, dict(p.request, probe=True), merged["rows"].get(p.probe.key) or missing,
-                                merged, started)
+        probe = R.build_receipt(
+            p.probe, dict(p.request, probe=True), merged["rows"].get(p.probe.key) or missing, merged, started
+        )
         verdict = card_verdict(p.card, p.shader, plain, probe)
         plain["card"] = verdict
-        plain["probe_receipt"] = {k: probe.get(k) for k in ("id", "ok", "status", "first_error", "frames", "errors",
-                                                             "compile")}
+        plain["probe_receipt"] = {
+            k: probe.get(k) for k in ("id", "ok", "status", "first_error", "frames", "errors", "compile")
+        }
         R._write_json(p.out / "receipt.json", plain)
         rows[p.card.name] = _summary(verdict, p.out / "receipt.json", str(p.out / "card.json"))
     software = merged.get("software") or {}
-    return {"api": CARD_API, "cards": [rows[n] for n in dict.fromkeys(names)], "out_root": str(root),
-            "wall_ms": round((time.monotonic() - t0) * 1000),
-            "driver": {"run_dir": merged.get("run_dir"), "bursts": len(merged.get("bursts") or []),
-                       "refused": merged.get("refused"), "error": merged.get("error"),
-                       "renderer": (software.get("webgl") or {}).get("renderer"), "chrome": merged.get("chrome")}}
+    return {
+        "api": CARD_API,
+        "cards": [rows[n] for n in dict.fromkeys(names)],
+        "out_root": str(root),
+        "wall_ms": round((time.monotonic() - t0) * 1000),
+        "driver": {
+            "run_dir": merged.get("run_dir"),
+            "bursts": len(merged.get("bursts") or []),
+            "refused": merged.get("refused"),
+            "error": merged.get("error"),
+            "renderer": (software.get("webgl") or {}).get("renderer"),
+            "chrome": merged.get("chrome"),
+        },
+    }
 
 
 # ------------------------------------------------------------------------------------------------------------- the verb
@@ -480,12 +642,19 @@ def _yes_no(v) -> str:
 
 def _human_render(r: dict) -> str:
     d = r["driver"]
-    lines = [f"{len(r['cards'])} card(s) in {r['wall_ms'] / 1000:.0f} s on {d['renderer'] or 'no renderer'} "
-             f"({d['bursts']} burst(s)); out: {r['out_root']}",
-             f"  {'card':<28} {'compile':<8} {'flat':<5} {'NaN px':>7} {'ms':>8}  verdict"]
+    lines = [
+        (
+            f"{len(r['cards'])} card(s) in {r['wall_ms'] / 1000:.0f} s on {d['renderer'] or 'no renderer'} "
+            f"({d['bursts']} burst(s)); out: {r['out_root']}"
+        ),
+        f"  {'card':<28} {'compile':<8} {'flat':<5} {'NaN px':>7} {'ms':>8}  verdict",
+    ]
     for c in r["cards"]:
-        comp = "BUILD" if c["stage"] == "build" else ("ok" if c["compile_ok"] else "-" if c["compile_ok"] is None
-                                                       else "FAIL")
+        comp = (
+            "BUILD"
+            if c["stage"] == "build"
+            else ("ok" if c["compile_ok"] else "-" if c["compile_ok"] is None else "FAIL")
+        )
         nan = "-" if c["nan_pixels"] is None else str(c["nan_pixels"])
         ms = "-" if c["ms"] is None else f"{c['ms']:g}"
         tail = "ok" if c["ok"] else f"FAIL: {(c['error'] or '')[:110]}"
@@ -502,29 +671,38 @@ def _human_build(r: dict) -> str:
     lines = [f"{len(r['cards'])} card(s) composed (not rendered: add --render for pictures and a receipt)"]
     for c in r["cards"]:
         if c["ok"]:
-            lines.append(f"  {c['name']:<28} uses {', '.join(c['uses']) or '(none)'}; composes "
-                         f"{', '.join(c['modules']) or '(nothing)'}"
-                         + (f"; sha256 {c['composed_sha256'][:12]}" if c["composed_sha256"] else "")
-                         + f"\n  {'':<28} {c['card_json']}")
+            lines.append(
+                f"  {c['name']:<28} uses {', '.join(c['uses']) or '(none)'}; composes "
+                f"{', '.join(c['modules']) or '(nothing)'}"
+                + (f"; sha256 {c['composed_sha256'][:12]}" if c["composed_sha256"] else "")
+                + f"\n  {'':<28} {c['card_json']}"
+            )
         else:
             lines.append(f"  {c['name']:<28} REFUSED: {c['error']}")
     if r["library_problems"]:
-        lines.append(f"  the library quarantined {len(r['library_problems'])} file(s) at load: "
-                     + "; ".join(p["problem"][:120] for p in r["library_problems"][:3]))
+        lines.append(
+            f"  the library quarantined {len(r['library_problems'])} file(s) at load: "
+            + "; ".join(p["problem"][:120] for p in r["library_problems"][:3])
+        )
     return "\n".join(lines)
 
 
 def cmd_card(ns) -> int:
     if bool(ns.name) == bool(ns.all):
-        print("give one card name, or --all (not both): py -m arsenal shader card <name>|--all [--render]",
-              file=sys.stderr)
+        print(
+            f"give one card name, or --all (not both): {cli.door('card <name>|--all [--render]')}",
+            file=sys.stderr,
+        )
         return 2
     cards_dir = Path(ns.cards_dir) if ns.cards_dir else None
     names = list_cards(cards_dir) if ns.all else [ns.name]
     out_root = Path(ns.out).resolve() if ns.out else CARDS_OUT
     if not names:
-        cli._print({"api": CARD_API, "cards": [], "cards_dir": str(cards_dir or CARDS_DIR)}, ns.json,
-                   lambda r: f"no cards yet in {r['cards_dir']}")
+        cli._print(
+            {"api": CARD_API, "cards": [], "cards_dir": str(cards_dir or CARDS_DIR)},
+            ns.json,
+            lambda r: f"no cards yet in {r['cards_dir']}",
+        )
         return 0
     if not ns.render:
         lib = M.load_library(ns.dir, strict=False)
@@ -542,9 +720,20 @@ def cmd_card(ns) -> int:
         cli._print(report, ns.json, _human_build)
         return 0 if all(r["ok"] for r in rows) else 1
     try:
-        report = render_cards(names, cards_dir=cards_dir, lib_dirs=ns.dir, out_root=out_root,
-                              allow_tracked=ns.allow_tracked, port=ns.port, lock_wait_min=ns.lock_wait_min,
-                              timeout_s=ns.timeout, fps=ns.fps, page=ns.page, parity=ns.parity, quiet=ns.json)
+        report = render_cards(
+            names,
+            cards_dir=cards_dir,
+            lib_dirs=ns.dir,
+            out_root=out_root,
+            allow_tracked=ns.allow_tracked,
+            port=ns.port,
+            lock_wait_min=ns.lock_wait_min,
+            timeout_s=ns.timeout,
+            fps=ns.fps,
+            page=ns.page,
+            parity=ns.parity,
+            quiet=ns.json,
+        )
     except CardError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -559,15 +748,24 @@ def cmd_card(ns) -> int:
 
 
 def register_card(sub) -> None:
-    p = sub.add_parser("card", help="a module's test card: compose it from the house library; with --render, picture "
-                                    "it on SwiftShader and judge it (compiles, not flat, no NaN)")
+    p = sub.add_parser(
+        "card",
+        help="a module's test card: compose it from the house library; with --render, picture "
+        "it on SwiftShader and judge it (compiles, not flat, no NaN)",
+    )
     p.add_argument("name", nargs="?", help=f"the card's name: arsenal/web/glsl/cards/<name>{CARD_SUFFIX}")
     p.add_argument("--all", action="store_true", help="every card in the cards folder")
-    p.add_argument("--render", action="store_true",
-                   help="render each card twice on SwiftShader (the picture, then the NaN probe) under the GPU lock")
+    p.add_argument(
+        "--render",
+        action="store_true",
+        help="render each card twice on SwiftShader (the picture, then the NaN probe) under the GPU lock",
+    )
     p.add_argument("--cards-dir", help="the folder of .card files (default arsenal/web/glsl/cards)")
-    p.add_argument("--dir", action="append",
-                   help="a module directory, repeatable (default: arsenal/web/glsl, then design/vfx-chunks)")
+    p.add_argument(
+        "--dir",
+        action="append",
+        help="a module directory, repeatable (default: arsenal/web/glsl, then design/vfx-chunks)",
+    )
     R._out(p, "state/arsenal/shaders/cards; each card writes <out>/<name>/")
     R._common(p)
     p.set_defaults(fn=cmd_card)

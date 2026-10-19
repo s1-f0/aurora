@@ -24,6 +24,7 @@ after re-verifying the load-bearing claims herself. These pins are that amendmen
 Hermetic by construction: roots arrive as strings, existence as a callable, and short-sha
 resolution as an injected callable. Nothing here touches the disk, the git binary, or Redis.
 """
+
 import os
 import sys
 
@@ -31,14 +32,14 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.coord import target as T  # noqa: E402
+from core.coord import target as T
 
 MAIN = "E:/AI-Setup"
 SUN = "C:/Users/L5/AppData/Local/AkashicAurora/worktrees/sunshine-discord-split"
-CODEX = "C:/Users/L5/.codex/worktrees/e5d8/AI-Setup"          # leaf collides with MAIN (A1)
+CODEX = "C:/Users/L5/.codex/worktrees/e5d8/AI-Setup"  # leaf collides with MAIN (A1)
 DRY1 = "C:/Users/L5/AppData/Local/Temp/season_dryrun_0qd7ld36/shadow"
 DRY2 = "C:/Users/L5/AppData/Local/Temp/season_dryrun_9xk2mm41/shadow"
-NEST = "E:/AI-Setup/.claude/worktrees/screenspace-step0"       # nested inside main (A3)
+NEST = "E:/AI-Setup/.claude/worktrees/screenspace-step0"  # nested inside main (A3)
 
 FULL_SHA = "383b8f34c2d53146b69cd6f89e9f4f6be73a677d"
 
@@ -75,19 +76,22 @@ def test_the_column_unit_is_declared_not_assumed():
 
 
 # ---------------------------------------------------------------- four spellings, one key
-@pytest.mark.parametrize("spelling", [
-    "core/coord/orient.py",
-    "./core/coord/orient.py",
-    "file:core/coord/orient.py",                 # A5: file: is an alias of the path anchor
-    "E:/AI-Setup/core/coord/orient.py",
-    r"E:\AI-Setup\core\coord\orient.py",
-    r"e:\ai-setup\core\coord\orient.py",         # A10: drive and root fold, below-root does not
-])
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "core/coord/orient.py",
+        "./core/coord/orient.py",
+        "file:core/coord/orient.py",  # A5: file: is an alias of the path anchor
+        "E:/AI-Setup/core/coord/orient.py",
+        r"E:\AI-Setup\core\coord\orient.py",
+        r"e:\ai-setup\core\coord\orient.py",  # A10: drive and root fold, below-root does not
+    ],
+)
 def test_four_spellings_of_one_file_are_one_key(spelling):
     t = p(spelling)
     assert t.kind == "file"
     assert t.key == "core/coord/orient.py"
-    assert t.work is None                        # B2: unprefixed IS the main checkout
+    assert t.work is None  # B2: unprefixed IS the main checkout
 
 
 def test_case_below_the_root_is_preserved_verbatim():
@@ -105,14 +109,18 @@ def test_no_work_main_spelling_is_minted():
 # ---------------------------------------------------------------- foo:3.py, line and column
 def test_a_file_named_foo_colon_3_survives_as_a_path():
     t = T.parse("foo:3.py", roots=ROOTS, exists=lambda k: k == "foo:3.py")
-    assert t.kind == "file" and t.key == "foo:3.py" and t.line is None
+    assert t.kind == "file"
+    assert t.key == "foo:3.py"
+    assert t.line is None
 
 
 def test_an_existing_colon_digit_path_beats_the_line_rule():
     # B4: on Windows the colon is reserved for NTFS alternate data streams, so `app.py:12` is a
     # legal path. Existence decides; the digit rule is the input convenience, not the authority.
     t = T.parse("app.py:12", roots=ROOTS, exists=lambda k: k == "app.py:12")
-    assert t.kind == "file" and t.key == "app.py:12" and t.line is None
+    assert t.kind == "file"
+    assert t.key == "app.py:12"
+    assert t.line is None
 
 
 def test_the_same_string_parses_as_a_line_when_no_such_path_exists():
@@ -135,7 +143,9 @@ def test_line_and_column_carry_the_unit():
 def test_path_line_col_are_separate_fields_and_the_key_is_derived():
     # B4: every mature standard keeps these as fields; the colon string is display and input only.
     t = p("core/coord/orient.py:40:7")
-    assert t.path == "core/coord/orient.py" and t.line == 40 and t.col == 7
+    assert t.path == "core/coord/orient.py"
+    assert t.line == 40
+    assert t.col == 7
     assert t.key == "core/coord/orient.py:40:7"
 
 
@@ -155,7 +165,7 @@ def test_backslashed_dir_keeps_its_marker():
     assert p("E:\\AI-Setup\\core\\coord\\").key == "core/coord/"
 
 
-# ---------------------------------------------------------------- worktrees (A1, A2, A3)
+# ---------------------------------------------------------------- worktrees: A1, A2, A3
 def test_an_uncolliding_worktree_uses_the_bare_leaf():
     t = p(SUN + "/core/comm/bus.py")
     assert t.work == "sunshine-discord-split"
@@ -212,14 +222,15 @@ def test_a_clone_is_not_a_worktree_and_mints_no_work_key():
 
 def test_dotdot_above_the_root_is_clamped_and_flagged_never_followed():
     t = p("../../outside.txt", cwd=MAIN)
-    assert "clamped" in t.flags and not t.key.startswith("..")
+    assert "clamped" in t.flags
+    assert not t.key.startswith("..")
 
 
 def test_relative_path_resolves_against_the_captured_cwd():
     assert p("orient.py", cwd=MAIN + "/core/coord").key == "core/coord/orient.py"
 
 
-# ---------------------------------------------------------------- refs (A4-A9, B3)
+# ---------------------------------------------------------------- refs: A4-A9, B3
 def test_a_ref_wins_over_a_path_of_the_same_spelling():
     t = p("task:T418")
     assert (t.kind, t.ref_kind, t.key) == ("ref", "task", "task:T418")
@@ -228,24 +239,36 @@ def test_a_ref_wins_over_a_path_of_the_same_spelling():
 def test_event_ref_takes_the_id_after_the_last_colon():
     # A4: the stream name is itself colonned, so first-two-colons cannot be the general rule.
     t = p("event:events:raw:1790911373414-0")
-    assert t.kind == "ref" and t.ref_kind == "event"
+    assert t.kind == "ref"
+    assert t.ref_kind == "event"
     assert t.key == "event:events:raw:1790911373414-0"
-    assert t.stream == "events:raw" and t.entry_id == "1790911373414-0"
+    assert t.stream == "events:raw"
+    assert t.entry_id == "1790911373414-0"
 
 
 def test_per_agent_event_stream_also_splits_on_the_last_colon():
     t = p("event:events:claude:raw:1790911373414-0")
-    assert t.stream == "events:claude:raw" and t.entry_id == "1790911373414-0"
+    assert t.stream == "events:claude:raw"
+    assert t.entry_id == "1790911373414-0"
 
 
-@pytest.mark.parametrize("text", [
-    "sha:" + FULL_SHA, "commit:" + FULL_SHA, "git:" + FULL_SHA, FULL_SHA,
-    "sha:383b8f34", "commit:383b8f34", "git:383b8f34",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "sha:" + FULL_SHA,
+        "commit:" + FULL_SHA,
+        "git:" + FULL_SHA,
+        FULL_SHA,
+        "sha:383b8f34",
+        "commit:383b8f34",
+        "git:383b8f34",
+    ],
+)
 def test_every_sha_spelling_canonicalises_to_one_full_forty_hex_key(text):
     # A7 aliases + B3 full-form storage: a short sha is unique only while the repo stays small.
     t = p(text)
-    assert t.kind == "ref" and t.ref_kind == "sha"
+    assert t.kind == "ref"
+    assert t.ref_kind == "sha"
     assert t.key == "sha:" + FULL_SHA
 
 
@@ -263,18 +286,23 @@ def test_learn_experiment_is_an_input_alias_of_the_canonical_lesson_kind():
 
 def test_mem_decision_is_an_admitted_kind():
     t = p("mem:decision:ADR_1001233734_dbdae891")
-    assert t.kind == "ref" and t.ref_kind == "mem"
+    assert t.kind == "ref"
+    assert t.ref_kind == "mem"
     assert t.key == "mem:decision:ADR_1001233734_dbdae891"
 
 
-@pytest.mark.parametrize("text,key", [
-    ("doc:docs/CONDUCT.md", "doc:docs/CONDUCT.md"),
-    ("session:428ba6c4-2217-4008-a2be-ecd9901cc3b2", "session:428ba6c4-2217-4008-a2be-ecd9901cc3b2"),
-    ("seat:claude", "seat:claude"),
-])
+@pytest.mark.parametrize(
+    ("text", "key"),
+    [
+        ("doc:docs/CONDUCT.md", "doc:docs/CONDUCT.md"),
+        ("session:428ba6c4-2217-4008-a2be-ecd9901cc3b2", "session:428ba6c4-2217-4008-a2be-ecd9901cc3b2"),
+        ("seat:claude", "seat:claude"),
+    ],
+)
 def test_the_remaining_closed_kinds(text, key):
     t = p(text)
-    assert t.kind == "ref" and t.key == key
+    assert t.kind == "ref"
+    assert t.key == key
 
 
 @pytest.mark.parametrize("text", ["bifrost:1790911373414-0", "blob:a1b2c3d4e5f6"])
@@ -283,7 +311,8 @@ def test_an_opaque_spelling_is_named_as_opaque_never_silently_demoted(text):
     # "Zero is not no": the resolver says it knows and declines, rather than failing confusingly
     # or quietly parsing them as paths.
     t = p(text)
-    assert t.kind == "opaque" and t.key == text
+    assert t.kind == "opaque"
+    assert t.key == text
     assert t.ref_kind is None
 
 
@@ -314,8 +343,19 @@ def test_bare_prose_is_a_question_routed_to_cast_never_resolved():
 
 
 # ---------------------------------------------------------------- the extraction contract
-EXISTS = {"core/coord/orient.py", "core/comm/bus.py", "scripts/x.py", "a.py", "b.py",
-          "x.py", "core/", "core/coord/", "notes.md", "out.txt", "log.txt"}
+EXISTS = {
+    "core/coord/orient.py",
+    "core/comm/bus.py",
+    "scripts/x.py",
+    "a.py",
+    "b.py",
+    "x.py",
+    "core/",
+    "core/coord/",
+    "notes.md",
+    "out.txt",
+    "log.txt",
+}
 
 
 def x(cmd, shell="bash", cwd=MAIN):
@@ -340,12 +380,14 @@ def test_an_uninspectable_command_emits_null_not_an_empty_list():
 
 def test_command_substitution_cannot_be_seen_into_and_says_so():
     ext = x("echo $(cat a.py)")
-    assert ext.targets is None and ext.incomplete is True
+    assert ext.targets is None
+    assert ext.incomplete is True
 
 
 def test_a_command_that_touched_nothing_emits_a_measured_zero():
     ext = x("cd core && git status")
-    assert ext.targets == [] and ext.incomplete is False
+    assert ext.targets == []
+    assert ext.incomplete is False
 
 
 def test_a_heredoc_wrapper_is_not_itself_a_target_but_its_redirect_is():
@@ -399,8 +441,9 @@ def test_a_nonexistent_bare_token_is_not_invented_as_a_read():
 
 
 def test_powershell_read_and_write():
-    assert pairs(x("Get-Content core/coord/orient.py | Select-Object -First 3",
-                   shell="powershell")) == [("read", "core/coord/orient.py")]
+    assert pairs(x("Get-Content core/coord/orient.py | Select-Object -First 3", shell="powershell")) == [
+        ("read", "core/coord/orient.py")
+    ]
     assert pairs(x("Set-Content -Path out.txt -Value 1", shell="powershell")) == [("write", "out.txt")]
 
 
@@ -419,8 +462,9 @@ def test_the_main_checkout_is_never_also_a_worktree_entry():
     precisely the second-key-for-one-plane defect B2 refuses. The pins missed it because they all
     construct Roots by hand with main held separate; only the real `git worktree list` has this
     shape."""
-    roots = T.Roots(main=MAIN, worktrees=(MAIN, SUN))      # main listed twice, as git reports it
+    roots = T.Roots(main=MAIN, worktrees=(MAIN, SUN))  # main listed twice, as git reports it
     t = T.parse("core/coord/orient.py", roots=roots)
-    assert t.work is None and t.key == "core/coord/orient.py"
+    assert t.work is None
+    assert t.key == "core/coord/orient.py"
     # and the sibling worktree still resolves on its bare leaf, not a disambiguated one
     assert T.parse(SUN + "/core/comm/bus.py", roots=roots).work == "sunshine-discord-split"

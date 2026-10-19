@@ -15,6 +15,7 @@ cosTheta) the vec3 one.
 
 Apache-2.0, Akashic Aurora. Written fresh from the mathematics; credits in each module's header.
 """
+
 from __future__ import annotations
 
 import math
@@ -22,10 +23,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-VIS_MAX_SHADOW_STEPS = 64       # visibility.glsl's constant loop ceiling (a literal 64 there)
-BOX_EDGE_SHARP = 0.04           # env.glsl: a soft box's edge half-width at roughness 0 (in panel radii) ...
-BOX_EDGE_ROUGH = 0.9            # ... and at roughness 1
-STUDIO_BACK_FACING = 1e-4       # env.glsl: a box is skipped where 0.5 + 0.5 dot(dir, boxDir) is below this (its antipode)
+VIS_MAX_SHADOW_STEPS = 64  # visibility.glsl's constant loop ceiling (a literal 64 there)
+BOX_EDGE_SHARP = 0.04  # env.glsl: a soft box's edge half-width at roughness 0 (in panel radii) ...
+BOX_EDGE_ROUGH = 0.9  # ... and at roughness 1
+STUDIO_BACK_FACING = 1e-4  # env.glsl: a box is skipped where 0.5 + 0.5 dot(dir, boxDir) is below this (its antipode)
 UP = np.array([0.0, 1.0, 0.0])
 
 
@@ -56,18 +57,18 @@ def _safe_pow(b, e):
 
 
 # ------------------------------------------------------------------------------------------------- light/diffuse.glsl
-def litLambert(n, l):
+def litLambert(n, l):  # noqa: E741  # the GLSL signature's own name (n.l); the twin keeps the shader's parameters
     """max(n . l, 0): the cosine a slanted beam spreads by. Pi is folded into the light's colour."""
     return np.maximum(_dot(n, l), 0.0)
 
 
-def litHalfLambert(n, l):
+def litHalfLambert(n, l):  # noqa: E741  # the GLSL signature's own name (n.l); the twin keeps the shader's parameters
     """(0.5 n.l + 0.5)^2 (Valve, 2006): the back keeps its shape; not energy-conserving, a stylisation."""
     half = 0.5 * _dot(n, l) + 0.5
     return half * half
 
 
-def litWrapDiffuse(n, l, w):
+def litWrapDiffuse(n, l, w):  # noqa: E741  # the GLSL signature's own name (n.l); the twin keeps the shader's parameters
     """max((n.l + w) / (1 + w)^2, 0), w clamped to [0, 1]: wrapped past the terminator, total energy still Lambert's."""
     w = np.clip(_v(w), 0.0, 1.0)
     spread = 1.0 + w
@@ -194,6 +195,7 @@ def glowStepCount(steps, maxSteps, k):
 @dataclass(frozen=True)
 class StudioParams:
     """The GLSL struct StudioParams, field for field (light/env.glsl)."""
+
     keyDir: np.ndarray
     keyCol: np.ndarray
     fillDir: np.ndarray
@@ -212,11 +214,19 @@ def studio_default() -> StudioParams:
     """A neutral product-shot studio (twin-only helper: the GLSL library has no preset function, by the atlas naming
     law; env.glsl's note spells the same StudioParams(...) constructor, and the cards build it card-locally)."""
     return StudioParams(
-        keyDir=_unit([-0.55, 0.75, 0.4]), keyCol=_v([3.6, 3.3, 2.9]),
-        fillDir=_unit([0.65, 0.55, -0.55]), fillCol=_v([0.55, 0.7, 1.0]),
-        boxSize=_v([0.42, 0.28]), rimBright=0.8,
-        skyCol=_v([0.008, 0.01, 0.016]), horizonCol=_v([0.07, 0.075, 0.09]),
-        floorCol=_v([0.32, 0.27, 0.22]), floorDrop=1.0, poolRadius=1.1, keyWrap=0.3)
+        keyDir=_unit([-0.55, 0.75, 0.4]),
+        keyCol=_v([3.6, 3.3, 2.9]),
+        fillDir=_unit([0.65, 0.55, -0.55]),
+        fillCol=_v([0.55, 0.7, 1.0]),
+        boxSize=_v([0.42, 0.28]),
+        rimBright=0.8,
+        skyCol=_v([0.008, 0.01, 0.016]),
+        horizonCol=_v([0.07, 0.075, 0.09]),
+        floorCol=_v([0.32, 0.27, 0.22]),
+        floorDrop=1.0,
+        poolRadius=1.1,
+        keyWrap=0.3,
+    )
 
 
 def litFloorPool(p, centre, radius, col):
@@ -240,7 +250,7 @@ def _studio_box(d, boxDir, col, size, rim, rough):
     q = np.stack([_dot(d, across), _dot(d, along)], axis=-1) * lift[..., None]
     u = np.abs(q) / _v(size)
     u2 = u * u
-    edge = np.power(np.maximum(np.sum(u2 * u2, axis=-1), 1e-20), 0.25)     # a rounded square: 1 on the panel's rim
+    edge = np.power(np.maximum(np.sum(u2 * u2, axis=-1), 1e-20), 0.25)  # a rounded square: 1 on the panel's rim
     width = BOX_EDGE_SHARP + (BOX_EDGE_ROUGH - BOX_EDGE_SHARP) * rough
     # the smoothstep's skirt adds 0.2 width^2 of the panel's area; divide it out, relative to the sharp panel
     keep = (1.0 + 0.2 * BOX_EDGE_SHARP * BOX_EDGE_SHARP) / (1.0 + 0.2 * width * width)
@@ -254,27 +264,31 @@ def _studio_box(d, boxDir, col, size, rim, rough):
     return _v(col) * (inside * frame)[..., None]
 
 
-def litStudioEnv(dir, roughness, s: StudioParams):
+def litStudioEnv(dir, roughness, s: StudioParams):  # noqa: A002  # the GLSL parameter's name; the twin keeps the shader's signature
     """A dark studio dome: skyCol overhead, horizonCol at the horizon, a floor with a pool of floorCol below that
     dissolves into the horizon, and two rim-bright soft boxes whose edges widen with roughness."""
     d = _unit(dir)
     rough = min(max(float(roughness), 0.0), 1.0)
     up = d[..., 1]
     dome = s.horizonCol + (s.skyCol - s.horizonCol) * _smoothstep(0.0, 0.6, up)[..., None]
-    reach = s.floorDrop / np.maximum(-up, 1e-6)                 # along d to the floor plane, while d points down
+    reach = s.floorDrop / np.maximum(-up, 1e-6)  # along d to the floor plane, while d points down
     spot = d * reach[..., None]
     far = np.sqrt(np.sum(spot[..., [0, 2]] ** 2, axis=-1))
     haze = (1.0 - np.exp(-far / (4.0 * max(s.poolRadius, 1e-6))))[..., None]
     ground = s.horizonCol * haze + litFloorPool(spot, np.zeros(3), s.poolRadius, s.floorCol)
     base = np.where((up < 0.0)[..., None], ground, dome)
-    return (base + _studio_box(d, s.keyDir, s.keyCol, s.boxSize, s.rimBright, rough)
-            + _studio_box(d, s.fillDir, s.fillCol, s.boxSize, s.rimBright, rough))
+    return (
+        base
+        + _studio_box(d, s.keyDir, s.keyCol, s.boxSize, s.rimBright, rough)
+        + _studio_box(d, s.fillDir, s.fillCol, s.boxSize, s.rimBright, rough)
+    )
 
 
 # ---------------------------------------------------------------------------------------------------- light/rigs.glsl
 @dataclass(frozen=True)
 class LitSurface:
     """The GLSL struct LitSurface, field for field (light/rigs.glsl)."""
+
     diffuseColor: np.ndarray
     F0: np.ndarray
     alpha: float
@@ -323,7 +337,7 @@ def visSoftShadow(scene, ro, rd, tRange, lightAngle, maxSteps):
         if h <= 0.0:
             lit = 0.0
             break
-        angle = h / max(t, 1e-6)                     # Quilez's h / t
+        angle = h / max(t, 1e-6)  # Quilez's h / t
         # Aaltonen's triangulation only where the step stayed inside the last empty ball (the stride was that ball's
         # own radius, or less) and the two balls meet in a circle. A step clamped UP to the shortest stride leaves the
         # last ball behind: the balls then miss each other, or barely touch in a tiny circle, and the triangulated near

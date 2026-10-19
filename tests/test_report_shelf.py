@@ -10,13 +10,14 @@ collapses to the empty set -- the bug this suite was written after.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from core.library import reports as rs
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # --------------------------------------------------------------------------- fixtures
 
@@ -54,39 +55,57 @@ class FakeFamily:
         self._atoms = {a["id"]: a for a in atoms}
 
     def find(self, *, type_=None, arc=None, category=None, status=None):
-        out = [a for a in self._atoms.values()
-               if type_ is None or a["header"]["type"] == type_]
+        out = [a for a in self._atoms.values() if type_ is None or a["header"]["type"] == type_]
         return sorted(out, key=lambda a: a["created_ts"], reverse=True)
 
     def get(self, atom_id):
         return self._atoms.get(atom_id)
 
 
-def _atom(aid, title, *, date, cats, seats, arc=None, status="current",
-          supersedes=None, superseded=None, body="fleet body"):
+def _atom(
+    aid, title, *, date, cats, seats, arc=None, status="current", supersedes=None, superseded=None, body="fleet body"
+):
     return {
         "id": aid,
-        "header": {"status": status, "type": "report", "arc": arc, "seats": seats,
-                   "date": date, "title": title, "category": cats,
-                   "visibility": "fleet", "gist": f"gist of {title}"},
-        "body": body, "supersedes": supersedes, "superseded": superseded,
-        "citations_out": [], "created_ts": 1000.0,
+        "header": {
+            "status": status,
+            "type": "report",
+            "arc": arc,
+            "seats": seats,
+            "date": date,
+            "title": title,
+            "category": cats,
+            "visibility": "fleet",
+            "gist": f"gist of {title}",
+        },
+        "body": body,
+        "supersedes": supersedes,
+        "superseded": superseded,
+        "citations_out": [],
+        "created_ts": 1000.0,
     }
 
 
-@pytest.fixture()
+@pytest.fixture
 def family():
-    return FakeFamily([
-        _atom("art_a", "fleet one", date="2026-08-10", cats=["method"],
-              seats=["claude"], arc="T300"),
-        _atom("art_b", "fleet two", date="2026-08-11", cats=["method", "ui"],
-              seats=["claude", "deepseek"], arc="T300", superseded="art_c"),
-        _atom("art_old", "stale one", date="2026-07-01", cats=["ui"],
-              seats=["kimi"], status="superseded"),
-    ])
+    return FakeFamily(
+        [
+            _atom("art_a", "fleet one", date="2026-08-10", cats=["method"], seats=["claude"], arc="T300"),
+            _atom(
+                "art_b",
+                "fleet two",
+                date="2026-08-11",
+                cats=["method", "ui"],
+                seats=["claude", "deepseek"],
+                arc="T300",
+                superseded="art_c",
+            ),
+            _atom("art_old", "stale one", date="2026-07-01", cats=["ui"], seats=["kimi"], status="superseded"),
+        ]
+    )
 
 
-@pytest.fixture()
+@pytest.fixture
 def priv(tmp_path: Path) -> Path:
     root = tmp_path / "private"
     root.mkdir()
@@ -96,6 +115,7 @@ def priv(tmp_path: Path) -> Path:
 
 
 # --------------------------------------------------------------------------- R1-R3
+
 
 def test_r1_frontmatter_parses_scalars_lists_and_nulls():
     header, body = rs.parse_frontmatter(FRONT)
@@ -119,6 +139,7 @@ def test_r3_date_is_derived_from_filename_when_absent(priv):
 
 
 # --------------------------------------------------------------------------- R4-R6
+
 
 def test_r4_private_reports_never_claim_fleet_visibility(priv):
     out = rs.list_reports(None, private_dir=priv, status=None)
@@ -146,6 +167,7 @@ def test_r6_default_status_hides_superseded_reports(family):
 
 # --------------------------------------------------------------------------- R7-R9
 
+
 def test_r7_compare_reports_disjoint_seats_on_both_sides(family):
     """The precedence trap: `left - left & right` collapses to empty, so a genuine
     left-only seat silently disappears. Pin both directions."""
@@ -153,8 +175,7 @@ def test_r7_compare_reports_disjoint_seats_on_both_sides(family):
     assert out["seats"]["shared"] == ["claude"]
     assert out["seats"]["right_only"] == ["deepseek"]
     other = rs.compare(family, "art_b", "art_a")
-    assert other["seats"]["left_only"] == ["deepseek"], \
-        "left_only must be populated -- set-operator precedence bug"
+    assert other["seats"]["left_only"] == ["deepseek"], "left_only must be populated -- set-operator precedence bug"
 
 
 def test_r8_compare_names_the_lineage_relation(family):

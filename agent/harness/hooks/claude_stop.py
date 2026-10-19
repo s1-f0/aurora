@@ -188,6 +188,22 @@ def last_assistant_text(transcript_path: str, tail_bytes: int = 400_000) -> str:
 
 
 def _pid_alive(pid):
+    """Is the seated listener's process running? Fail-open: a probe error reads as alive."""
+    if os.name != "nt":
+        # No tasklist off Windows: calling it always raised, so fail-open read every dead
+        # listener as armed. Signal 0 checks that the pid exists and delivers nothing.
+        try:
+            pid = int(pid)
+            if pid <= 0:
+                return False  # 0 and negatives name a process GROUP, never one listener
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True  # it exists; another user owns it
+        except Exception:
+            return True  # fail-open: on detection error, assume alive (don't wedge the session)
+        return True
     try:
         out = subprocess.run(
             ["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True, timeout=6

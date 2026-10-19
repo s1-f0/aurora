@@ -42,13 +42,12 @@ Run::
 
     py -m pytest tests/test_the_wake_says_who_woke_you.py -q
 """
+
 from __future__ import annotations
 
 import importlib.util
 import sys
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -65,8 +64,12 @@ BW = _load("scripts/bifrost_wake.py", "_bw_under_test")
 
 #: The shape `out` actually carries at the wake exit (bifrost_wake.py:644 json.dumps(out)).
 WOKE_BY = [
-    {"frm": "daniil", "kind": "chat", "id": "1791245759419-0",
-     "content": "Instead of checking what fired it, how do you get notified what woke you?"},
+    {
+        "frm": "daniil",
+        "kind": "chat",
+        "id": "1791245759419-0",
+        "content": "Instead of checking what fired it, how do you get notified what woke you?",
+    },
 ]
 
 
@@ -77,14 +80,15 @@ def test_the_listener_can_persist_what_woke_it(tmp_path, monkeypatch):
     assert hasattr(BW, "write_wake_note"), (
         "scripts/bifrost_wake.py has no `write_wake_note` -- the listener knows who woke it "
         "(it prints `out` at :644) and throws that away into a task log the seat must `tail`. "
-        "Fourteen wakes on 2026-10-05 cost fourteen tail calls to recover it.")
+        "Fourteen wakes on 2026-10-05 cost fourteen tail calls to recover it."
+    )
 
     BW.write_wake_note("claude", "sess1234", WOKE_BY, tmp=str(tmp_path))
     note = BW.read_wake_note("claude", "sess1234", tmp=str(tmp_path))
     assert note, "the note did not survive the write"
     blob = repr(note)
-    assert "daniil" in blob, "the note does not name WHO woke the seat: %s" % blob
-    assert "chat" in blob, "the note does not carry the KIND: %s" % blob
+    assert "daniil" in blob, f"the note does not name WHO woke the seat: {blob}"
+    assert "chat" in blob, f"the note does not carry the KIND: {blob}"
 
 
 def test_the_note_is_consumed_by_the_first_reader(tmp_path, monkeypatch):
@@ -94,8 +98,8 @@ def test_the_note_is_consumed_by_the_first_reader(tmp_path, monkeypatch):
     BW.write_wake_note("claude", "sess1234", WOKE_BY, tmp=str(tmp_path))
     assert BW.read_wake_note("claude", "sess1234", tmp=str(tmp_path)), "first read empty"
     assert not BW.read_wake_note("claude", "sess1234", tmp=str(tmp_path)), (
-        "the wake note survived its first read -- the next turn would be told again about a "
-        "message already handled")
+        "the wake note survived its first read -- the next turn would be told again about a message already handled"
+    )
 
 
 def test_a_missing_note_is_silent_and_never_raises(tmp_path, monkeypatch):
@@ -106,17 +110,22 @@ def test_a_missing_note_is_silent_and_never_raises(tmp_path, monkeypatch):
 
 
 # ------------------------------------------------------------------ the reader, at the hook
-@pytest.mark.parametrize("rel", ["scripts/hooks/claude_userpromptsubmit.py",
-                                 "agent/harness/hooks/claude_userpromptsubmit.py"])
-def test_the_turn_start_hook_announces_who_woke_you(rel, tmp_path, monkeypatch):
-    """THE PAYOFF, pinned on BOTH TWINS -- the house has a standing hazard that the
-    scripts/hooks and agent/harness/hooks copies drift apart, and a fix that lands in one is a
-    fix the live seat may not be running."""
+#: The one hook tree. These pins ran on BOTH twins while scripts/hooks held full copies that could
+#: drift apart. On the Linux line scripts/hooks/claude_*.py are policy-free runpy shims onto this
+#: file (tests/test_hook_shims.py pins that), so loading the shim as a module would run the hook
+#: as __main__ instead of exposing build_wake_line; the canonical file is the only one to test.
+HOOK_REL = "agent/harness/hooks/claude_userpromptsubmit.py"
+
+
+def test_the_turn_start_hook_announces_who_woke_you(tmp_path, monkeypatch):
+    """THE PAYOFF: the turn-start hook names who woke the seat and what they sent."""
+    rel = HOOK_REL
     hook = _load(rel, "_hook_" + rel.replace("/", "_").replace(".", "_"))
     assert hasattr(hook, "build_wake_line"), (
-        "%s has no `build_wake_line` -- it already injects the unread COUNT every turn "
+        f"{rel} has no `build_wake_line` -- it already injects the unread COUNT every turn "
         "(build_bus_line), which tells the seat to go look. Daniel asked for who and what, "
-        "which removes the looking." % rel)
+        "which removes the looking."
+    )
 
     monkeypatch.setattr(BW.tempfile, "gettempdir", lambda: str(tmp_path))
     BW.write_wake_note("claude", "sess1234", WOKE_BY, tmp=str(tmp_path))
@@ -125,15 +134,15 @@ def test_the_turn_start_hook_announces_who_woke_you(rel, tmp_path, monkeypatch):
 
     line = hook.build_wake_line("claude", "sess1234")
     assert line, "no line rendered for a session that was just woken by mail"
-    assert "daniil" in line, "the line does not name the sender: %r" % line
+    assert "daniil" in line, f"the line does not name the sender: {line!r}"
     assert "Instead of checking" in line or "woke" in line.lower(), (
-        "the line carries neither the message nor the fact of the wake: %r" % line)
+        f"the line carries neither the message nor the fact of the wake: {line!r}"
+    )
 
 
-@pytest.mark.parametrize("rel", ["scripts/hooks/claude_userpromptsubmit.py",
-                                 "agent/harness/hooks/claude_userpromptsubmit.py"])
-def test_the_hook_is_silent_when_the_turn_was_not_a_wake(rel, tmp_path, monkeypatch):
+def test_the_hook_is_silent_when_the_turn_was_not_a_wake(tmp_path, monkeypatch):
     """Most turns are the operator typing. Silence then, or the line becomes wallpaper."""
+    rel = HOOK_REL
     hook = _load(rel, "_hookq_" + rel.replace("/", "_").replace(".", "_"))
     monkeypatch.setenv("TMPDIR", str(tmp_path))
     monkeypatch.setenv("TEMP", str(tmp_path))
@@ -146,7 +155,7 @@ def test_the_hook_is_silent_when_the_turn_was_not_a_wake(rel, tmp_path, monkeypa
 # empty snippet. The pins above all passed, because they fed `write_wake_note` a hand-built
 # dict carrying "content" -- the key the WIRE envelope uses. The producer writes "text":
 #
-#     out.append({"frm": frm, "kind": kind, "text": str(getattr(m, "content", "") or "")[:2000]})
+#     out.append({"frm": frm, "kind": kind, "text": str(getattr(m, "content", "") or "")[:2000]})  # noqa: ERA001  # the producer's line, quoted verbatim on purpose
 #
 # ...fifty lines below where the note is written. So the fixture agreed with my assumption
 # instead of with the code, and the pin tested the shape I believed in rather than the shape
@@ -154,6 +163,7 @@ def test_the_hook_is_silent_when_the_turn_was_not_a_wake(rel, tmp_path, monkeypa
 #
 # These pins take their payload FROM THE PRODUCER'S OWN LINE rather than from a literal, so a
 # key rename breaks the test instead of silently emptying the line.
+
 
 def _producer_shape():
     """The exact dict the wake exit appends to `out` (bifrost_wake.py)."""
@@ -166,28 +176,31 @@ def test_the_snippet_survives_the_key_the_producer_actually_uses(tmp_path, monke
     line = BW.render_wake_note(BW.read_wake_note("claude", "s", tmp=str(tmp_path)))
     assert "Test 2" in line, (
         "the wake line lost the message body -- it names who and not what, which is most of "
-        "what the line is for. got: %r" % line)
-    assert "daniil" in line and "chat" in line, line
+        f"what the line is for. got: {line!r}"
+    )
+    assert "daniil" in line, line
+    assert "chat" in line, line
 
 
 def test_the_wire_double_encoding_is_unwrapped(tmp_path, monkeypatch):
     """The bus stores content json-dumped, so a raw envelope carries '"Test 2"' WITH quotes.
     Rendering those quotes into the line is noise the reader has to mentally strip."""
     monkeypatch.setattr(BW.tempfile, "gettempdir", lambda: str(tmp_path))
-    BW.write_wake_note("claude", "s2", [{"frm": "daniil", "kind": "chat",
-                                         "content": '"Test 2"'}], tmp=str(tmp_path))
+    BW.write_wake_note("claude", "s2", [{"frm": "daniil", "kind": "chat", "content": '"Test 2"'}], tmp=str(tmp_path))
     line = BW.render_wake_note(BW.read_wake_note("claude", "s2", tmp=str(tmp_path)))
-    assert '"Test 2"' not in line and "Test 2" in line, (
-        "the double-encoded wire form leaked its quotes into the rendered line: %r" % line)
+    assert '"Test 2"' not in line, f"the double-encoded wire form leaked its quotes into the rendered line: {line!r}"
+    assert "Test 2" in line, f"the double-encoded wire form leaked its quotes into the rendered line: {line!r}"
 
 
 def test_the_producer_still_writes_the_key_this_reads():
     """RATCHET ON THE PRODUCER. If the wake exit renames its field, this fails HERE with the
     reason, instead of every future wake line quietly losing its body."""
     import re
+
     src = (ROOT / "scripts" / "bifrost_wake.py").read_text(encoding="utf-8-sig")
-    m = re.search(r'out\.append\(\{([^}]*)\}\)', src)
+    m = re.search(r"out\.append\(\{([^}]*)\}\)", src)
     assert m, "the wake exit no longer builds `out` with a dict literal -- re-read it"
     assert '"text"' in m.group(1), (
         "the wake exit stopped writing a 'text' key; write_wake_note reads it first and would "
-        "fall back to 'content'. Producer line: %s" % m.group(1).strip())
+        f"fall back to 'content'. Producer line: {m.group(1).strip()}"
+    )

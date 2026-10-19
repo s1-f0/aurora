@@ -36,6 +36,7 @@ Run::
 
     py -m pytest tests/test_match_surface_spans_every_text_field.py -q
 """
+
 from __future__ import annotations
 
 import sys
@@ -44,8 +45,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from core.recall import at_action as A  # noqa: E402
-
+from core.recall import at_action as A  # noqa: E402  # after the sys.path bootstrap
 
 REC = {
     "experiment_name": "a_lesson_with_all_three_fields",
@@ -59,7 +59,7 @@ REC = {
 
 def _only(recs):
     items = A._project_items(recs)
-    assert len(items) == 1, "expected exactly one projected item, got %d" % len(items)
+    assert len(items) == 1, f"expected exactly one projected item, got {len(items)}"
     return items[0]
 
 
@@ -70,7 +70,8 @@ def test_a_token_only_in_what_tried_is_matchable():
     toks = A._item_tokens(_only([dict(REC)]))
     assert "narwhal" in toks, (
         "a token present only in what_tried is not matchable -- 1,533 lessons carry that "
-        "field and no query can reach any of them. got: %s" % sorted(toks))
+        f"field and no query can reach any of them. got: {sorted(toks)}"
+    )
 
 
 def test_a_token_only_in_actual_is_matchable():
@@ -89,8 +90,7 @@ def test_the_recommendation_is_still_matchable():
 def test_a_lesson_carrying_only_what_tried_is_still_projected_and_matchable():
     """The loop's `if not summary: continue` drops a record with no recommendation and no
     actual. Such a lesson is invisible entirely, not merely unmatched."""
-    rec = {"experiment_name": "only_the_action_was_recorded",
-           "what_tried": "ran the narwhal probe", "success": "yes"}
+    rec = {"experiment_name": "only_the_action_was_recorded", "what_tried": "ran the narwhal probe", "success": "yes"}
     items = A._project_items([rec])
     assert items, "a lesson carrying only what_tried was dropped from the projection entirely"
     assert "narwhal" in A._item_tokens(items[0]), sorted(A._item_tokens(items[0]))
@@ -103,7 +103,8 @@ def test_the_displayed_text_is_still_one_field_not_three():
     _provenance_tag renders. The displayed text must remain exactly the chosen field."""
     it = _only([dict(REC)])
     assert it["text"] == REC["recommendation"], (
-        "the displayed text is no longer the single provenance-tagged field: %r" % it["text"])
+        "the displayed text is no longer the single provenance-tagged field: {!r}".format(it["text"])
+    )
     assert "quokka" not in it["text"], "evidence leaked into the displayed claim"
     assert "narwhal" not in it["text"], "the action leaked into the displayed claim"
 
@@ -120,8 +121,10 @@ def test_provenance_tag_is_unchanged_by_the_widening():
     """RATCHET on the rendered surface, not just the field: the seat must see the same tag."""
     it = _only([dict(REC)])
     tag = A._provenance_tag(it)
-    assert tag and isinstance(tag, str), tag
-    assert "quokka" not in tag and "narwhal" not in tag, tag
+    assert tag, tag
+    assert isinstance(tag, str), tag
+    assert "quokka" not in tag, tag
+    assert "narwhal" not in tag, tag
 
 
 # --------------------------------------------------------------- the seam itself
@@ -131,7 +134,7 @@ def test_the_match_surface_is_carried_as_its_own_field():
     it = _only([dict(REC)])
     blob = str(it.get("match_text") or "")
     for token in ("zebrafish", "quokka", "narwhal"):
-        assert token in blob, "match_text does not span all three fields (missing %r)" % token
+        assert token in blob, f"match_text does not span all three fields (missing {token!r})"
 
 
 def test_item_tokens_reads_the_match_surface():
@@ -147,16 +150,21 @@ def test_item_tokens_reads_the_match_surface():
     """
     import ast
     import inspect
+
     tree = ast.parse(inspect.getsource(A._item_tokens).strip())
     fn = tree.body[0]
-    if (fn.body and isinstance(fn.body[0], ast.Expr)
-            and isinstance(fn.body[0].value, ast.Constant)
-            and isinstance(fn.body[0].value.value, str)):
-        fn.body = fn.body[1:]                       # drop the docstring, keep the code
+    if (
+        fn.body
+        and isinstance(fn.body[0], ast.Expr)
+        and isinstance(fn.body[0].value, ast.Constant)
+        and isinstance(fn.body[0].value.value, str)
+    ):
+        fn.body = fn.body[1:]  # drop the docstring, keep the code
     code = ast.unparse(fn)
     assert "match_text" in code, (
         "_item_tokens does not READ match_text (its docstring may still mention it) -- the "
-        "field would be inert, which is the 'looks adopted but is not load-bearing' failure")
+        "field would be inert, which is the 'looks adopted but is not load-bearing' failure"
+    )
 
 
 # =============================================================================================
@@ -193,29 +201,42 @@ def _relevance_fn(items):
 def test_the_RANKER_scores_a_token_that_lives_only_in_what_tried():
     """THE REAL PIN. 'narwhal' appears only in what_tried. If the scorer cannot see it, the
     whole match_text change is inert for retrieval however green the IDF pins are."""
-    items = A._project_items([dict(REC), {"experiment_name": "filler_one",
-                                          "recommendation": "something unrelated about pipelines",
-                                          "success": "yes"}])
-    fn, by_text = _relevance_fn(items)
+    items = A._project_items(
+        [
+            dict(REC),
+            {
+                "experiment_name": "filler_one",
+                "recommendation": "something unrelated about pipelines",
+                "success": "yes",
+            },
+        ]
+    )
+    fn, _by_text = _relevance_fn(items)
     target = next(i for i in items if i["source"].endswith("a_lesson_with_all_three_fields"))
     score = fn(target["text"], "narwhal probe")
     assert score > 0.0, (
         "the Ranker's own relevance_fn scores 0 for a token carried in what_tried -- "
-        "match_text is feeding IDF only, so retrieval never widened")
+        "match_text is feeding IDF only, so retrieval never widened"
+    )
 
 
 def test_the_RANKER_scores_a_token_that_lives_only_in_actual():
-    items = A._project_items([dict(REC), {"experiment_name": "filler_two",
-                                          "recommendation": "unrelated prose about budgets",
-                                          "success": "yes"}])
+    items = A._project_items(
+        [
+            dict(REC),
+            {"experiment_name": "filler_two", "recommendation": "unrelated prose about budgets", "success": "yes"},
+        ]
+    )
     fn, _ = _relevance_fn(items)
     target = next(i for i in items if i["source"].endswith("a_lesson_with_all_three_fields"))
     assert fn(target["text"], "quokka counter") > 0.0, (
-        "a token carried only in `actual` -- 726,002 characters of the corpus -- is unmatchable")
+        "a token carried only in `actual` -- 726,002 characters of the corpus -- is unmatchable"
+    )
 
 
 def test_display_is_still_untouched_by_the_wider_matching():
     """RATCHET, restated at the real seam: widening what SCORES must not widen what SHOWS."""
     it = _only([dict(REC)])
     assert it["text"] == REC["recommendation"]
-    assert "narwhal" not in it["text"] and "quokka" not in it["text"]
+    assert "narwhal" not in it["text"]
+    assert "quokka" not in it["text"]

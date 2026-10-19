@@ -11,9 +11,10 @@ caught the census naming a private-plane record in ``docs/SHELVES.md``. It opens
 
     try:
         from core.trust import private_plane as _pp
+
         marks = _pp.markers()
     except Exception:
-        return list(entries), 0     # guard unavailable -> change nothing
+        return list(entries), 0  # guard unavailable -> change nothing
 
 MEASURED, all [CERTAIN] from my own commands:
 
@@ -59,6 +60,7 @@ Run::
 
     py -m pytest tests/test_the_leak_guard_does_not_fail_open.py -q
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -84,16 +86,20 @@ def _code_of(func_name: str) -> str:
     behaviour; grepping a file can only ever ask about text.
     """
     import ast
+
     tree = ast.parse(_src())
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == func_name:
             body = node.body
-            if (body and isinstance(body[0], ast.Expr)
-                    and isinstance(getattr(body[0], "value", None), ast.Constant)
-                    and isinstance(body[0].value.value, str)):
-                body = body[1:]          # drop the docstring
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(getattr(body[0], "value", None), ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                body = body[1:]  # drop the docstring
             return "\n".join(ast.unparse(stmt) for stmt in body)
-    raise AssertionError("no function named %r in %s" % (func_name, GEN))
+    raise AssertionError(f"no function named {func_name!r} in {GEN}")
 
 
 # ------------------------------------------------------------------ defect 1: the path
@@ -105,9 +111,15 @@ def test_the_guard_actually_loads_in_the_real_invocation():
     loaded, the run says so on its own: it prints a counted ``private-plane:`` line. Silence means
     the filter's import failed and every private title went into the census.
     """
-    r = subprocess.run([sys.executable, "-X", "utf8", str(GEN), "--stdout"],
-                       capture_output=True, text=True, encoding="utf-8", errors="replace",
-                       cwd=str(ROOT), timeout=300)
+    r = subprocess.run(
+        [sys.executable, "-X", "utf8", str(GEN), "--stdout"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(ROOT),
+        timeout=300,
+    )
     out = r.stdout + r.stderr
     assert "No module named 'core'" not in out, "the generator cannot import core when run by path"
     assert "private-plane:" in out, (
@@ -115,18 +127,20 @@ def test_the_guard_actually_loads_in_the_real_invocation():
         "Measured 2026-10-07: 1,764 files catalogued, 0 excluded, and the marker present in "
         "SHELVES, ARCS and research/reviewed/README.md -- because `from core.trust import "
         "private_plane` raised ModuleNotFoundError and `except Exception` returned the entries "
-        "unfiltered.")
+        "unfiltered."
+    )
 
 
 def test_the_root_insert_is_at_module_scope_not_three_lazy_copies():
     """Three lazy inserts (gen_library.py:123, 453, 550) make correctness depend on which code path
     runs first. The filter sits at the entry point and runs before all three."""
     src = _src()
-    head = src[:src.index("\ndef ")]
+    head = src[: src.index("\ndef ")]
     assert "sys.path" in head, (
         "ROOT is never added to sys.path at module scope, so whichever function runs first decides "
         "whether `core` is importable -- and the private-plane filter runs before all three of the "
-        "lazy inserts at lines 123, 453 and 550")
+        "lazy inserts at lines 123, 453 and 550"
+    )
 
 
 # ------------------------------------------------------------------ defect 2: the direction
@@ -140,7 +154,8 @@ def test_the_filter_does_not_fail_open():
     code = _code_of("_drop_private_plane")
     assert "return list(entries), 0" not in code, (
         "the filter returns the UNFILTERED entries when its own import fails, so a guard that "
-        "cannot load is indistinguishable from a corpus with nothing to hide")
+        "cannot load is indistinguishable from a corpus with nothing to hide"
+    )
 
 
 def test_an_unavailable_guard_is_announced_and_blocks_the_write():
@@ -161,13 +176,13 @@ def test_an_unavailable_guard_is_announced_and_blocks_the_write():
     function and drops the docstring. Twice in one file, in a file about this exact mistake.
     """
     code = _code_of("_drop_private_plane")
-    assert "except" in code, (
-        "the filter no longer has an except path -- re-read this pin before deleting it")
-    handler = code[code.index("except"):]
+    assert "except" in code, "the filter no longer has an except path -- re-read this pin before deleting it"
+    handler = code[code.index("except") :]
     assert "raise" in handler[:600], (
         "the filter's except path does not raise. A leak guard that cannot load must stop the "
         "regeneration, not hand back the unfiltered entries with a warning attached -- the catalogs "
-        "get written either way, and written is what leaks.")
+        "get written either way, and written is what leaks."
+    )
 
 
 # ------------------------------------------------------------------ ratchets
@@ -177,10 +192,12 @@ def test_the_markers_themselves_are_healthy():
     and every pin above would still pass -- which is the failure mode this whole file is about."""
     sys.path.insert(0, str(ROOT))
     from core.trust import private_plane as pp
+
     marks = pp.markers()
     assert len(marks) >= 10, (
-        "markers() returned %d -- derived markers have collapsed, so the filter matches nothing "
-        "even when it does run" % len(marks))
+        f"markers() returned {len(marks)} -- derived markers have collapsed, so the filter matches nothing "
+        "even when it does run"
+    )
 
 
 def test_the_known_record_is_absent_from_every_regenerated_catalog():
@@ -194,5 +211,6 @@ def test_the_known_record_is_absent_from_every_regenerated_catalog():
             continue
         text = p.read_text(encoding="utf-8", errors="replace")
         assert needle not in text, (
-            "%s names a private-plane record. Do NOT hand-edit it out -- the generator puts it "
-            "back on the next run. Regenerate with the guard importable." % rel)
+            f"{rel} names a private-plane record. Do NOT hand-edit it out -- the generator puts it "
+            "back on the next run. Regenerate with the guard importable."
+        )

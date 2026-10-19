@@ -82,6 +82,7 @@ Run::
     py scripts/checkers/check_unbound_names.py
     py scripts/checkers/check_unbound_names.py --json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -91,13 +92,18 @@ import hashlib
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
 
 ROOT = Path(__file__).resolve().parents[2]
 
 #: Noise directories, skipped at ANY depth: caches and foreign dependency trees.
 SKIP_ANY_LEVEL = {
-    ".git", ".venv", "venv", "__pycache__", "node_modules", ".pytest_cache", ".ruff_cache",
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "node_modules",
+    ".pytest_cache",
+    ".ruff_cache",
 }
 
 #: Skipped only as a TOP-LEVEL directory, and that anchoring is load-bearing.
@@ -110,12 +116,28 @@ SKIP_ANY_LEVEL = {
 #: cannot be seen is slack, and a guard with invisible slack is a rubber stamp" -- in the
 #: file that states it. Found by an adversarial reader, not by me.
 SKIP_TOP_LEVEL = {
-    ".claude", ".codex", ".cursor", "archive", "X", "logs", "state", "tooling-upgrade",
+    ".claude",
+    ".codex",
+    ".cursor",
+    "archive",
+    "X",
+    "logs",
+    "state",
+    "tooling-upgrade",
 }
 
-BUILTINS: Set[str] = set(dir(builtins)) | {
-    "__name__", "__file__", "__doc__", "__package__", "__spec__", "__loader__",
-    "__builtins__", "__debug__", "__class__", "__annotations__", "__dict__",
+BUILTINS: set[str] = set(dir(builtins)) | {
+    "__name__",
+    "__file__",
+    "__doc__",
+    "__package__",
+    "__spec__",
+    "__loader__",
+    "__builtins__",
+    "__debug__",
+    "__class__",
+    "__annotations__",
+    "__dict__",
 }
 
 
@@ -123,13 +145,13 @@ BUILTINS: Set[str] = set(dir(builtins)) | {
 class _Scope:
     """One lexical scope. `transparent` marks a class body: nested functions skip it."""
 
-    __slots__ = ("names", "kind", "globals_", "nonlocals")
+    __slots__ = ("globals_", "kind", "names", "nonlocals")
 
     def __init__(self, kind: str) -> None:
-        self.names: Set[str] = set()
-        self.kind = kind                      # module | function | class | comp
-        self.globals_: Set[str] = set()
-        self.nonlocals: Set[str] = set()
+        self.names: set[str] = set()
+        self.kind = kind  # module | function | class | comp
+        self.globals_: set[str] = set()
+        self.nonlocals: set[str] = set()
 
 
 def _bind_target(node: ast.AST, scope: _Scope) -> None:
@@ -167,7 +189,7 @@ def _is_type_checking(test: ast.AST) -> bool:
     return False
 
 
-def _walrus_targets(node: ast.AST) -> Set[str]:
+def _walrus_targets(node: ast.AST) -> set[str]:
     """PEP 572: a walrus inside a comprehension binds in the CONTAINING scope.
 
     `_collect` skips comprehensions (they are their own scope) and `_comp` binds only the
@@ -176,7 +198,7 @@ def _walrus_targets(node: ast.AST) -> Set[str]:
     reported twice. A guard that blocks correct code gets switched off, so this mattered
     more than any of the missed cases.
     """
-    out: Set[str] = set()
+    out: set[str] = set()
     for sub in ast.walk(node):
         if isinstance(sub, ast.NamedExpr) and isinstance(sub.target, ast.Name):
             out.add(sub.target.id)
@@ -196,16 +218,16 @@ def _collect(node: ast.AST, scope: _Scope) -> None:
         elif isinstance(child, ast.ImportFrom):
             for a in child.names:
                 if a.name == "*":
-                    continue                  # handled by the caller: module is skipped
+                    continue  # handled by the caller: module is skipped
                 scope.names.add(a.asname or a.name)
         elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             scope.names.add(child.name)
-            continue                          # do NOT descend: its body is another scope
+            continue  # do NOT descend: its body is another scope
         elif isinstance(child, ast.Lambda):
-            scope.names |= _walrus_targets(child)       # a walrus in a default leaks out
+            scope.names |= _walrus_targets(child)  # a walrus in a default leaks out
             continue
         elif isinstance(child, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-            scope.names |= _walrus_targets(child)       # PEP 572 -- binds in THIS scope
+            scope.names |= _walrus_targets(child)  # PEP 572 -- binds in THIS scope
             continue
         elif isinstance(child, ast.Assign):
             for t in child.targets:
@@ -220,9 +242,7 @@ def _collect(node: ast.AST, scope: _Scope) -> None:
             # `x += 1` REQUIRES x to already exist, so it is not a binding. Any genuine
             # binding elsewhere in the scope is picked up by its own Assign/import.
             pass
-        elif isinstance(child, ast.NamedExpr):
-            _bind_target(child.target, scope)
-        elif isinstance(child, (ast.For, ast.AsyncFor)):
+        elif isinstance(child, (ast.NamedExpr, ast.For, ast.AsyncFor)):
             _bind_target(child.target, scope)
         elif isinstance(child, ast.ExceptHandler):
             # Deliberately NOT bound here. CPython compiles an implicit `name = None;
@@ -247,9 +267,7 @@ def _collect(node: ast.AST, scope: _Scope) -> None:
         elif isinstance(child, (ast.Match,)):
             # match-case capture patterns bind names
             for sub in ast.walk(child):
-                if isinstance(sub, ast.MatchAs) and sub.name:
-                    scope.names.add(sub.name)
-                elif isinstance(sub, ast.MatchStar) and sub.name:
+                if (isinstance(sub, ast.MatchAs) and sub.name) or (isinstance(sub, ast.MatchStar) and sub.name):
                     scope.names.add(sub.name)
                 elif isinstance(sub, ast.MatchMapping) and sub.rest:
                     scope.names.add(sub.rest)
@@ -260,13 +278,23 @@ def _collect(node: ast.AST, scope: _Scope) -> None:
         # this file deliberately permits: there is no branch on which it gets defined.
         if isinstance(child, ast.If) and _is_type_checking(child.test):
             continue
-        if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
-                                  ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp,
-                                  ast.GeneratorExp)):
+        if not isinstance(
+            child,
+            (
+                ast.FunctionDef,
+                ast.AsyncFunctionDef,
+                ast.ClassDef,
+                ast.Lambda,
+                ast.ListComp,
+                ast.SetComp,
+                ast.DictComp,
+                ast.GeneratorExp,
+            ),
+        ):
             _collect(child, scope)
 
 
-def _params(fn) -> Set[str]:
+def _params(fn) -> set[str]:
     a = fn.args
     out = {p.arg for p in list(a.posonlyargs) + list(a.args) + list(a.kwonlyargs)}
     if a.vararg:
@@ -289,8 +317,8 @@ class _Resolver(ast.NodeVisitor):
         #: ...but only when something actually ASSIGNS it. `global X` with no assignment
         #: anywhere binds nothing, and blanket-trusting the declaration traded the FP for a
         #: false negative. Intersecting the declarations with the real stores keeps both.
-        declared: Set[str] = set()
-        stored: Set[str] = set()
+        declared: set[str] = set()
+        stored: set[str] = set()
         for n in ast.walk(module):
             if isinstance(n, ast.Global):
                 declared.update(n.names)
@@ -302,9 +330,9 @@ class _Resolver(ast.NodeVisitor):
             elif isinstance(n, (ast.For, ast.AsyncFor)):
                 stored |= {s.id for s in ast.walk(n.target) if isinstance(s, ast.Name)}
         mod.names.update(declared & stored)
-        self.stack: List[_Scope] = [mod]
-        self.fn_stack: List[str] = []
-        self.violations: List[Tuple[int, str, str]] = []   # (lineno, name, where)
+        self.stack: list[_Scope] = [mod]
+        self.fn_stack: list[str] = []
+        self.violations: list[tuple[int, str, str]] = []  # (lineno, name, where)
         #: PEP 563. With `from __future__ import annotations` every annotation is stored as a
         #: STRING and never evaluated, so an unresolvable name inside one raises nothing. The
         #: first version of this checker did not know that and reported 23 findings across
@@ -338,8 +366,13 @@ class _Resolver(ast.NodeVisitor):
         for d in list(a.defaults) + [x for x in a.kw_defaults if x is not None]:
             self.visit(d)
         if not self.lazy_annotations:
-            for p in list(a.posonlyargs) + list(a.args) + list(a.kwonlyargs) + \
-                     ([a.vararg] if a.vararg else []) + ([a.kwarg] if a.kwarg else []):
+            for p in (
+                list(a.posonlyargs)
+                + list(a.args)
+                + list(a.kwonlyargs)
+                + ([a.vararg] if a.vararg else [])
+                + ([a.kwarg] if a.kwarg else [])
+            ):
                 if p.annotation is not None:
                     self.visit(p.annotation)
             if getattr(node, "returns", None) is not None:
@@ -416,7 +449,7 @@ class _Resolver(ast.NodeVisitor):
         if node.value is not None:
             self.visit(node.value)
         if node.target is not None and not isinstance(node.target, ast.Name):
-            self.visit(node.target)          # attribute/subscript targets still evaluate
+            self.visit(node.target)  # attribute/subscript targets still evaluate
 
     def visit_ExceptHandler(self, node) -> None:
         """`except E as e:` -- `e` lives only until the handler exits, then CPython deletes
@@ -485,17 +518,17 @@ CACHE_PATH = ROOT / "state" / "ci" / "unbound_names_cache.json"
 def _self_hash() -> str:
     try:
         return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:16]
-    except Exception:                                            # noqa: BLE001
+    except Exception:  # noqa: BLE001  # fail-soft: falls back to a default value
         return "nohash"
 
 
 def _load_cache() -> dict:
     try:
         raw = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
-    except Exception:                                            # noqa: BLE001
+    except Exception:  # noqa: BLE001  # fail-soft: falls back to a default value
         return {}
     if not isinstance(raw, dict) or raw.get("rules") != _self_hash():
-        return {}                                                # rules moved -> drop it all
+        return {}  # rules moved -> drop it all
     files = raw.get("files")
     return files if isinstance(files, dict) else {}
 
@@ -504,16 +537,15 @@ def _save_cache(files: dict) -> None:
     try:
         CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = CACHE_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"rules": _self_hash(), "files": files}),
-                       encoding="utf-8")
+        tmp.write_text(json.dumps({"rules": _self_hash(), "files": files}), encoding="utf-8")
         tmp.replace(CACHE_PATH)
-    except Exception:                                            # noqa: BLE001
-        pass            # a cache that cannot be written must never fail the check
+    except Exception:  # noqa: BLE001  # fail-soft: best effort, skipped on any error
+        pass  # a cache that cannot be written must never fail the check
 
 
-def _py_files() -> Tuple[List[Path], int]:
+def _py_files() -> tuple[list[Path], int]:
     """Returns (files, skipped_by_path_count). The count is REPORTED, never silent."""
-    out: List[Path] = []
+    out: list[Path] = []
     skipped = 0
     for p in ROOT.rglob("*.py"):
         parts = p.relative_to(ROOT).parts
@@ -529,10 +561,11 @@ def _py_files() -> Tuple[List[Path], int]:
 #: that cannot be seen is slack, and a guard with invisible slack is a rubber stamp. They are
 #: simply not in the ratcheted count -- we do not own them and cannot fix them.
 _NOT_OURS_PREFIXES = (
-    "ComfyUI-Zluda/",          # vendored third party
-    "docs/_archive/",          # explicitly archived
+    "ComfyUI-Zluda/",  # vendored third party
+    "docs/_archive/",  # explicitly archived
     "research/in-flight/t342/dead-modules/",
-    "scratch/", "temp/",       # fragments and scratch, never imported
+    "scratch/",
+    "temp/",  # fragments and scratch, never imported
 )
 
 
@@ -541,10 +574,10 @@ def _NOT_OURS(rel: str) -> bool:
 
 
 def check(as_json: bool = False, scan_foreign: bool = False) -> int:
-    offenders: List[Tuple[str, int, str, str]] = []
-    not_ours: List[Tuple[str, int, str, str]] = []
-    skipped_star: List[str] = []
-    unparsed: List[Tuple[str, str]] = []
+    offenders: list[tuple[str, int, str, str]] = []
+    not_ours: list[tuple[str, int, str, str]] = []
+    skipped_star: list[str] = []
+    unparsed: list[tuple[str, str]] = []
 
     files, skipped_by_path = _py_files()
     #: Vendored/archived/scratch code is PARSED only under --all. Measured 2026-10-05: it is
@@ -578,8 +611,9 @@ def check(as_json: bool = False, scan_foreign: bool = False) -> int:
             # three files silently unchecked. They were only visible because the skip is
             # REPORTED; a checker that passed them quietly would have hidden them forever.
             src = path.read_text(encoding="utf-8-sig")
-        except Exception as e:                                   # noqa: BLE001
-            unparsed.append((rel, f"unreadable: {e}")); continue
+        except Exception as e:  # noqa: BLE001  # an unreadable file is REPORTED as unchecked, never skipped
+            unparsed.append((rel, f"unreadable: {e}"))
+            continue
 
         digest = hashlib.sha256(src.encode("utf-8", "replace")).hexdigest()[:16]
         cached = cache.get(rel)
@@ -588,9 +622,11 @@ def check(as_json: bool = False, scan_foreign: bool = False) -> int:
             fresh[rel] = cached
             bucket = not_ours if _NOT_OURS(rel) else offenders
             if cached.get("star"):
-                skipped_star.append(rel); continue
+                skipped_star.append(rel)
+                continue
             if cached.get("bad"):
-                unparsed.append((rel, cached["bad"])); continue
+                unparsed.append((rel, cached["bad"]))
+                continue
             for ln, nm, wh in cached.get("v", []):
                 bucket.append((rel, ln, nm, wh))
             continue
@@ -600,25 +636,28 @@ def check(as_json: bool = False, scan_foreign: bool = False) -> int:
         except SyntaxError as e:
             why = f"SyntaxError line {e.lineno}"
             fresh[rel] = {"h": digest, "bad": why}
-            unparsed.append((rel, why)); continue
-        except Exception as e:                                   # noqa: BLE001
+            unparsed.append((rel, why))
+            continue
+        except Exception as e:  # noqa: BLE001  # any parse failure is reported, never fatal (see below)
             # NOT just SyntaxError. A deeply nested expression raises RecursionError (seen at
             # AST depth 497), which escaped the narrow handler, killed the run, and -- at any
             # baseline above zero -- read to the ratchet as "the debt FELL". A dead checker
             # must never look like a paydown.
             why = f"{type(e).__name__}: {e}"
             fresh[rel] = {"h": digest, "bad": why}
-            unparsed.append((rel, why)); continue
-        if any(isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names)
-               for n in tree.body):
+            unparsed.append((rel, why))
+            continue
+        if any(isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names) for n in tree.body):
             # tree.body, not ast.walk: a star-import is only legal at module level, and
             # walking the whole tree let a `from x import *` ANYWHERE (including inside a
             # string-compiled block or a nested module in a test fixture) excuse the file.
             fresh[rel] = {"h": digest, "star": True}
-            skipped_star.append(rel); continue
-        lazy = any(isinstance(n, ast.ImportFrom) and n.module == "__future__"
-                   and any(a.name == "annotations" for a in n.names)
-                   for n in tree.body)
+            skipped_star.append(rel)
+            continue
+        lazy = any(
+            isinstance(n, ast.ImportFrom) and n.module == "__future__" and any(a.name == "annotations" for a in n.names)
+            for n in tree.body
+        )
         r = _Resolver(tree, lazy_annotations=lazy)
         for st in tree.body:
             r.visit(st)
@@ -629,48 +668,51 @@ def check(as_json: bool = False, scan_foreign: bool = False) -> int:
             bucket.append((rel, lineno, name, where))
 
     if as_json:
-        print(json.dumps({
-            "violations": [{"file": f, "line": l, "name": n, "in": w}
-                           for f, l, n, w in offenders],
-            "count": len(offenders),
-            "not_ours": [{"file": f, "line": l, "name": n, "in": w}
-                         for f, l, n, w in not_ours],
-            "not_ours_count": len(not_ours),
-            "foreign_unscanned": foreign_unscanned,
-            "skipped_star_import": skipped_star,
-            "unparsed": [{"file": f, "why": w} for f, w in unparsed],
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "violations": [{"file": f, "line": ln, "name": n, "in": w} for f, ln, n, w in offenders],
+                    "count": len(offenders),
+                    "not_ours": [{"file": f, "line": ln, "name": n, "in": w} for f, ln, n, w in not_ours],
+                    "not_ours_count": len(not_ours),
+                    "foreign_unscanned": foreign_unscanned,
+                    "skipped_star_import": skipped_star,
+                    "unparsed": [{"file": f, "why": w} for f, w in unparsed],
+                },
+                indent=2,
+            )
+        )
         return 1 if offenders else 0
 
     # Typed absence, every time: a skip is REPORTED, never silently passed. Zero is not no.
-    print("# cache: %d hit(s), %d parsed" % (hits, misses))
-    print("# scanned %d .py file(s); %d skipped by path policy (caches, top-level archive/"
-          "logs/state/X, .claude/.codex/.cursor, tooling-upgrade)"
-          % (len(files), skipped_by_path))
+    print(f"# cache: {hits} hit(s), {misses} parsed")
+    print(
+        f"# scanned {len(files)} .py file(s); {skipped_by_path} skipped by path policy (caches, top-level archive/"
+        "logs/state/X, .claude/.codex/.cursor, tooling-upgrade)"
+    )
     if skipped_star:
-        print("SKIPPED, not counted: %d module(s) use `from x import *`, which cannot be"
-              % len(skipped_star))
+        print(f"SKIPPED, not counted: {len(skipped_star)} module(s) use `from x import *`, which cannot be")
         print("resolved statically. These are UNCHECKED, not clean:")
         for rel in skipped_star:
-            print("  ? %s" % rel)
+            print(f"  ? {rel}")
         print()
     if unparsed:
-        print("SKIPPED, not counted: %d file(s) could not be parsed:" % len(unparsed))
+        print(f"SKIPPED, not counted: {len(unparsed)} file(s) could not be parsed:")
         for rel, why in unparsed:
-            print("  ? %s (%s)" % (rel, why))
+            print(f"  ? {rel} ({why})")
         print()
     if foreign_unscanned:
-        print("NOT OURS, not counted and not parsed: %d file(s) under %s"
-              % (foreign_unscanned, ", ".join(_NOT_OURS_PREFIXES)))
+        print(
+            f"NOT OURS, not counted and not parsed: {foreign_unscanned} file(s) under {', '.join(_NOT_OURS_PREFIXES)}"
+        )
         print("  (half the wall-clock, zero effect on the count -- `--all` itemises them)")
         print()
     if not_ours:
         nf = sorted({f for f, _, _, _ in not_ours})
-        print("NOT OURS, not counted: %d finding(s) in %d vendored/archived/scratch file(s)."
-              % (len(not_ours), len(nf)))
+        print(f"NOT OURS, not counted: {len(not_ours)} finding(s) in {len(nf)} vendored/archived/scratch file(s).")
         print("Real, and we cannot fix them; shown so the exclusion is visible:")
         for f in nf:
-            print("  ~ %s (%d)" % (f, sum(1 for g, _, _, _ in not_ours if g == f)))
+            print(f"  ~ {f} ({sum(1 for g, _, _, _ in not_ours if g == f)})")
         print()
 
     _save_cache(fresh)
@@ -682,22 +724,20 @@ def check(as_json: bool = False, scan_foreign: bool = False) -> int:
     # paydown. That is a one-line, gate-rewarded way to delete findings. The same applies to
     # a file we cannot parse. Unchecked is not clean, so each unchecked file of OURS counts
     # as one violation -- it cannot be cheaper to hide a module than to fix it.
-    for rel in skipped_star:
-        if not _NOT_OURS(rel):
-            offenders.append((rel, 0, "<unchecked: star-import>", "<whole module>"))
-    for rel, why in unparsed:
-        if not _NOT_OURS(rel):
-            offenders.append((rel, 0, f"<unchecked: {why}>", "<whole module>"))
+    offenders.extend(
+        (rel, 0, "<unchecked: star-import>", "<whole module>") for rel in skipped_star if not _NOT_OURS(rel)
+    )
+    offenders.extend((rel, 0, f"<unchecked: {why}>", "<whole module>") for rel, why in unparsed if not _NOT_OURS(rel))
 
     if offenders:
         # The heading MUST start with "VIOLATIONS" -- pre_commit._count_violations only counts
         # itemised "- [" lines inside a VIOLATIONS block and otherwise falls back to counting
         # FAIL: summaries. check_session_resolvers titled its block differently and the ratchet
         # adopted 1 instead of 16; a baseline built from a wrong count is a rubber stamp.
-        print("VIOLATIONS -- names that resolve in no enclosing scope (%d):" % len(offenders))
+        print(f"VIOLATIONS -- names that resolve in no enclosing scope ({len(offenders)}):")
         for rel, lineno, name, where in offenders:
-            print("  - [%s:%d] `%s` in %s" % (rel, lineno, name, where))
-        print("\nFAIL: %d bare name(s) cannot resolve at runtime." % len(offenders))
+            print(f"  - [{rel}:{lineno}] `{name}` in {where}")
+        print(f"\nFAIL: {len(offenders)} bare name(s) cannot resolve at runtime.")
         print("      Each raises NameError when reached. If the site sits inside a fail-soft")
         print("      `except Exception`, it raises SILENTLY and the organ renders a false")
         print("      zero -- which is how the wish door filed 254 wishes and emitted 0 events.")
@@ -711,9 +751,13 @@ def check(as_json: bool = False, scan_foreign: bool = False) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--json", action="store_true", help="machine-readable, for the ratchet")
-    ap.add_argument("--all", action="store_true", dest="scan_all",
-                    help="also parse vendored/archived/scratch trees and itemise their "
-                         "findings (doubles the runtime; never changes the counted total)")
+    ap.add_argument(
+        "--all",
+        action="store_true",
+        dest="scan_all",
+        help="also parse vendored/archived/scratch trees and itemise their "
+        "findings (doubles the runtime; never changes the counted total)",
+    )
     a = ap.parse_args()
     return check(as_json=a.json, scan_foreign=a.scan_all)
 

@@ -35,10 +35,11 @@ prices this before Wave 1. Shipping the emit before its instrument is the ratifi
 Hermetic: the builder is pure, taking the payload, the roots and an existence callable. No disk,
 no Redis, no hook subprocess except the twin-parity pin, which reads two files.
 """
+
 import json
 import os
-import re
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -46,8 +47,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-from core.coord import target as T          # noqa: E402
-from core.events import touch as TOUCH      # noqa: E402
+from core.coord import target as T  # noqa: E402  # after the sys.path bootstrap
+from core.events import touch as TOUCH  # noqa: E402  # after the sys.path bootstrap
 
 MAIN = "E:/AI-Setup"
 SUN = "C:/Users/L5/AppData/Local/AkashicAurora/worktrees/sunshine-discord-split"
@@ -101,7 +102,8 @@ def test_a_touch_with_no_session_id_anywhere_is_still_emitted_and_says_so(monkey
     # is look identical to an attributed one. Same discipline as T418-b's unverified boot.
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     t = build(P("Read", {"file_path": "core/coord/orient.py"}, session_id=""))
-    assert t is not None and t.session_id == ""
+    assert t is not None
+    assert t.session_id == ""
     assert t.detail.get("session_source") == "unknown"
 
 
@@ -123,8 +125,7 @@ def test_a_worktree_path_carries_its_plane_into_the_key():
 
 def test_a_shell_tool_goes_through_the_extraction_contract():
     t = build(P("Bash", {"command": "cp a.py b.py"}))
-    assert sorted((x["action"], x["key"]) for x in t.detail["targets"]) == \
-        [("read", "a.py"), ("write", "b.py")]
+    assert sorted((x["action"], x["key"]) for x in t.detail["targets"]) == [("read", "a.py"), ("write", "b.py")]
 
 
 def test_a_command_that_cannot_be_seen_into_says_so_rather_than_reporting_a_clean_zero():
@@ -135,12 +136,14 @@ def test_a_command_that_cannot_be_seen_into_says_so_rather_than_reporting_a_clea
     # look at the flag, which is the same trap one layer up -- so the schema keeps null meaning
     # "could not see" and `[]` meaning "looked, found nothing", identically in both places.
     t = build(P("Bash", {"command": "py - <<'EOF'\nimport os\nEOF"}))
-    assert t.detail["targets"] is None and t.detail["targets_incomplete"] is True
+    assert t.detail["targets"] is None
+    assert t.detail["targets_incomplete"] is True
 
 
 def test_a_command_that_touched_nothing_is_a_measured_zero():
     t = build(P("Bash", {"command": "cd core && git status"}))
-    assert t.detail["targets"] == [] and t.detail["targets_incomplete"] is False
+    assert t.detail["targets"] == []
+    assert t.detail["targets_incomplete"] is False
 
 
 def test_targets_are_capped_and_the_cap_is_confessed_never_silent():
@@ -172,7 +175,8 @@ def test_the_subject_rides_the_record_fields_not_a_reinvented_field():
     # which every events:raw record already carries, so no emit needs new plumbing and no `target`
     # field is added to the record.
     t = build(P("Read", {"file_path": "core/coord/orient.py"}, session_id="sid-9"))
-    assert t.session_id == "sid-9" and "target" not in t.detail
+    assert t.session_id == "sid-9"
+    assert "target" not in t.detail
 
 
 def test_target_keys_ride_refs_so_the_byref_index_can_join_them():
@@ -183,17 +187,23 @@ def test_target_keys_ride_refs_so_the_byref_index_can_join_them():
 def test_refs_never_carry_an_unparseable_spelling():
     t = build(P("Bash", {"command": "cp a.py b.py"}))
     for r in t.refs:
-        T.parse(r, roots=ROOTS, exists=lambda k: True)     # must not raise
+        T.parse(r, roots=ROOTS, exists=lambda k: True)  # must not raise
 
 
 # ---------------------------------------------------------------- which tools, and fail-open
-@pytest.mark.parametrize("tool", ["Read", "Edit", "Write", "NotebookEdit", "Bash",
-                                  "PowerShell", "Grep", "Glob", "WebFetch"])
+@pytest.mark.parametrize(
+    "tool", ["Read", "Edit", "Write", "NotebookEdit", "Bash", "PowerShell", "Grep", "Glob", "WebFetch"]
+)
 def test_every_tool_named_by_the_spec_produces_a_touch(tool):
-    ti = {"command": "cat a.py"} if tool in ("Bash", "PowerShell") else \
-         {"pattern": "foo", "path": "core/"} if tool in ("Grep", "Glob") else \
-         {"url": "https://example.com/x"} if tool == "WebFetch" else \
-         {"file_path": "a.py"}
+    ti = (
+        {"command": "cat a.py"}
+        if tool in ("Bash", "PowerShell")
+        else {"pattern": "foo", "path": "core/"}
+        if tool in ("Grep", "Glob")
+        else {"url": "https://example.com/x"}
+        if tool == "WebFetch"
+        else {"file_path": "a.py"}
+    )
     assert build(P(tool, ti)) is not None
 
 
@@ -205,8 +215,9 @@ def test_the_builder_never_raises_into_the_hook_and_counts_what_it_dropped():
     # The hook runs on every tool call for every seat. A telemetry builder that can raise is a
     # telemetry builder that can wedge the house's hot path.
     before = TOUCH.drops()
-    t = TOUCH.build({"tool_name": "Bash", "tool_input": {"command": "cat a.py"}},
-                    roots=None, exists=None)                  # deliberately malformed inputs
+    t = TOUCH.build(
+        {"tool_name": "Bash", "tool_input": {"command": "cat a.py"}}, roots=None, exists=None
+    )  # deliberately malformed inputs
     assert t is None
     assert TOUCH.drops() == before + 1, "a swallowed failure must still be counted"
 
@@ -217,19 +228,18 @@ def test_both_hook_copies_carry_the_touch_emit():
     only by their sys.path depth. USER settings invoke the scripts/ copy and PROJECT settings the
     agent/harness/ copy, so a home-rooted seat runs ONLY the copy check_wiring deliberately does
     not walk. Patching one is shipping to half the fleet, invisibly."""
-    a = open(os.path.join(REPO, "agent", "harness", "hooks", "claude_posttooluse.py"),
-             encoding="utf-8").read()
-    b = open(os.path.join(REPO, "scripts", "hooks", "claude_posttooluse.py"),
-             encoding="utf-8").read()
+    a = Path(REPO, "agent", "harness", "hooks", "claude_posttooluse.py").read_text(encoding="utf-8")
+    b = Path(REPO, "scripts", "hooks", "claude_posttooluse.py").read_text(encoding="utf-8")
     for name, src in (("agent/harness/hooks", a), ("scripts/hooks", b)):
-        assert "touch" in src and "core.events" in src, f"{name} copy has no touch emit"
+        assert "touch" in src, f"{name} copy has no touch emit"
+        assert "core.events" in src, f"{name} copy has no touch emit"
 
 
 def test_the_twins_differ_only_by_their_path_depth_and_prose():
-    a = open(os.path.join(REPO, "agent", "harness", "hooks", "claude_posttooluse.py"),
-             encoding="utf-8").read()
-    b = open(os.path.join(REPO, "scripts", "hooks", "claude_posttooluse.py"),
-             encoding="utf-8").read()
-    strip = lambda s: [ln for ln in s.splitlines()
-                       if "sys.path.insert" not in ln and not ln.strip().startswith("#")]
+    a = Path(REPO, "agent", "harness", "hooks", "claude_posttooluse.py").read_text(encoding="utf-8")
+    b = Path(REPO, "scripts", "hooks", "claude_posttooluse.py").read_text(encoding="utf-8")
+
+    def strip(s):
+        return [ln for ln in s.splitlines() if "sys.path.insert" not in ln and not ln.strip().startswith("#")]
+
     assert strip(a) == strip(b), "the hook twins have drifted in CODE, not just in comments"

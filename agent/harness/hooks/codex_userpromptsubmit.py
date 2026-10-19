@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Codex UserPromptSubmit: subject-labelled plan recall and non-consuming mail cue."""
+
 from __future__ import annotations
 
 import json
 import os
 import sys
+
+# Run as a bare script (by .codex/hooks.json or the scripts/hooks/ shim), so the repo root is
+# not on sys.path until we put it there.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from agent.harness.hooks.codex_common import (
     capture_payload,
@@ -44,10 +49,16 @@ def main() -> int:
         pieces = [piece for piece in pieces if piece]
         if pieces:
             context = subject_label(data, seat) + "\n" + "\n".join(pieces)
-            print(json.dumps({"hookSpecificOutput": {
-                "hookEventName": "UserPromptSubmit",
-                "additionalContext": context,
-            }}))
+            print(
+                json.dumps(
+                    {
+                        "hookSpecificOutput": {
+                            "hookEventName": "UserPromptSubmit",
+                            "additionalContext": context,
+                        }
+                    }
+                )
+            )
     except Exception as exc:
         print(f"[codex-plan-recall] suppressed: {type(exc).__name__}: {exc}", file=sys.stderr)
     return 0

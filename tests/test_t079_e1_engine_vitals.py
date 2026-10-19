@@ -116,8 +116,8 @@ def test_p4_tokens_from_journal(tmp_path):
     # See tests/test_the_token_gauge_reads_the_keys_the_journal_writes.py for the full case.
     assert set(s2["tokens"]) >= {"prompt", "completion"}, "P4: shape stays stable"
     assert s2["tokens"].get("measured") is False, "P4: absent journal -> NOT a measurement"
-    assert s2["tokens"]["prompt"] is None and s2["tokens"]["completion"] is None, (
-        "P4: an unmeasured quantity must not render as 0 -- 0 is a measurement")
+    assert s2["tokens"]["prompt"] is None, "P4: an unmeasured quantity must not render as 0 -- 0 is a measurement"
+    assert s2["tokens"]["completion"] is None, "P4: an unmeasured quantity must not render as 0 -- 0 is a measurement"
 
 
 def test_p5_pages_count():

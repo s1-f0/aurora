@@ -44,11 +44,13 @@ one is not there yet a call raises NotBuilt ("arsenal.media.<module> not built y
 growing a second copy of it. The one fallback is a media's basic facts: without the catalog and probe.probe, import
 reads duration and streams from ff.probe_json, the shared ffprobe parse, and says so in facts_from.
 """
+
 from __future__ import annotations
 
 import contextlib
 import copy
 import importlib
+import itertools
 import json
 import math
 import os
@@ -57,9 +59,12 @@ import secrets
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
 from . import ff, receipt
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 API = "arsenal.media.timeline/v0"
 #: What this document is a projection of (Heimdall's fence, 2026-10-12). v0 timelines are their own master; when the
@@ -72,10 +77,9 @@ VIDEO_SUFFIXES = (".mp4", ".m4v", ".mov", ".webm", ".mkv")
 GAIN_RANGE_DB = (-60.0, 12.0)
 OUT_FOLDER = "aurora-edits"
 AUDIO_RATE = 48000
-EPS = 1e-4                    # 0.1 ms: float noise between at + length and the next clip's at
+EPS = 1e-4  # 0.1 ms: float noise between at + length and the next clip's at
 MIN_CLIP_S = 1e-3
-CONTAINER_SUFFIX = {"mp4": ".mp4", "mov": ".mov", "webm": ".webm", "mkv": ".mkv", "matroska": ".mkv",
-                    "webp": ".webp"}
+CONTAINER_SUFFIX = {"mp4": ".mp4", "mov": ".mov", "webm": ".webm", "mkv": ".mkv", "matroska": ".mkv", "webp": ".webp"}
 MUXER = {".mp4": "mp4", ".mov": "mov", ".mkv": "matroska", ".webm": "webm", ".webp": "webp"}
 #: The render pipeline writes yuv420p; these presets carry alpha the timeline never has.
 ALPHA_PRESETS = ("alpha_webm", "alpha_prores4444", "alpha_webp_anim")
@@ -84,7 +88,7 @@ ALPHA_PRESETS = ("alpha_webm", "alpha_prores4444", "alpha_webp_anim")
 class EditError(ValueError):
     """A refused edit, with the problems found and the HTTP status the editor's routes answer with."""
 
-    def __init__(self, message: str, *, problems: Optional[List[str]] = None, status: int = 400):
+    def __init__(self, message: str, *, problems: list[str] | None = None, status: int = 400):
         super().__init__(message)
         self.problems = list(problems or [message])
         self.status = status
@@ -94,8 +98,11 @@ class Conflict(EditError):
     """save() was given a revision that is no longer the current one; .current is the document on disk."""
 
     def __init__(self, current: dict, sent_rev):
-        super().__init__(f"project {current.get('id')} is at rev {current.get('rev')}, the edit was made on rev "
-                         f"{sent_rev}: changed elsewhere", status=409)
+        super().__init__(
+            f"project {current.get('id')} is at rev {current.get('rev')}, the edit was made on rev "
+            f"{sent_rev}: changed elsewhere",
+            status=409,
+        )
         self.current = current
 
 
@@ -103,7 +110,7 @@ class NotBuilt(RuntimeError):
     """A primitive another lane builds is not in the package yet (HTTP 503)."""
 
 
-def module(name: str, attr: Optional[str] = None):
+def module(name: str, attr: str | None = None):
     """arsenal.media.<name> (and its attr), or NotBuilt with the one-line reason the editor shows."""
     full = f"arsenal.media.{name}"
     try:
@@ -117,7 +124,7 @@ def module(name: str, attr: Optional[str] = None):
     return mod
 
 
-def is_built(name: str, attr: Optional[str] = None) -> bool:
+def is_built(name: str, attr: str | None = None) -> bool:
     try:
         module(name, attr)
         return True
@@ -128,6 +135,7 @@ def is_built(name: str, attr: Optional[str] = None) -> bool:
 # =================================================================================================
 # files: atomic JSON under a lock file
 # =================================================================================================
+
 
 def edits_dir() -> Path:
     return ff.state_dir() / "edits"
@@ -150,7 +158,7 @@ def media_dir(mid: str) -> Path:
     return media_file(mid).with_suffix("")
 
 
-_thread_locks: Dict[str, threading.Lock] = {}
+_thread_locks: dict[str, threading.Lock] = {}
 _thread_locks_guard = threading.Lock()
 
 
@@ -177,7 +185,9 @@ def locked(target: Path, *, timeout: float = 10.0, stale_s: float = 30.0) -> Ite
                         lock.unlink()
                     continue
                 if time.monotonic() > deadline:
-                    raise EditError(f"{target.name} is being written by another process (lock {lock})", status=503)
+                    raise EditError(
+                        f"{target.name} is being written by another process (lock {lock})", status=503
+                    ) from None
                 time.sleep(0.01)
                 continue
             os.write(fd, f"{os.getpid()} {time.time():.3f}\n".encode("ascii"))
@@ -199,15 +209,17 @@ def _retry(fn: Callable, attempts: int = 25):
             if i == attempts - 1:
                 raise
             time.sleep(0.02)
+    return None
 
 
-def read_json(path: Path) -> Optional[dict]:
+def read_json(path: Path) -> dict | None:
     def read():
         try:
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 return json.load(fh)
         except FileNotFoundError:
             return None
+
     return _retry(read)
 
 
@@ -228,7 +240,8 @@ def _now() -> str:
 # media: what the editor knows about one imported file
 # =================================================================================================
 
-def _fps(rate: Optional[str]) -> Optional[float]:
+
+def _fps(rate: str | None) -> float | None:
     num, _, den = str(rate or "0/1").partition("/")
     try:
         n, d = float(num), float(den or 1)
@@ -242,41 +255,65 @@ def _ffprobe_facts(path: Path) -> dict:
     j = ff.probe_json(path)
     fmt = j.get("format") or {}
     streams = j.get("streams") or []
-    vs = next((s for s in streams if s.get("codec_type") == "video"
-               and not (s.get("disposition") or {}).get("attached_pic")), None)
+    vs = next(
+        (s for s in streams if s.get("codec_type") == "video" and not (s.get("disposition") or {}).get("attached_pic")),
+        None,
+    )
     f0 = float(fmt.get("start_time") or 0.0)
     video = None
     if vs:
-        video = {"codec": vs.get("codec_name"), "w": vs.get("width"), "h": vs.get("height"),
-                 "fps": _fps(vs.get("avg_frame_rate")) or _fps(vs.get("r_frame_rate")),
-                 "has_b_frames": vs.get("has_b_frames"), "pix_fmt": vs.get("pix_fmt"),
-                 "start_s": round(float(vs.get("start_time") or f0) - f0, 6)}
+        video = {
+            "codec": vs.get("codec_name"),
+            "w": vs.get("width"),
+            "h": vs.get("height"),
+            "fps": _fps(vs.get("avg_frame_rate")) or _fps(vs.get("r_frame_rate")),
+            "has_b_frames": vs.get("has_b_frames"),
+            "pix_fmt": vs.get("pix_fmt"),
+            "start_s": round(float(vs.get("start_time") or f0) - f0, 6),
+        }
     audio = []
     for s in (s for s in streams if s.get("codec_type") == "audio"):
         tags = s.get("tags") or {}
-        audio.append({"index": s.get("index"), "codec": s.get("codec_name"), "channels": s.get("channels"),
-                      "sample_rate": int(s.get("sample_rate") or 0) or None, "title": tags.get("title"),
-                      "house_name": None})
+        audio.append(
+            {
+                "index": s.get("index"),
+                "codec": s.get("codec_name"),
+                "channels": s.get("channels"),
+                "sample_rate": int(s.get("sample_rate") or 0) or None,
+                "title": tags.get("title"),
+                "house_name": None,
+            }
+        )
     tags = fmt.get("tags") or {}
-    return {"duration_s": float(fmt.get("duration") or 0.0), "container": fmt.get("format_name"),
-            "encoder": tags.get("encoder"), "recorded_at": None, "video": video, "audio": audio,
-            "chapters": [], "kind": "unknown", "links": {}, "clock": "file", "start_s": f0}
+    return {
+        "duration_s": float(fmt.get("duration") or 0.0),
+        "container": fmt.get("format_name"),
+        "encoder": tags.get("encoder"),
+        "recorded_at": None,
+        "video": video,
+        "audio": audio,
+        "chapters": [],
+        "kind": "unknown",
+        "links": {},
+        "clock": "file",
+        "start_s": f0,
+    }
 
 
 #: Keys of a sidecar the editor does not carry in its media record (the house result keys, the full keyframe list).
 _SIDECAR_SKIP = ("api", "source", "params", "computed_with", "blind", "receipt", "cached", "sidecar_path", "keyframes")
 
 
-def _sidecar(side) -> Optional[dict]:
+def _sidecar(side) -> dict | None:
     if isinstance(side, dict) and ("audio" in side or "video" in side):
         return {k: v for k, v in side.items() if k not in _SIDECAR_SKIP}
     return None
 
 
-def _facts(path: Path) -> Tuple[dict, str, List[str]]:
+def _facts(path: Path) -> tuple[dict, str, list[str]]:
     """(facts, facts_from, notes): the catalog's quick ingest (probe + sidecar + catalog row + time links), else
     probe.probe, else the shared ffprobe parse."""
-    notes: List[str] = []
+    notes: list[str] = []
     try:
         catalog = module("catalog", "ingest")
         probe = module("probe", "read_sidecar")
@@ -316,7 +353,7 @@ def _unchanged(rec: dict) -> bool:
     return st.st_size == rec.get("size") and st.st_mtime_ns == rec.get("mtime_ns")
 
 
-def source_path(rec: dict) -> Optional[Path]:
+def source_path(rec: dict) -> Path | None:
     """The media's file: its recorded path, else another place the same bytes were imported from (same size)."""
     for cand in [rec.get("path"), *(rec.get("paths") or [])]:
         try:
@@ -360,12 +397,21 @@ def import_media(path) -> dict:
             home = Path(old["path"])
         st = home.stat()
         known = [str(home), *(old.get("paths") or [old.get("path")]), str(p)]
-        rec.update(name=home.name, path=str(home), size=st.st_size, mtime_ns=st.st_mtime_ns,
-                   paths=list(dict.fromkeys(x for x in known if x))[:8])
+        rec.update(
+            name=home.name,
+            path=str(home),
+            size=st.st_size,
+            mtime_ns=st.st_mtime_ns,
+            paths=list(dict.fromkeys(x for x in known if x))[:8],
+        )
         same = old.get("size") == st.st_size and old.get("mtime_ns") == st.st_mtime_ns
         rec["derived"] = old.get("derived", {}) if same else {}
-        if same and isinstance((old.get("video") or {}).get("keyint_s"), (int, float)) and rec.get("video") \
-                and not rec["video"].get("keyint_s"):
+        if (
+            same
+            and isinstance((old.get("video") or {}).get("keyint_s"), (int, float))
+            and rec.get("video")
+            and not rec["video"].get("keyint_s")
+        ):
             rec["video"].update({k: old["video"][k] for k in ("keyint_s", "keyframes_n") if k in old["video"]})
         _apply_track_starts(rec)
         write_json(target, rec)
@@ -379,7 +425,7 @@ def get_media(mid: str) -> dict:
     return rec
 
 
-def list_media() -> List[dict]:
+def list_media() -> list[dict]:
     folder = edits_dir() / "media"
     out = []
     for f in sorted(folder.glob("*.json")) if folder.is_dir() else []:
@@ -404,9 +450,11 @@ def update_media(mid: str, change: Callable[[dict], None]) -> dict:
 
 def set_derived(mid: str, kind: str, value) -> dict:
     """Record one derived file (or map of them) under rec["derived"][kind]."""
+
     def change(rec: dict) -> None:
         rec.setdefault("derived", {})[kind] = value
         _apply_track_starts(rec)
+
     return update_media(mid, change)
 
 
@@ -420,7 +468,7 @@ def _apply_track_starts(rec: dict) -> None:
             t["start_s"] = row["start_s"]
 
 
-def track_starts(rec: dict) -> List[float]:
+def track_starts(rec: dict) -> list[float]:
     """Where each audio track starts in the source file (a file time): the demux rows' start_s (already on
     rec["audio"]), else ffprobe's stream start_time minus the format start_time, as audio.tracks reports it."""
     have = [t.get("start_s") for t in rec.get("audio") or []]
@@ -428,8 +476,10 @@ def track_starts(rec: dict) -> List[float]:
         return [float(v) for v in have]
     j = ff.probe_json(rec["path"], entries=("-show_streams", "-show_format"), extra=("-select_streams", "a"))
     f0 = float((j.get("format") or {}).get("start_time") or 0.0)
-    probed = [round(float(s["start_time"]) - f0, 6) if s.get("start_time") not in (None, "N/A") else 0.0
-              for s in j.get("streams") or []]
+    probed = [
+        round(float(s["start_time"]) - f0, 6) if s.get("start_time") not in (None, "N/A") else 0.0
+        for s in j.get("streams") or []
+    ]
     return [float(v) if _num(v) else (probed[n] if n < len(probed) else 0.0) for n, v in enumerate(have)]
 
 
@@ -443,7 +493,7 @@ def derived_ready(rec: dict, kind: str) -> bool:
     return bool(got) and Path(got).is_file()
 
 
-def derived_path(rec: dict, kind: str, track: Optional[int] = None) -> Optional[Path]:
+def derived_path(rec: dict, kind: str, track: int | None = None) -> Path | None:
     got = (rec.get("derived") or {}).get(kind)
     if track is not None:
         got = (got or {}).get(str(track)) if isinstance(got, dict) else None
@@ -452,7 +502,7 @@ def derived_path(rec: dict, kind: str, track: Optional[int] = None) -> Optional[
     return Path(got) if got and Path(got).is_file() else None
 
 
-def build_demux(mid: str, progress: Optional[Callable[[float], None]] = None) -> dict:
+def build_demux(mid: str, progress: Callable[[float], None] | None = None) -> dict:
     """Every audio track to its own file (audio.demux, stream copy where Chromium can play it) so the page plays the
     tracks side by side: Chromium here has no HTMLMediaElement.audioTracks."""
     audio = module("audio", "demux")
@@ -461,12 +511,16 @@ def build_demux(mid: str, progress: Optional[Callable[[float], None]] = None) ->
     if rec.get("audio"):
         res = audio.demux(rec["path"], str(media_dir(mid) / "audio"), tracks="all", codec="copy")
         for row in res.get("tracks") or []:
-            rows[str(row["index"])] = {"path": row["path"], "start_s": row.get("start_s"), "codec": row.get("codec"),
-                                       "how": row.get("how")}
+            rows[str(row["index"])] = {
+                "path": row["path"],
+                "start_s": row.get("start_s"),
+                "codec": row.get("codec"),
+                "how": row.get("how"),
+            }
     return set_derived(mid, "audio", rows)["derived"]["audio"]
 
 
-def build_peaks(mid: str, progress: Optional[Callable[[float], None]] = None, *, spp: int = 512) -> dict:
+def build_peaks(mid: str, progress: Callable[[float], None] | None = None, *, spp: int = 512) -> dict:
     """Waveform peaks per track (peaks.peaks, 16-bit mono), kept as {sample_rate, spp, data} normalised to -1..1.
     16-bit, not peaks.js's 8: the lanes draw on a dB scale down to -54 dBFS and OBS game audio sits near -40 LUFS,
     under 8-bit's first step (-42 dBFS). Measured 2026-10-12: 8-bit left 88% of the columns of 2026-10-11 16-48-25
@@ -479,8 +533,15 @@ def build_peaks(mid: str, progress: Optional[Callable[[float], None]] = None, *,
     out_dir.mkdir(parents=True, exist_ok=True)
     files = {}
     for n in range(n_tracks):
-        res = peaks.peaks(rec["path"], track=n, spp=spp, bits=16, channels="mono", out_prefix=str(out_dir / f"a{n}"),
-                          formats=("json",))
+        res = peaks.peaks(
+            rec["path"],
+            track=n,
+            spp=spp,
+            bits=16,
+            channels="mono",
+            out_prefix=str(out_dir / f"a{n}"),
+            formats=("json",),
+        )
         payload = peaks_payload(res, spp=spp)
         # pixel 0 is the track's first sample, so the lane draws it from where the track starts on the source clock
         # (peaks.peaks' own start_s is its span's start: 0.0 without a span)
@@ -512,50 +573,64 @@ def peaks_payload(res, *, spp: int = 512) -> dict:
     data = data.tolist() if hasattr(data, "tolist") else list(data)
     scale = {8: 128.0, 16: 32768.0}.get(int(wave.get("bits") or 0), 1.0)
     channels = int(wave.get("channels") or 1)
-    if channels > 1:            # keep channel 0's min/max pairs: the lane draws one wave
+    if channels > 1:  # keep channel 0's min/max pairs: the lane draws one wave
         step = 2 * channels
-        data = [v for i in range(0, len(data) - step + 1, step) for v in data[i:i + 2]]
+        data = [v for i in range(0, len(data) - step + 1, step) for v in data[i : i + 2]]
     # 8-bit: 3 decimals lose nothing; 16-bit: 4 decimals keep 1e-4 (-80 dBFS), under the lanes' -54 dB floor
     places = 4 if int(wave.get("bits") or 0) == 16 else 3
     norm = [round(max(-1.0, min(1.0, float(v) / scale)), places) for v in data]
-    return {"sample_rate": int(wave.get("sample_rate") or AUDIO_RATE),
-            "spp": int(wave.get("samples_per_pixel") or wave.get("spp") or spp),
-            "length": len(norm) // 2, "data": norm}
+    return {
+        "sample_rate": int(wave.get("sample_rate") or AUDIO_RATE),
+        "spp": int(wave.get("samples_per_pixel") or wave.get("spp") or spp),
+        "length": len(norm) // 2,
+        "data": norm,
+    }
 
 
-def build_shots(mid: str, progress: Optional[Callable[[float], None]] = None) -> str:
+def build_shots(mid: str, progress: Callable[[float], None] | None = None) -> str:
     """The cuts in the video (shots.shots with its default detector), kept as {cuts, shots, detector_ran, blind}."""
     shots = module("shots", "shots")
     rec = get_media(mid)
     res = shots.shots(rec["path"])
-    keep = {"cuts": list(res.get("cuts") or []), "shots": res.get("shots"), "detector_ran": res.get("detector_ran"),
-            "blind": res.get("blind"), "receipt": res.get("receipt")}
+    keep = {
+        "cuts": list(res.get("cuts") or []),
+        "shots": res.get("shots"),
+        "detector_ran": res.get("detector_ran"),
+        "blind": res.get("blind"),
+        "receipt": res.get("receipt"),
+    }
     target = media_dir(mid) / "shots.json"
     write_json(target, keep)
     set_derived(mid, "shots", str(target))
     return str(target)
 
 
-def keyframes(mid: str) -> List[float]:
+def keyframes(mid: str) -> list[float]:
     """Keyframe file times of the media (probe.keyframes, a packet-flag scan: 0.8 s on 33 minutes), cached beside
     it. A cache without "clock": "file" was written on the container clock and is read again."""
     from . import probe
+
     rec = get_media(mid)
     cache = media_dir(mid) / "keyframes.json"
     got = read_json(cache)
-    if got and got.get("size") == rec.get("size") and got.get("mtime_ns") == rec.get("mtime_ns") \
-            and got.get("clock") == "file":
+    if (
+        got
+        and got.get("size") == rec.get("size")
+        and got.get("mtime_ns") == rec.get("mtime_ns")
+        and got.get("clock") == "file"
+    ):
         return got["keyframes"]
     kfs = probe.keyframes(rec["path"])
     write_json(cache, {"size": rec.get("size"), "mtime_ns": rec.get("mtime_ns"), "clock": "file", "keyframes": kfs})
 
-    def change(cur: dict) -> None:          # the inspector's keyframe interval, when the probe did not give one
+    def change(cur: dict) -> None:  # the inspector's keyframe interval, when the probe did not give one
         cur.setdefault("derived", {})["keyframes"] = str(cache)
         video = cur.get("video") or {}
         if len(kfs) > 1 and not video.get("keyint_s"):
-            gaps = sorted(b - a for a, b in zip(kfs, kfs[1:]))
+            gaps = sorted(b - a for a, b in itertools.pairwise(kfs))
             video.update(keyint_s=round(gaps[len(gaps) // 2], 4), keyframes_n=len(kfs))
         cur["video"] = video
+
     update_media(mid, change)
     return kfs
 
@@ -564,18 +639,30 @@ def keyframes(mid: str) -> List[float]:
 # projects
 # =================================================================================================
 
-def new_project(name: str, *, settings: Optional[dict] = None) -> dict:
+
+def new_project(name: str, *, settings: dict | None = None) -> dict:
     name = str(name or "").strip()
     if not name:
         raise EditError("a project needs a name")
     pid = f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
     now = _now()
-    doc = {"api": API, "master": MASTER, "id": pid, "name": name[:120], "rev": 1, "created_at": now,
-           "updated_at": now,
-           "settings": dict(DEFAULT_SETTINGS, **(settings or {})),
-           "lanes": {"video": [{"id": "V1"}],
-                     "audio": [{"id": "A1", "label": "Mix", "gain_db": 0.0, "mute": False, "solo": False}]},
-           "clips": [], "markers": [], "board": None}
+    doc = {
+        "api": API,
+        "master": MASTER,
+        "id": pid,
+        "name": name[:120],
+        "rev": 1,
+        "created_at": now,
+        "updated_at": now,
+        "settings": dict(DEFAULT_SETTINGS, **(settings or {})),
+        "lanes": {
+            "video": [{"id": "V1"}],
+            "audio": [{"id": "A1", "label": "Mix", "gain_db": 0.0, "mute": False, "solo": False}],
+        },
+        "clips": [],
+        "markers": [],
+        "board": None,
+    }
     problems = validate(doc, media_lookup=None)
     if problems:
         raise EditError("; ".join(problems), problems=problems)
@@ -592,7 +679,7 @@ def load(pid: str) -> dict:
     return doc
 
 
-def list_projects() -> List[dict]:
+def list_projects() -> list[dict]:
     folder = edits_dir()
     out = []
     for f in sorted(folder.glob("*.json")) if folder.is_dir() else []:
@@ -600,13 +687,20 @@ def list_projects() -> List[dict]:
             continue
         doc = read_json(f)
         if doc:
-            out.append({"id": doc.get("id"), "name": doc.get("name"), "rev": doc.get("rev"),
-                        "updated_at": doc.get("updated_at"), "clips": len(doc.get("clips") or [])})
+            out.append(
+                {
+                    "id": doc.get("id"),
+                    "name": doc.get("name"),
+                    "rev": doc.get("rev"),
+                    "updated_at": doc.get("updated_at"),
+                    "clips": len(doc.get("clips") or []),
+                }
+            )
     out.sort(key=lambda d: d.get("updated_at") or "", reverse=True)
     return out
 
 
-def save(doc: dict, *, media_lookup: Optional[Callable[[str], Optional[dict]]] = "registry") -> dict:
+def save(doc: dict, *, media_lookup: Callable[[str], dict | None] | None = "registry") -> dict:
     """Write doc as the next revision. doc["rev"] must be the revision the caller loaded; otherwise Conflict carries the
     current document. Returns the stored document (rev + 1, updated_at now)."""
     if not isinstance(doc, dict):
@@ -621,8 +715,14 @@ def save(doc: dict, *, media_lookup: Optional[Callable[[str], Optional[dict]]] =
         if doc.get("rev") != current.get("rev"):
             raise Conflict(current, doc.get("rev"))
         nxt = copy.deepcopy(doc)
-        nxt.update(api=API, id=pid, rev=int(current["rev"]) + 1, created_at=current.get("created_at"),
-                   updated_at=_now(), master=current.get("master") or MASTER)
+        nxt.update(
+            api=API,
+            id=pid,
+            rev=int(current["rev"]) + 1,
+            created_at=current.get("created_at"),
+            updated_at=_now(),
+            master=current.get("master") or MASTER,
+        )
         problems = validate(nxt, media_lookup=lookup)
         if problems:
             raise EditError("; ".join(problems[:5]), problems=problems)
@@ -630,7 +730,7 @@ def save(doc: dict, *, media_lookup: Optional[Callable[[str], Optional[dict]]] =
     return nxt
 
 
-def _registry_lookup(mid: str) -> Optional[dict]:
+def _registry_lookup(mid: str) -> dict | None:
     try:
         return get_media(mid)
     except EditError:
@@ -640,6 +740,7 @@ def _registry_lookup(mid: str) -> Optional[dict]:
 # =================================================================================================
 # validation
 # =================================================================================================
+
 
 def clip_len(clip: dict) -> float:
     return float(clip["src_out"]) - float(clip["src_in"])
@@ -661,7 +762,7 @@ def _gain_ok(v) -> bool:
     return _num(v) and GAIN_RANGE_DB[0] <= v <= GAIN_RANGE_DB[1]
 
 
-def _obj(v, where: str, p: List[str]) -> dict:
+def _obj(v, where: str, p: list[str]) -> dict:
     """v when it is an object; else {} and one problem (a PUT body is the page's word, not a promise of types)."""
     if v is None or isinstance(v, dict):
         return v or {}
@@ -669,17 +770,17 @@ def _obj(v, where: str, p: List[str]) -> dict:
     return {}
 
 
-def _arr(v, where: str, p: List[str]) -> list:
+def _arr(v, where: str, p: list[str]) -> list:
     if v is None or isinstance(v, list):
         return v or []
     p.append(f"{where} must be a list, not {type(v).__name__}")
     return []
 
 
-def validate(doc: dict, *, media_lookup: Optional[Callable[[str], Optional[dict]]] = None) -> List[str]:
+def validate(doc: dict, *, media_lookup: Callable[[str], dict | None] | None = None) -> list[str]:
     """Problems with a timeline document, [] when it is sound. With media_lookup, clip ranges and tracks are checked
     against the media's duration and audio tracks too. Any JSON gives a list of problems, never an exception."""
-    p: List[str] = []
+    p: list[str] = []
     if not isinstance(doc, dict):
         return [f"a project must be a JSON object, not {type(doc).__name__}"]
     if doc.get("api") != API:
@@ -707,9 +808,11 @@ def validate(doc: dict, *, media_lookup: Optional[Callable[[str], Optional[dict]
         aids.append(ln["id"])
         if not _gain_ok(ln.get("gain_db", 0.0)):
             p.append(f"lane {ln['id']}: gain_db must be {GAIN_RANGE_DB[0]:g}..{GAIN_RANGE_DB[1]:g}")
-        for flag in ("mute", "solo"):
-            if not isinstance(ln.get(flag, False), bool):
-                p.append(f"lane {ln['id']}: {flag} must be true or false")
+        p.extend(
+            f"lane {ln['id']}: {flag} must be true or false"
+            for flag in ("mute", "solo")
+            if not isinstance(ln.get(flag, False), bool)
+        )
     ids = set()
     clips = _arr(doc.get("clips"), "clips", p)
     for c in clips:
@@ -737,8 +840,10 @@ def validate(doc: dict, *, media_lookup: Optional[Callable[[str], Optional[dict]
         if media_lookup and media is None:
             p.append(f"{tag}: media {c.get('media_id')!r} is not imported")
         if media and c["src_out"] > float(media.get("duration_s") or 0.0) + 1e-3:
-            p.append(f"{tag}: src_out {c['src_out']:.3f} is past the media's end "
-                     f"({float(media.get('duration_s') or 0):.3f} s)")
+            p.append(
+                f"{tag}: src_out {c['src_out']:.3f} is past the media's end "
+                f"({float(media.get('duration_s') or 0):.3f} s)"
+            )
         n_tracks = len(media.get("audio") or []) if media else None
         for a in _arr(c.get("audio"), f"{tag}: audio", p):
             if not isinstance(a, dict) or not isinstance(a.get("src_track"), int) or a["src_track"] < 0:
@@ -752,14 +857,23 @@ def validate(doc: dict, *, media_lookup: Optional[Callable[[str], Optional[dict]
                 p.append(f"{tag} track {a['src_track']}: gain_db must be {GAIN_RANGE_DB[0]:g}..{GAIN_RANGE_DB[1]:g}")
             if not isinstance(a.get("mute", False), bool):
                 p.append(f"{tag} track {a['src_track']}: mute must be true or false")
-    v1 = sorted((c for c in clips if isinstance(c, dict) and c.get("lane") == "V1"
-                 and all(_num(c.get(k)) for k in ("src_in", "src_out", "at"))), key=lambda c: c["at"])
-    for a, b in zip(v1, v1[1:]):
+    v1 = sorted(
+        (
+            c
+            for c in clips
+            if isinstance(c, dict)
+            and c.get("lane") == "V1"
+            and all(_num(c.get(k)) for k in ("src_in", "src_out", "at"))
+        ),
+        key=lambda c: c["at"],
+    )
+    for a, b in itertools.pairwise(v1):
         if clip_end(a) > b["at"] + EPS:
             p.append(f"clips {a.get('id')} and {b.get('id')} overlap on V1 ({clip_end(a):.3f} > {b['at']:.3f})")
-    for m in _arr(doc.get("markers"), "markers", p):
-        if not isinstance(m, dict) or not _num(m.get("t")) or m["t"] < 0:
-            p.append(f"marker {m!r} needs t >= 0")
+    markers = _arr(doc.get("markers"), "markers", p)
+    p.extend(
+        f"marker {m!r} needs t >= 0" for m in markers if not isinstance(m, dict) or not _num(m.get("t")) or m["t"] < 0
+    )
     return p
 
 
@@ -789,11 +903,12 @@ def _t(v: float) -> float:
     return round(float(v), 6)
 
 
-def _lookup_for(media: Optional[dict]):
+def _lookup_for(media: dict | None):
     def lookup(mid):
         if media and mid == media.get("id"):
             return media
         return _registry_lookup(mid)
+
     return lookup
 
 
@@ -801,8 +916,16 @@ def _lookup_for(media: Optional[dict]):
 # operations (pure: doc in, new doc out; save() writes)
 # =================================================================================================
 
-def add_clip(doc: dict, media: dict, *, src_in: float = 0.0, src_out: Optional[float] = None,
-             at: Optional[float] = None, lane: str = "V1") -> Tuple[dict, dict]:
+
+def add_clip(
+    doc: dict,
+    media: dict,
+    *,
+    src_in: float = 0.0,
+    src_out: float | None = None,
+    at: float | None = None,
+    lane: str = "V1",
+) -> tuple[dict, dict]:
     """Append (at=None) or place a clip of media; its audio tracks land on A1..An (created, labelled from the track
     names, when missing; a project's first clip names the lanes)."""
     doc = copy.deepcopy(doc)
@@ -814,7 +937,7 @@ def add_clip(doc: dict, media: dict, *, src_in: float = 0.0, src_out: Optional[f
     first = not doc["clips"]
     by_id = {ln["id"]: ln for ln in lanes}
     audio = []
-    for n, _t_ in enumerate(media.get("audio") or []):
+    for n, _ in enumerate(media.get("audio") or []):
         lid = f"A{n + 1}"
         label = track_label(media, n)
         if lid not in by_id:
@@ -824,8 +947,15 @@ def add_clip(doc: dict, media: dict, *, src_in: float = 0.0, src_out: Optional[f
             by_id[lid]["label"] = label
         audio.append({"src_track": n, "lane": lid, "gain_db": 0.0, "mute": False})
     lanes.sort(key=lambda ln: int(ln["id"][1:]))
-    clip = {"id": _new_clip_id(doc), "media_id": media["id"], "lane": lane, "src_in": _t(src_in),
-            "src_out": _t(src_out), "at": _t(at), "audio": audio}
+    clip = {
+        "id": _new_clip_id(doc),
+        "media_id": media["id"],
+        "lane": lane,
+        "src_in": _t(src_in),
+        "src_out": _t(src_out),
+        "at": _t(at),
+        "audio": audio,
+    }
     doc["clips"].append(clip)
     doc["clips"].sort(key=lambda c: (c.get("lane"), c.get("at")))
     return _check(doc, _lookup_for(media)), clip
@@ -838,8 +968,9 @@ def move(doc: dict, clip_id: str, at: float, *, media_lookup="registry") -> dict
     return _check(doc, _registry_lookup if media_lookup == "registry" else media_lookup)
 
 
-def trim(doc: dict, clip_id: str, *, src_in: Optional[float] = None, src_out: Optional[float] = None,
-         media_lookup="registry") -> dict:
+def trim(
+    doc: dict, clip_id: str, *, src_in: float | None = None, src_out: float | None = None, media_lookup="registry"
+) -> dict:
     """Move a clip's edges in source time. The left edge keeps the picture where it was on the timeline: at moves by
     the same amount src_in does (dragging a clip's head, not slipping it)."""
     doc = copy.deepcopy(doc)
@@ -852,7 +983,7 @@ def trim(doc: dict, clip_id: str, *, src_in: Optional[float] = None, src_out: Op
     return _check(doc, _registry_lookup if media_lookup == "registry" else media_lookup)
 
 
-def split(doc: dict, clip_id: str, t: float, *, media_lookup="registry") -> Tuple[dict, dict]:
+def split(doc: dict, clip_id: str, t: float, *, media_lookup="registry") -> tuple[dict, dict]:
     """Cut a clip in two at timeline time t; the right half gets a new id and the same track settings."""
     doc = copy.deepcopy(doc)
     c = _clip(doc, clip_id)
@@ -875,8 +1006,15 @@ def remove(doc: dict, clip_id: str) -> dict:
     return doc
 
 
-def set_lane_gain(doc: dict, lane: str, *, gain_db: Optional[float] = None, mute: Optional[bool] = None,
-                  solo: Optional[bool] = None, label: Optional[str] = None) -> dict:
+def set_lane_gain(
+    doc: dict,
+    lane: str,
+    *,
+    gain_db: float | None = None,
+    mute: bool | None = None,
+    solo: bool | None = None,
+    label: str | None = None,
+) -> dict:
     doc = copy.deepcopy(doc)
     ln = next((x for x in doc["lanes"].get("audio") or [] if x.get("id") == lane), None)
     if ln is None:
@@ -887,8 +1025,9 @@ def set_lane_gain(doc: dict, lane: str, *, gain_db: Optional[float] = None, mute
     return _check(doc, None)
 
 
-def set_clip_track_gain(doc: dict, clip_id: str, src_track: int, *, gain_db: Optional[float] = None,
-                        mute: Optional[bool] = None) -> dict:
+def set_clip_track_gain(
+    doc: dict, clip_id: str, src_track: int, *, gain_db: float | None = None, mute: bool | None = None
+) -> dict:
     doc = copy.deepcopy(doc)
     c = _clip(doc, clip_id)
     entry = next((a for a in c.get("audio") or [] if a.get("src_track") == src_track), None)
@@ -905,7 +1044,8 @@ def set_clip_track_gain(doc: dict, clip_id: str, src_track: int, *, gain_db: Opt
 # render
 # =================================================================================================
 
-def presets() -> Dict[str, dict]:
+
+def presets() -> dict[str, dict]:
     """The export lane's presets, id -> preset (NotBuilt until arsenal.media.export lands)."""
     export = module("export", "presets")
     got = export.presets()
@@ -916,7 +1056,7 @@ def presets() -> Dict[str, dict]:
     return {k: v for k, v in (got or {}).items() if not str(k).startswith("_") and isinstance(v, dict)}
 
 
-def _loudness_target(preset: dict) -> Optional[dict]:
+def _loudness_target(preset: dict) -> dict | None:
     want = preset.get("loudness")
     if isinstance(want, dict):
         return want if all(k in want for k in ("I", "TP")) else None
@@ -950,14 +1090,14 @@ def resolve_preset(preset) -> dict:
     return out
 
 
-def _canvas(doc: dict, preset: dict) -> Tuple[int, int, float]:
+def _canvas(doc: dict, preset: dict) -> tuple[int, int, float]:
     """(w, h, fps) of the render: the preset's numbers, "source"/"auto" falling back to the project's settings."""
     s = doc["settings"]
     pw, ph = preset.get("width"), preset.get("height")
     if isinstance(pw, int) and isinstance(ph, int):
         w, h = pw, ph
-    elif isinstance(pw, int):                       # "auto" height keeps the project's aspect
-        w, h = pw, max(2, int(round(pw * s["height"] / s["width"] / 2)) * 2)
+    elif isinstance(pw, int):  # "auto" height keeps the project's aspect
+        w, h = pw, max(2, round(pw * s["height"] / s["width"] / 2) * 2)
     else:
         w, h = s["width"], s["height"]
     fps = preset.get("fps") if _num(preset.get("fps")) else s["fps"]
@@ -968,11 +1108,12 @@ def _fit_chain(w: int, h: int, fit: str, crop_x: float) -> str:
     if fit == "crop":
         cw = f"trunc(ih*{w}/{h}/2)*2"
         return f"crop={cw}:ih:(iw-{cw})*{crop_x:.4f}:0,scale={w}:{h}:flags=lanczos"
-    return (f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black")
+    return (
+        f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black"
+    )
 
 
-def _effective_tracks(doc: dict, clip: dict) -> List[Tuple[int, float]]:
+def _effective_tracks(doc: dict, clip: dict) -> list[tuple[int, float]]:
     """(src_track, gain_db) for each track this clip contributes: lane and clip mute, solo, and summed gains."""
     lanes = {ln["id"]: ln for ln in doc["lanes"].get("audio") or []}
     soloing = any(ln.get("solo") for ln in lanes.values())
@@ -985,7 +1126,7 @@ def _effective_tracks(doc: dict, clip: dict) -> List[Tuple[int, float]]:
     return out
 
 
-def _segments(doc: dict, fps: float) -> List[dict]:
+def _segments(doc: dict, fps: float) -> list[dict]:
     """V1 in timeline order as segments {"gap": True | "clip": c, "start": frame, "frames": n}. Every timeline
     boundary is rounded to a frame once (n = round(end * fps) - round(start * fps)), so each clip starts on the frame
     its `at` names: rounding each clip's LENGTH instead let ten contiguous 0.1167 s clips at 30 fps render 5 frames
@@ -994,10 +1135,10 @@ def _segments(doc: dict, fps: float) -> List[dict]:
     segs, frame, prev_end = [], 0, 0.0
     for c in clips:
         # a clip that butts onto the previous one (float noise within EPS) starts on its last frame, never a gap
-        start = frame if c["at"] <= prev_end + EPS else max(frame, int(round(c["at"] * fps)))
+        start = frame if c["at"] <= prev_end + EPS else max(frame, round(c["at"] * fps))
         if start > frame:
             segs.append({"gap": True, "start": frame, "frames": start - frame})
-        end = max(start + 1, int(round(clip_end(c) * fps)))
+        end = max(start + 1, round(clip_end(c) * fps))
         segs.append({"clip": c, "start": start, "frames": end - start})
         frame, prev_end = end, clip_end(c)
     return segs
@@ -1005,17 +1146,24 @@ def _segments(doc: dict, fps: float) -> List[dict]:
 
 def _samples(start_frame: int, frames: int, fps: float) -> int:
     """Audio samples of a segment, from its rounded boundaries: the audio never drifts from the frames."""
-    return int(round((start_frame + frames) / fps * AUDIO_RATE)) - int(round(start_frame / fps * AUDIO_RATE))
+    return round((start_frame + frames) / fps * AUDIO_RATE) - round(start_frame / fps * AUDIO_RATE)
 
 
-def build_graph(doc: dict, preset: dict, media: Dict[str, dict], *, crop_x: float = 0.5,
-                with_video: bool = True, with_audio: bool = True) -> Tuple[List[str], str, List[str], float]:
+def build_graph(
+    doc: dict,
+    preset: dict,
+    media: dict[str, dict],
+    *,
+    crop_x: float = 0.5,
+    with_video: bool = True,
+    with_audio: bool = True,
+) -> tuple[list[str], str, list[str], float]:
     """(input args, filter graph, output labels, total seconds) for the timeline: the render's whole plan."""
     w, h, fps = _canvas(doc, preset)
     fit = preset.get("fit") or "pad"
-    inputs: List[str] = []
-    parts: List[str] = []
-    labels: List[str] = []
+    inputs: list[str] = []
+    parts: list[str] = []
+    labels: list[str] = []
     k = 0
     total_frames = 0
     for i, seg in enumerate(_segments(doc, fps)):
@@ -1024,11 +1172,12 @@ def build_graph(doc: dict, preset: dict, media: Dict[str, dict], *, crop_x: floa
         total_frames += n
         if seg.get("gap"):
             if with_video:
-                parts.append(f"color=c=black:s={w}x{h}:r={fps:g},format=yuv420p,setsar=1,"
-                             f"trim=end_frame={n},setpts=PTS-STARTPTS[v{i}]")
+                parts.append(
+                    f"color=c=black:s={w}x{h}:r={fps:g},format=yuv420p,setsar=1,"
+                    f"trim=end_frame={n},setpts=PTS-STARTPTS[v{i}]"
+                )
             if with_audio:
-                parts.append(f"anullsrc=r={AUDIO_RATE}:cl=stereo,atrim=end_sample={samples},"
-                             f"asetpts=PTS-STARTPTS[a{i}]")
+                parts.append(f"anullsrc=r={AUDIO_RATE}:cl=stereo,atrim=end_sample={samples},asetpts=PTS-STARTPTS[a{i}]")
         else:
             c = seg["clip"]
             m = media[c["media_id"]]
@@ -1039,29 +1188,36 @@ def build_graph(doc: dict, preset: dict, media: Dict[str, dict], *, crop_x: floa
             # track that starts 0.5 s late 0.5 s early, and mid-file MKV clips 12-24 ms early.
             inputs += ["-ss", f"{c['src_in']:.6f}", "-t", f"{dur + 0.5:.6f}", "-i", m["path"]]
             if with_video:
-                parts.append(f"[{k}:v:0]fps={fps:g}:start_time=0,{_fit_chain(w, h, fit, crop_x)},setsar=1,"
-                             f"format=yuv420p,tpad=stop=-1:stop_mode=clone,trim=end_frame={n},"
-                             f"setpts=PTS-STARTPTS[v{i}]")
+                parts.append(
+                    f"[{k}:v:0]fps={fps:g}:start_time=0,{_fit_chain(w, h, fit, crop_x)},setsar=1,"
+                    f"format=yuv420p,tpad=stop=-1:stop_mode=clone,trim=end_frame={n},"
+                    f"setpts=PTS-STARTPTS[v{i}]"
+                )
             if with_audio:
                 tracks = _effective_tracks(doc, c)
                 n_src = len(m.get("audio") or [])
                 tracks = [(t, g) for t, g in tracks if t < n_src]
                 if not tracks:
-                    parts.append(f"anullsrc=r={AUDIO_RATE}:cl=stereo,atrim=end_sample={samples},"
-                                 f"asetpts=PTS-STARTPTS[a{i}]")
+                    parts.append(
+                        f"anullsrc=r={AUDIO_RATE}:cl=stereo,atrim=end_sample={samples},asetpts=PTS-STARTPTS[a{i}]"
+                    )
                 else:
                     names = []
                     for t, g in tracks:
                         name = f"a{i}t{t}"
                         # async=1 turns on swr's compensation; with first_pts=0 the first frame is padded or
                         # trimmed to src_in (to 1 ms), later jumps over 0.1 s are filled; nothing is stretched
-                        parts.append(f"[{k}:a:{t}]aresample={AUDIO_RATE}:async=1:first_pts=0,"
-                                     f"aformat=sample_fmts=fltp:channel_layouts=stereo,volume={g:.3f}dB[{name}]")
+                        parts.append(
+                            f"[{k}:a:{t}]aresample={AUDIO_RATE}:async=1:first_pts=0,"
+                            f"aformat=sample_fmts=fltp:channel_layouts=stereo,volume={g:.3f}dB[{name}]"
+                        )
                         names.append(f"[{name}]")
-                    mix = ("".join(names) + f"amix=inputs={len(names)}:normalize=0:dropout_transition=0,"
-                           if len(names) > 1 else names[0])
-                    parts.append(f"{mix}apad=whole_len={samples},atrim=end_sample={samples},"
-                                 f"asetpts=PTS-STARTPTS[a{i}]")
+                    mix = (
+                        "".join(names) + f"amix=inputs={len(names)}:normalize=0:dropout_transition=0,"
+                        if len(names) > 1
+                        else names[0]
+                    )
+                    parts.append(f"{mix}apad=whole_len={samples},atrim=end_sample={samples},asetpts=PTS-STARTPTS[a{i}]")
             k += 1
         labels.append(i)
     n_seg = len(labels)
@@ -1077,7 +1233,7 @@ def build_graph(doc: dict, preset: dict, media: Dict[str, dict], *, crop_x: floa
     return inputs, ";\n".join(parts), outs, total_frames / fps
 
 
-def _media_for(doc: dict) -> Dict[str, dict]:
+def _media_for(doc: dict) -> dict[str, dict]:
     out = {}
     for c in doc.get("clips") or []:
         mid = c.get("media_id")
@@ -1097,6 +1253,7 @@ def safe_name(name: str) -> str:
 def default_out_root() -> Path:
     """<first library root of `py -m arsenal serve`>/aurora-edits: a new folder beside nothing."""
     from ..serve import DEFAULT_ROOTS
+
     return Path(DEFAULT_ROOTS[0]) / OUT_FOLDER
 
 
@@ -1114,7 +1271,7 @@ def _fresh(path: Path) -> Path:
     return cand
 
 
-def _claim(target: Path, *, numbered: bool) -> Tuple[Path, Path]:
+def _claim(target: Path, *, numbered: bool) -> tuple[Path, Path]:
     """(target, work): create <target>.part with O_EXCL, so two renders at once (the server, the CLI, an MCP door)
     never write one file. A numbered default name moves on to the next free one; an explicit out answers 409.
     A .part a killed render left behind keeps its name taken until someone deletes it."""
@@ -1128,8 +1285,9 @@ def _claim(target: Path, *, numbered: bool) -> Tuple[Path, Path]:
             except FileExistsError:
                 pass
         if not numbered:
-            raise EditError(f"{target} exists or is being rendered ({work.name}); renders never overwrite a file",
-                            status=409)
+            raise EditError(
+                f"{target} exists or is being rendered ({work.name}); renders never overwrite a file", status=409
+            )
         target = _fresh(base)
 
 
@@ -1143,7 +1301,7 @@ def _publish(work: Path, target: Path) -> None:
         os.unlink(work)
 
 
-def _out_path(doc: dict, preset: dict, out, out_root, media: Dict[str, dict], suffix: str) -> Path:
+def _out_path(doc: dict, preset: dict, out, out_root, media: dict[str, dict], suffix: str) -> Path:
     sources = {os.path.normcase(str(Path(m["path"]).resolve())) for m in media.values()}
     if out:
         target = Path(out).resolve()
@@ -1158,7 +1316,7 @@ def _out_path(doc: dict, preset: dict, out, out_root, media: Dict[str, dict], su
     return target
 
 
-def _run_progress(args: List[str], total_s: float, progress, gpu: Optional[str]) -> None:
+def _run_progress(args: list[str], total_s: float, progress, gpu: str | None) -> None:
     """ffmpeg with -progress on stdout: out_time_us / total is the job's progress. stderr goes to ff's temp file and
     comes back in the MediaError when the run fails."""
     proc = ff.popen(["-progress", "pipe:1", "-nostats", *args], gpu=gpu)
@@ -1175,7 +1333,7 @@ def _run_progress(args: List[str], total_s: float, progress, gpu: Optional[str])
     ff.finish(proc, check=True, timeout=None)
 
 
-def _measure_loudness(inputs: List[str], graph_file: Path, target: dict) -> dict:
+def _measure_loudness(inputs: list[str], graph_file: Path, target: dict) -> dict:
     res = ff.run(["-nostats", *inputs, "-/filter_complex", str(graph_file), "-map", "[aln]", "-f", "null", "-"])
     m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", res.stderr, re.S)
     if not m:
@@ -1183,8 +1341,17 @@ def _measure_loudness(inputs: List[str], graph_file: Path, target: dict) -> dict
     return json.loads(m.group(0))
 
 
-def render(doc, preset="youtube_4k60_fast", *, out=None, out_root=None, crop_x: float = 0.5,
-           loudness: str = "preset", qc: bool = True, progress: Optional[Callable[[float], None]] = None) -> dict:
+def render(
+    doc,
+    preset="youtube_4k60_fast",
+    *,
+    out=None,
+    out_root=None,
+    crop_x: float = 0.5,
+    loudness: str = "preset",
+    qc: bool = True,
+    progress: Callable[[float], None] | None = None,
+) -> dict:
     """Render the timeline to one file with an export preset; returns the house result (receipt under
     <state>/receipts/edit/) with path, duration, the argv, and audio.qc when that lane is built."""
     if isinstance(doc, str):
@@ -1205,13 +1372,17 @@ def render(doc, preset="youtube_4k60_fast", *, out=None, out_root=None, crop_x: 
     inputs, graph, outs, total_s = build_graph(doc, p, media, crop_x=crop_x, with_audio=with_audio)
     w, h, fps = _canvas(doc, p)
     timeline_s = max((clip_end(c) for c in doc["clips"] if c.get("lane") == "V1"), default=0.0)
-    total_frames = int(round(total_s * fps))
+    total_frames = round(total_s * fps)
     graph_file = edits_dir() / "render-tmp" / f"{doc['id']}-{os.getpid()}-{threading.get_ident()}.graph.txt"
     graph_file.parent.mkdir(parents=True, exist_ok=True)
-    blind = ["clips are hard cuts: no transitions or join fades in v0",
-             "only V1 and the clips' own audio tracks are rendered; markers and board are not",
-             f"every clip is one ffmpeg input: {len(inputs) // 6} decoders open at once (peak memory grows about "
-             f"19 MiB per 1080p60 HEVC clip: 169 MiB for 1 clip, 861 MiB for 32, measured 2026-10-12)"]
+    blind = [
+        "clips are hard cuts: no transitions or join fades in v0",
+        "only V1 and the clips' own audio tracks are rendered; markers and board are not",
+        (
+            f"every clip is one ffmpeg input: {len(inputs) // 6} decoders open at once (peak memory grows about "
+            f"19 MiB per 1080p60 HEVC clip: 169 MiB for 1 clip, 861 MiB for 32, measured 2026-10-12)"
+        ),
+    ]
     measured = None
     target_ln = _loudness_target(p) if (loudness == "preset" and with_audio) else None
     if loudness == "preset" and with_audio and p.get("loudness") not in (None, "none") and target_ln is None:
@@ -1223,8 +1394,10 @@ def render(doc, preset="youtube_4k60_fast", *, out=None, out_root=None, crop_x: 
         if target_ln:
             with open(graph_file, "w", encoding="utf-8", newline="\n") as fh:
                 _, agraph, _, _ = build_graph(doc, p, media, crop_x=crop_x, with_video=False, with_audio=True)
-                fh.write(agraph.replace("[aout]", "[amix0]") + f";\n[amix0]loudnorm=I={target_ln['I']}:"
-                         f"TP={target_ln['TP']}:LRA={target_ln.get('LRA', 11)}:print_format=json[aln]")
+                fh.write(
+                    agraph.replace("[aout]", "[amix0]") + f";\n[amix0]loudnorm=I={target_ln['I']}:"
+                    f"TP={target_ln['TP']}:LRA={target_ln.get('LRA', 11)}:print_format=json[aln]"
+                )
             measured = _measure_loudness(inputs, graph_file, target_ln)
             # digital silence measures input_i -inf, which pass 2 rejects outright: render it plainly and say so
             unmeasurable = module("audio", "loudnorm_unmeasurable").loudnorm_unmeasurable(measured)
@@ -1233,11 +1406,13 @@ def render(doc, preset="youtube_4k60_fast", *, out=None, out_root=None, crop_x: 
                 target_ln = None
             else:
                 graph = graph.replace("[aout]", "[amix0]", 1)
-                graph += (f";\n[amix0]loudnorm=I={target_ln['I']}:TP={target_ln['TP']}:"
-                          f"LRA={target_ln.get('LRA', 11)}:measured_I={measured['input_i']}:"
-                          f"measured_TP={measured['input_tp']}:measured_LRA={measured['input_lra']}:"
-                          f"measured_thresh={measured['input_thresh']}:offset={measured['target_offset']}:"
-                          f"linear=true,aresample={AUDIO_RATE}[aout]")
+                graph += (
+                    f";\n[amix0]loudnorm=I={target_ln['I']}:TP={target_ln['TP']}:"
+                    f"LRA={target_ln.get('LRA', 11)}:measured_I={measured['input_i']}:"
+                    f"measured_TP={measured['input_tp']}:measured_LRA={measured['input_lra']}:"
+                    f"measured_thresh={measured['input_thresh']}:offset={measured['target_offset']}:"
+                    f"linear=true,aresample={AUDIO_RATE}[aout]"
+                )
         with open(graph_file, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(graph)
         args = ["-y", *inputs, "-/filter_complex", str(graph_file)]
@@ -1255,8 +1430,9 @@ def render(doc, preset="youtube_4k60_fast", *, out=None, out_root=None, crop_x: 
                 break
             except FileExistsError:
                 if out:
-                    raise EditError(f"{target} appeared while this render ran; renders never overwrite a file",
-                                    status=409) from None
+                    raise EditError(
+                        f"{target} appeared while this render ran; renders never overwrite a file", status=409
+                    ) from None
                 target = _fresh(base)
     finally:
         with contextlib.suppress(OSError):
@@ -1269,11 +1445,18 @@ def render(doc, preset="youtube_4k60_fast", *, out=None, out_root=None, crop_x: 
     out_dur = float(vstream.get("duration") or (got.get("format") or {}).get("duration") or 0.0)
     qc_res = None
     if qc and with_audio:
-        expect = {"video_streams": 1, "audio_streams": 1, "duration_s": round(timeline_s, 6), "frames": total_frames,
-                  "w": w, "h": h, "fps": fps}
-        if target_ln:                       # as export does: hold the result to the target it was normalised to
+        expect = {
+            "video_streams": 1,
+            "audio_streams": 1,
+            "duration_s": round(timeline_s, 6),
+            "frames": total_frames,
+            "w": w,
+            "h": h,
+            "fps": fps,
+        }
+        if target_ln:  # as export does: hold the result to the target it was normalised to
             expect["TP_max"] = target_ln["TP"]
-            if measured and float(measured.get("input_i") or -99) > -70:   # digital silence stays at -70 LUFS
+            if measured and float(measured.get("input_i") or -99) > -70:  # digital silence stays at -70 LUFS
                 expect.update(I=target_ln["I"], I_tol=0.5)
         try:
             qc_res = module("audio", "qc").qc(str(target), expect=expect)
@@ -1283,20 +1466,35 @@ def render(doc, preset="youtube_4k60_fast", *, out=None, out_root=None, crop_x: 
             qc_res = {"error": f"{type(exc).__name__}: {exc}"}
     if progress:
         progress(1.0)
-    params = {"project": doc["id"], "rev": doc.get("rev"), "preset": p["id"], "out": str(out) if out else None,
-              "out_root": str(out_root) if out_root else None, "crop_x": crop_x, "loudness": loudness, "qc": qc,
-              "canvas": {"w": w, "h": h, "fps": fps}}
+    params = {
+        "project": doc["id"],
+        "rev": doc.get("rev"),
+        "preset": p["id"],
+        "out": str(out) if out else None,
+        "out_root": str(out_root) if out_root else None,
+        "crop_x": crop_x,
+        "loudness": loudness,
+        "qc": qc,
+        "canvas": {"w": w, "h": h, "fps": fps},
+    }
     # duration_ok holds the file to the TIMELINE (the document's last clip end), not to the frame total it was built
     # from, so a rounding slip in the plan shows up here instead of agreeing with itself
-    payload = {"path": str(target), "duration_s": round(out_dur, 6), "duration_expected_s": round(timeline_s, 6),
-               "frames": total_frames, "duration_ok": abs(out_dur - timeline_s) <= 1.0 / fps + 1e-6,
-               "render_s": round(seconds, 3),
-               "realtime_x": round(total_s / seconds, 2) if seconds > 0 else None,
-               "clips": len([c for c in doc["clips"] if c.get("lane") == "V1"]),
-               "loudness_pass1": measured, "qc": qc_res, "argv": ff.argv_for(args), "graph": graph}
+    payload = {
+        "path": str(target),
+        "duration_s": round(out_dur, 6),
+        "duration_expected_s": round(timeline_s, 6),
+        "frames": total_frames,
+        "duration_ok": abs(out_dur - timeline_s) <= 1.0 / fps + 1e-6,
+        "render_s": round(seconds, 3),
+        "realtime_x": round(total_s / seconds, 2) if seconds > 0 else None,
+        "clips": len([c for c in doc["clips"] if c.get("lane") == "V1"]),
+        "loudness_pass1": measured,
+        "qc": qc_res,
+        "argv": ff.argv_for(args),
+        "graph": graph,
+    }
     sources = sorted({m["path"] for m in media.values()})
-    return receipt.result("edit", sources, params, payload, blind,
-                          engine={"timeline": API, "vcodec": vcodec[:2]})
+    return receipt.result("edit", sources, params, payload, blind, engine={"timeline": API, "vcodec": vcodec[:2]})
 
 
 def trim_lossless(doc, clip_id: str, *, out=None, out_root=None, mode: str = "smart") -> dict:
@@ -1310,21 +1508,24 @@ def trim_lossless(doc, clip_id: str, *, out=None, out_root=None, mode: str = "sm
     suffix = Path(m["path"]).suffix or ".mkv"
     target = _out_path(doc, {"id": f"{clip_id} {mode}"}, out, out_root, {m["id"]: m}, suffix)
     target.parent.mkdir(parents=True, exist_ok=True)
-    return cut.cut(m["path"], float(c["src_in"]), float(c["src_out"]), str(target),
-                   mode=mode, tracks="all", verify=True)
+    return cut.cut(
+        m["path"], float(c["src_in"]), float(c["src_out"]), str(target), mode=mode, tracks="all", verify=True
+    )
 
 
 # =================================================================================================
 # CLI: py -m arsenal.media edit new|list|show|add|trim|split|move|rm|gain|render|lossless
 # =================================================================================================
 
+
 def _edit_and_save(pid: str, op: Callable[[dict], dict]) -> dict:
     doc = load(pid)
     return save(op(doc))
 
 
-def cli(verb: str, argv: List[str]) -> int:
+def cli(verb: str, argv: list[str]) -> int:
     import argparse
+
     from .frames import parse_time as _parse
 
     def parse_time(text: str) -> float:
@@ -1336,9 +1537,11 @@ def cli(verb: str, argv: List[str]) -> int:
             raise EditError(f"{text!r} is not a time (seconds, m:ss or h:mm:ss)")
         return v
 
-    ap = argparse.ArgumentParser(prog="py -m arsenal.media edit",
-                                 description="the editor's timeline document (arsenal.media.timeline/v0): create, "
-                                             "add clips, trim, split, mix, render to a file with an export preset")
+    ap = argparse.ArgumentParser(
+        prog=f"{ff.pyl()} -m arsenal.media edit",
+        description="the editor's timeline document (arsenal.media.timeline/v0): create, "
+        "add clips, trim, split, mix, render to a file with an export preset",
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("new", help="create a project")
     s.add_argument("name")
@@ -1405,16 +1608,31 @@ def cli(verb: str, argv: List[str]) -> int:
         if a.cmd == "add":
             media = import_media(a.video)
             doc = load(a.pid)
-            nxt, clip = add_clip(doc, media, src_in=parse_time(a.src_in),
-                                 src_out=parse_time(a.src_out) if a.src_out else None,
-                                 at=parse_time(a.at) if a.at else None)
+            nxt, clip = add_clip(
+                doc,
+                media,
+                src_in=parse_time(a.src_in),
+                src_out=parse_time(a.src_out) if a.src_out else None,
+                at=parse_time(a.at) if a.at else None,
+            )
             saved = save(nxt)
-            return show({"clip": clip, "rev": saved["rev"], "media": {k: media.get(k) for k in
-                                                                       ("id", "name", "duration_s", "n_audio")}})
+            return show(
+                {
+                    "clip": clip,
+                    "rev": saved["rev"],
+                    "media": {k: media.get(k) for k in ("id", "name", "duration_s", "n_audio")},
+                }
+            )
         if a.cmd == "trim":
-            saved = _edit_and_save(a.pid, lambda d: trim(d, a.clip,
-                                                          src_in=parse_time(a.src_in) if a.src_in else None,
-                                                          src_out=parse_time(a.src_out) if a.src_out else None))
+            saved = _edit_and_save(
+                a.pid,
+                lambda d: trim(
+                    d,
+                    a.clip,
+                    src_in=parse_time(a.src_in) if a.src_in else None,
+                    src_out=parse_time(a.src_out) if a.src_out else None,
+                ),
+            )
             return show(_clip(saved, a.clip))
         if a.cmd == "split":
             saved = _edit_and_save(a.pid, lambda d: split(d, a.clip, parse_time(a.t))[0])
@@ -1424,15 +1642,19 @@ def cli(verb: str, argv: List[str]) -> int:
         if a.cmd == "rm":
             return show({"rev": _edit_and_save(a.pid, lambda d: remove(d, a.clip))["rev"]})
         if a.cmd == "gain":
-            saved = _edit_and_save(a.pid, lambda d: set_lane_gain(d, a.lane, gain_db=a.db, mute=onoff(a.mute),
-                                                                   solo=onoff(a.solo)))
+            saved = _edit_and_save(
+                a.pid, lambda d: set_lane_gain(d, a.lane, gain_db=a.db, mute=onoff(a.mute), solo=onoff(a.solo))
+            )
             return show(saved["lanes"]["audio"])
         if a.cmd == "render":
-            res = render(a.pid, a.preset, out=a.out,
-                         progress=lambda f: print(f"\r{f * 100:5.1f}%", end="", flush=True))
+            res = render(a.pid, a.preset, out=a.out, progress=lambda f: print(f"\r{f * 100:5.1f}%", end="", flush=True))
             print()
-            return show({k: res.get(k) for k in ("path", "duration_s", "duration_ok", "render_s", "realtime_x",
-                                                 "qc", "receipt")})
+            return show(
+                {
+                    k: res.get(k)
+                    for k in ("path", "duration_s", "duration_ok", "render_s", "realtime_x", "qc", "receipt")
+                }
+            )
         if a.cmd == "lossless":
             res = trim_lossless(a.pid, a.clip, out=a.out)
             return show({k: res.get(k) for k in ("out", "mode", "audio", "verify", "receipt") if k in res})

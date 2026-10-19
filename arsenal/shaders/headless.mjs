@@ -33,12 +33,27 @@
 //
 // KILLING ONLY OUR CHROME. Browser.close first; if the process is still alive, `taskkill /T /F` on the pid this script
 // spawned, which ends that browser and its own children and nothing else (never Daniel's browser, never another lane's).
-// A job that misses its deadline (a page wedged in a long SwiftShader draw) costs a full Chrome restart: a fresh GPU
-// process is the only reliable way to stop a draw call that is still running. On a signal or a crash exit the order is
-// the same as at the end of a burst: our Chrome dies first, the lock is released second (guardHolder).
+// Off Windows killTree does the same by hand: the browser's descendants are read from `ps` while they are still its
+// children, then the browser and every one of them get SIGKILL. Chrome is not detached there, so it stays in this
+// driver's process group, and render.py's last-resort kill of that group (the driver runs in a session of its own)
+// reaches our Chrome too. A job that misses its deadline (a page wedged in a long SwiftShader draw) costs a full Chrome
+// restart: a fresh GPU process is the only reliable way to stop a draw call that is still running. On a signal or a
+// crash exit the order is the same as at the end of a burst: our Chrome dies first, the lock is released second
+// (guardHolder).
+//
+// WHICH CHROME. resolveChrome: the plan's own `chrome`, else $AKASHIC_CHROME, else the platform's Chrome (CHROME_EXE on
+// Windows; Google Chrome in /Applications on macOS, when it is there), else off Windows the newest Playwright Chromium in
+// its browser cache ($PLAYWRIGHT_BROWSERS_PATH, else ~/.cache/ms-playwright, ~/Library/Caches/ms-playwright on macOS),
+// the full browser before the headless shell, else chromium or google-chrome on PATH. On Linux the flags add
+// --no-sandbox when the kernel keeps Chrome from building its sandbox (sandboxFlags): Ubuntu 23.10+ restricts the
+// unprivileged user namespaces it needs to binaries with an AppArmor profile, which a Playwright Chromium has none of,
+// and Chrome then aborts at start ("No usable sandbox!"). $AKASHIC_CHROME_NO_SANDBOX=1 or 0 overrides that judgement.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
@@ -46,7 +61,11 @@ import { setTimeout as delay } from "node:timers/promises";
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
 export const PLAN_API = "arsenal.shader-headless-plan/v1";
 export const RESULT_API = "arsenal.shader-headless/v1";
-export const CHROME_EXE = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+export const CHROME_EXE = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";  // the Windows default
+export const MAC_CHROME_EXE = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+export const CHROME_ENV = "AKASHIC_CHROME";                 // a Chrome to use instead of the default, on any platform
+export const SANDBOX_ENV = "AKASHIC_CHROME_NO_SANDBOX";     // Linux: "1" adds --no-sandbox, "0" never does
+export const PATH_CHROMES = ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable"];
 export const STATE_ROOT = join(REPO, "state");   // gitignored: where every job writes (see WHAT A PLAN MAY ASK)
 export const PROFILE_ROOT = join(STATE_ROOT, "arsenal", "shaders", "chrome-profile");
 export const BURST_MS = 170_000;           // GPU-LOCK.md: under 3 minutes, launch and shutdown included
@@ -74,8 +93,121 @@ export const QUIET_FLAGS = ["--no-first-run", "--no-default-browser-check", "--m
                             // a background tab throttles timers and rAF; the render page's watchdog must keep time
                             "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
                             "--disable-backgrounding-occluded-windows"];
-export const chromeFlags = (profile) => [...SWIFTSHADER_FLAGS, ...GPU_FENCE_FLAGS, ...QUIET_FLAGS,
+export const chromeFlags = (profile) => [...SWIFTSHADER_FLAGS, ...GPU_FENCE_FLAGS, ...QUIET_FLAGS, ...sandboxFlags(),
                                          "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"];
+
+// ------------------------------------------------------------------------------------------- which Chrome, how
+const readSysctl = (path) => { try { return readFileSync(path, "utf8").trim(); } catch { return null; } };
+
+// Linux only: whether Chrome must run without its sandbox here (see WHICH CHROME). Empty everywhere else, so the
+// Windows and macOS flags are exactly the lists above.
+export function sandboxFlags({ platform = process.platform, env = process.env, read = readSysctl } = {}) {
+  if (platform !== "linux") return [];
+  if (env[SANDBOX_ENV] === "1") return ["--no-sandbox"];
+  if (env[SANDBOX_ENV] === "0" || env.CHROME_DEVEL_SANDBOX) return [];  // a setuid sandbox helper is named: Chrome uses it
+  const restricted = read("/proc/sys/kernel/apparmor_restrict_unprivileged_userns") === "1"
+    || read("/proc/sys/kernel/unprivileged_userns_clone") === "0"
+    || read("/proc/sys/user/max_user_namespaces") === "0";
+  return restricted ? ["--no-sandbox"] : [];
+}
+
+function isExecutable(path) {
+  try {
+    if (!statSync(path).isFile()) return false;
+    if (process.platform !== "win32") accessSync(path, constants.X_OK);
+    return true;
+  } catch { return false; }
+}
+
+// Playwright's browser cache, as Playwright itself finds it.
+export function playwrightCache({ env = process.env, platform = process.platform, home = homedir() } = {}) {
+  const own = env.PLAYWRIGHT_BROWSERS_PATH;
+  if (own && own !== "0") return own;
+  if (platform === "darwin") return join(home, "Library", "Caches", "ms-playwright");
+  return join(env.XDG_CACHE_HOME || join(home, ".cache"), "ms-playwright");
+}
+
+// Where a Playwright browser keeps its executable, per platform: the full Chromium, then the headless shell.
+const PLAYWRIGHT_BINARIES = {
+  linux: {
+    chromium: [["chrome-linux64", "chrome"], ["chrome-linux", "chrome"]],
+    chromium_headless_shell: [["chrome-headless-shell-linux64", "chrome-headless-shell"], ["chrome-linux", "headless_shell"]],
+  },
+  darwin: {
+    chromium: [["chrome-mac-arm64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing"],
+               ["chrome-mac-x64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing"],
+               ["chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"]],
+    chromium_headless_shell: [["chrome-headless-shell-mac-arm64", "chrome-headless-shell"],
+                              ["chrome-headless-shell-mac-x64", "chrome-headless-shell"]],
+  },
+};
+
+// Every Playwright Chromium executable in the cache that could be ours, best first: the full browser before the headless
+// shell (the old headless mode), the newest revision first within each.
+export function playwrightChromes({ env = process.env, platform = process.platform, home = homedir() } = {}) {
+  const layouts = PLAYWRIGHT_BINARIES[platform];
+  if (!layouts) return [];
+  const cache = playwrightCache({ env, platform, home });
+  let names = [];
+  try { names = readdirSync(cache); } catch { return []; }
+  const out = [];
+  for (const [kind, binaries] of Object.entries(layouts)) {
+    const revisions = names.map((n) => new RegExp(`^${kind}-(\\d+)$`).exec(n)).filter(Boolean)
+      .sort((a, b) => Number(b[1]) - Number(a[1]));
+    for (const m of revisions) for (const parts of binaries) out.push(join(cache, m[0], ...parts));
+  }
+  return out;
+}
+
+function onPath(names, env = process.env) {
+  for (const dir of String(env.PATH || "").split(delimiter).filter(Boolean)) {
+    for (const name of names) if (isExecutable(join(dir, name))) return join(dir, name);
+  }
+  return null;
+}
+
+// The Chrome this driver launches (see WHICH CHROME), or null when there is none to be found. A plan's chrome and
+// $AKASHIC_CHROME are taken as given; the CLI says so when the file is not there.
+export function resolveChrome(plan = {}, { env = process.env, platform = process.platform, home = homedir() } = {}) {
+  if (plan && plan.chrome) return plan.chrome;
+  if (env[CHROME_ENV]) return env[CHROME_ENV];
+  if (platform === "win32") return CHROME_EXE;
+  if (platform === "darwin" && isExecutable(MAC_CHROME_EXE)) return MAC_CHROME_EXE;
+  return playwrightChromes({ env, platform, home }).find(isExecutable) || onPath(PATH_CHROMES, env);
+}
+
+// pid and every descendant of it, breadth first, from [pid, ppid] rows (a process table read before anything dies).
+export function processTree(rootPid, rows) {
+  const kids = new Map();
+  for (const [pid, ppid] of rows) {
+    if (!kids.has(ppid)) kids.set(ppid, []);
+    kids.get(ppid).push(pid);
+  }
+  const out = [rootPid];
+  const seen = new Set(out);
+  for (let i = 0; i < out.length; i++) {
+    for (const kid of kids.get(out[i]) || []) if (!seen.has(kid)) { seen.add(kid); out.push(kid); }
+  }
+  return out;
+}
+
+// End a browser this script spawned and everything it started, and nothing else (see KILLING ONLY OUR CHROME).
+// Windows: taskkill /T /F. Elsewhere the tree is read from ps first, since a child whose parent has died is re-parented
+// and could no longer be found; then the browser goes first (it cannot restart a child it lost) and its descendants
+// after it, all with SIGKILL, as /F is.
+export function killTree(pid) {
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, timeout: 15_000 });
+    return;
+  }
+  const ps = spawnSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8", timeout: 15_000 });
+  const rows = String(ps.stdout || "").split("\n").map((line) => line.trim().split(/\s+/).map(Number))
+    .filter((row) => row.length === 2 && row.every(Number.isInteger));
+  for (const p of processTree(pid, rows)) {
+    try { process.kill(p, "SIGKILL"); } catch { /* already gone */ }
+  }
+}
+export const KILL_HOW = process.platform === "win32" ? "taskkill-tree" : "sigkill-tree";
 
 // A renderer string names SwiftShader and no hardware. arsenal/shaders/render.py keeps the Python twin of this rule
 // (judge_renderer); tests/test_shader_harness.py runs both over the same strings.
@@ -331,7 +463,7 @@ class Browser {
     return r.result.value;
   }
 
-  // Browser.close, then taskkill on our own pid's tree if it is still running. Returns how it ended.
+  // Browser.close, then killTree on our own pid if it is still running. Returns how it ended.
   async close() {
     if (!this.proc) return null;
     const pid = this.proc.pid;
@@ -341,9 +473,9 @@ class Browser {
       const exited = await Promise.race([this.exited.then(() => true), delay(4000).then(() => false)]);
       how = "browser-close";
       if (!exited) {
-        spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, timeout: 15_000 });
+        killTree(pid);
         await Promise.race([this.exited, delay(3000)]);
-        how = "taskkill-tree";
+        how = KILL_HOW;
       }
     }
     this.page?.close(); this.cdp?.close();
@@ -355,7 +487,7 @@ class Browser {
   }
 
   killSync() {  // the exit path: no awaits allowed
-    if (this.proc && this.proc.exitCode === null) spawnSync("taskkill", ["/PID", String(this.proc.pid), "/T", "/F"], { windowsHide: true, timeout: 15_000 });
+    if (this.proc && this.proc.exitCode === null) killTree(this.proc.pid);
   }
 }
 
@@ -449,11 +581,11 @@ async function runJob(browser, job, deadlineAt) {
 }
 
 // ---------------------------------------------------------------------------------------------------------- burst
-async function burst(plan, resultPath) {
+async function burst(plan, resultPath, exe) {
   const t0 = Date.now();
   const result = {
     api: RESULT_API, plan_label: plan.label, started_at: new Date().toISOString(), finished_at: null,
-    chrome: { exe: plan.chrome || CHROME_EXE, version: null, flags: null, launches: [], closes: [] },
+    chrome: { exe, version: null, flags: null, launches: [], closes: [] },
     software: null, refused: null, lock: null, jobs: [], timings: {}, error: null,
   };
   const save = () => { mkdirSync(dirname(resultPath), { recursive: true }); writeFileSync(resultPath, JSON.stringify(result, null, 1)); };
@@ -474,7 +606,7 @@ async function burst(plan, resultPath) {
   }
   const heldFrom = Date.now();
   result.lock = { label: plan.label, acquired_at: gpu.owner.acquiredAt, inherited: gpu.inherited, wait_ms: heldFrom - lockT0 };
-  const browser = new Browser(plan.chrome || CHROME_EXE);
+  const browser = new Browser(exe);
   const unguard = guardHolder({ kill: () => browser.killSync(), release: () => gpu.release() });
   let code = EXIT.ok;
   try {
@@ -573,14 +705,20 @@ if (process.argv[1] && resolve(process.argv[1]).toLowerCase() === fileURLToPath(
     mkdirSync(dirname(opt.result), { recursive: true });
     writeFileSync(opt.result, JSON.stringify({
       api: RESULT_API, plan_label: plan.label ?? null, started_at: new Date().toISOString(),
-      finished_at: new Date().toISOString(), chrome: { exe: plan.chrome || CHROME_EXE, version: null, flags: null, launches: [], closes: [] },
+      finished_at: new Date().toISOString(), chrome: { exe: resolveChrome(plan), version: null, flags: null, launches: [], closes: [] },
       software: null, refused: refusal, lock: null, timings: {}, error: null,
       jobs: jobs.map((j) => ({ key: j?.key ?? null, url: j?.url ?? null, status: "refused",
                               error: jobRefusal(j) || "another job in this plan was refused" })),
     }, null, 1));
     process.exit(EXIT.refused);
   }
-  if (!existsSync(plan.chrome || CHROME_EXE)) { console.log(`no Chrome at ${plan.chrome || CHROME_EXE}`); process.exit(EXIT.error); }
-  const code = await burst(plan, opt.result);
+  const exe = resolveChrome(plan);
+  if (!exe) {
+    console.log(`no Chrome found: set ${CHROME_ENV}, or install Playwright's Chromium (playwright install chromium), `
+                + `or put one of ${PATH_CHROMES.join(", ")} on PATH`);
+    process.exit(EXIT.error);
+  }
+  if (!existsSync(exe)) { console.log(`no Chrome at ${exe}`); process.exit(EXIT.error); }
+  const code = await burst(plan, opt.result, exe);
   process.exit(code);
 }

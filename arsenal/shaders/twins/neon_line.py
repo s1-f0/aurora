@@ -10,14 +10,15 @@ reaches the shader. Arrays broadcast: d, energy and depth may be arrays of any s
 
 Apache-2.0, Akashic Aurora. Written fresh from the recipe's contract; no corpus code.
 """
+
 from __future__ import annotations
 
 import numpy as np
 
 from arsenal.shaders.twins import draw2, light, shaping
 
-HALO_GAIN = 0.55                           # the halo's height against the core's, at the line
-TWO_GAUSS = (24.0, 1.0, 3.0, 0.18)         # the house light line (gyre-flight), normalised by its height 1.18
+HALO_GAIN = 0.55  # the halo's height against the core's, at the line
+TWO_GAUSS = (24.0, 1.0, 3.0, 0.18)  # the house light line (gyre-flight), normalised by its height 1.18
 
 
 def _v(x):
@@ -34,7 +35,7 @@ def neonProfile(dPx, haloPx, profile):
         out = _v(light.glowLorentz(x, 0.0625))
     elif profile == 2:
         out = _v(shaping.shpInvPower(x + 0.35, 0.35, 2.0))
-    else:                                  # 0, and any value the GLSL does not name, is the house light line
+    else:  # 0, and any value the GLSL does not name, is the house light line
         out = _v(light.glowTwoGauss(x, TWO_GAUSS)) / 1.18
     out = np.where(halo > 0.0, out, 0.0)
     return out[()] if out.ndim == 0 else out
@@ -72,7 +73,7 @@ def neonLine(acc, d, px, tint, energy, depth, widthPx, haloPx, profile, coreHeat
     power = np.maximum(_v(energy), 0.0)
     heat = max(float(coreHeat), 0.0) * power
     core, halo, power = np.broadcast_arrays(core, halo, power)
-    core_colour = _hot_core_over_heat(np.broadcast_to(hue, core.shape + (3,)), np.broadcast_to(heat, core.shape))
+    core_colour = _hot_core_over_heat(np.broadcast_to(hue, (*core.shape, 3)), np.broadcast_to(heat, core.shape))
     if view == 1:
         out = np.repeat(core[..., None], 3, axis=-1)
     elif view == 2:
@@ -83,4 +84,4 @@ def neonLine(acc, d, px, tint, energy, depth, widthPx, haloPx, profile, coreHeat
     return acc + out if combine == 1 else np.maximum(acc, out)
 
 
-__all__ = ["neonProfile", "neonPathStep", "neonLine"]
+__all__ = ["neonLine", "neonPathStep", "neonProfile"]

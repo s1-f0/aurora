@@ -53,6 +53,7 @@ Run::
 
     py -m pytest tests/test_the_door_probe_survives_the_identity_gate.py -q
 """
+
 from __future__ import annotations
 
 import ast
@@ -60,8 +61,6 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -91,7 +90,7 @@ def test_the_boot_the_probe_asks_for_is_one_the_gate_allows():
             continue
         for a in node.args:
             if isinstance(a, ast.Dict):
-                for k, v in zip(a.keys, a.values):
+                for k, v in zip(a.keys, a.values, strict=False):
                     if getattr(k, "value", None) == "agent" and isinstance(v, ast.Constant):
                         asked = v.value
     if asked is None:
@@ -100,33 +99,55 @@ def test_the_boot_the_probe_asks_for_is_one_the_gate_allows():
         # identity the probe NOW uses and hold that to the same standard: whoever it boots as, the
         # gate must not refuse them.
         from core.comm import seat_identity as _si
+
         sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("BIFROST_INCARNATION") or ""
         asked = _si.resolve(sid)
         if not asked or asked.startswith("unknown-"):
             # mirror the probe's own fallback chain exactly
             asked = (os.environ.get("AKASHIC_AGENT_ID") or "claude").strip()
-        assert asked and not asked.startswith("unknown-"), (
-            "the probe resolves its boot identity to %r, which the gate will refuse just as it "
-            "refused 'door-probe'" % (asked,))
+        assert asked, (
+            f"the probe resolves its boot identity to {asked!r}, which the gate will refuse just as it "
+            "refused 'door-probe'"
+        )
+        assert not asked.startswith("unknown-"), (
+            f"the probe resolves its boot identity to {asked!r}, which the gate will refuse just as it "
+            "refused 'door-probe'"
+        )
 
     env = dict(os.environ)
     env.pop("AKASHIC_BOOT_AS_OTHER", None)
-    r = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "agent_cli.py"),
-                        "boot", str(asked), "--task", "door probe"],
-                       capture_output=True, text=True, encoding="utf-8", errors="replace",
-                       cwd=str(ROOT), timeout=300, env=env)
+    r = subprocess.run(
+        [sys.executable, "-X", "utf8", str(ROOT / "agent_cli.py"), "boot", str(asked), "--task", "door probe"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(ROOT),
+        timeout=300,
+        env=env,
+    )
     out = r.stdout + r.stderr
     # ASSERT THE POSITIVE. A first draft of this checked `"REFUSED" not in out` and went red
     # against a WORKING boot, because the 16 KB render legitimately contains the word inside a
     # recalled lesson. Searching a document for a vocabulary item says nothing about what the
     # document IS -- the same mistake this file is about, one layer up. The header is the thing
-    # the probe itself keys on, so it is the thing to require.
+    # the probe itself keys on, so it is the thing to require. door_probe.py keys on the head this
+    # line's boot prints -- `agent: <id>` for an agent reader (a captured pipe, as here), `Boot · <id>`
+    # for a person -- and E:'s boot opened with `# CONTEXT for <id>`; any of the three is the header.
     refused_here = out.lstrip().startswith("REFUSED")
-    assert ("# CONTEXT for %s" % asked) in out and not refused_here, (
-        "the probe boots as %r and the identity gate REFUSES it, so the health check reports "
+    headers = (f"agent: {asked}", f"Boot · {asked}", f"# CONTEXT for {asked}")
+    assert any(h in out for h in headers), (
+        f"the probe boots as {asked!r} and the identity gate REFUSES it, so the health check reports "
         "boot_render_broken against a door that is fine. `py agent_cli.py boot claude` renders "
         "16,300 chars with its CONTEXT header. Last successful push 2026-09-30; T418 landed "
-        "2026-10-01; 173 commits have been dammed behind this since.\n%s" % (asked, out[:400]))
+        f"2026-10-01; 173 commits have been dammed behind this since.\n{out[:400]}"
+    )
+    assert not refused_here, (
+        f"the probe boots as {asked!r} and the identity gate REFUSES it, so the health check reports "
+        "boot_render_broken against a door that is fine. `py agent_cli.py boot claude` renders "
+        "16,300 chars with its CONTEXT header. Last successful push 2026-09-30; T418 landed "
+        f"2026-10-01; 173 commits have been dammed behind this since.\n{out[:400]}"
+    )
 
 
 def test_the_probe_does_not_assert_a_header_for_an_identity_it_cannot_be():
@@ -135,11 +156,12 @@ def test_the_probe_does_not_assert_a_header_for_an_identity_it_cannot_be():
     check and the call have to agree about who is booting."""
     src = _src()
     if '"door-probe"' not in src and "'door-probe'" not in src:
-        return                                        # the literal is gone; nothing to contradict
+        return  # the literal is gone; nothing to contradict
     assert "CONTEXT for door-probe" not in src, (
         "the probe still hardcodes the header `# CONTEXT for door-probe`, which only a boot AS "
         "door-probe can emit. T418 refuses that boot by design, so this assertion can never pass "
-        "again on a seat with a binding stamp.")
+        "again on a seat with a binding stamp."
+    )
 
 
 # ------------------------------------------------------------------ ratchets
@@ -150,7 +172,8 @@ def test_the_probe_still_calls_boot():
     src = _src()
     assert '"boot"' in src or "'boot'" in src, (
         "the probe no longer calls the boot tool, so it no longer proves the MCP door can run a "
-        "verb whose body spawns a child -- which is the only reason it exists")
+        "verb whose body spawns a child -- which is the only reason it exists"
+    )
 
 
 def test_the_probe_still_fails_loudly_on_a_real_breakage():
@@ -167,11 +190,22 @@ def test_the_identity_gate_itself_is_untouched():
     goes red, someone 'fixed' the push by punching a hole in the thing that protects identity."""
     env = dict(os.environ)
     env.pop("AKASHIC_BOOT_AS_OTHER", None)
-    r = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "agent_cli.py"),
-                        "boot", "some-other-resident", "--task", "probe"],
-                       capture_output=True, text=True, encoding="utf-8", errors="replace",
-                       cwd=str(ROOT), timeout=300, env=env)
+    r = subprocess.run(
+        [sys.executable, "-X", "utf8", str(ROOT / "agent_cli.py"), "boot", "some-other-resident", "--task", "probe"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(ROOT),
+        timeout=300,
+        env=env,
+    )
     out = r.stdout + r.stderr
-    assert "REFUSED" in out and "T418" in out, (
+    assert "REFUSED" in out, (
         "booting as an arbitrary other resident is no longer refused. T418 is not the bug here; "
-        "the probe is. Output:\n%s" % out[:400])
+        f"the probe is. Output:\n{out[:400]}"
+    )
+    assert "T418" in out, (
+        "booting as an arbitrary other resident is no longer refused. T418 is not the bug here; "
+        f"the probe is. Output:\n{out[:400]}"
+    )

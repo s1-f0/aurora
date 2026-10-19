@@ -44,6 +44,7 @@ of a cap is a refusal at the door -- the ACL's own stated law.
 Pins: ``tests/test_the_actuator_refuses_before_it_acts.py``.
 Design: ``docs/library/design/20260902_screenspace-organ-design_528df4.md``.
 """
+
 from __future__ import annotations
 
 import ctypes
@@ -51,45 +52,45 @@ import hashlib
 import os
 import re
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable  # noqa: TC003  # runtime-evaluated annotations (annotation_sensitive module)
+from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Optional, Sequence, Tuple
 
 # --------------------------------------------------------------------------- refusal vocabulary
 
 
-class RefusalCode(str, Enum):
+class RefusalCode(str, Enum):  # noqa: UP042  # str() of members must stay "Cls.NAME"
     """Why the actuator declined. DISTINCT codes, because each carries a different remedy:
     ``not_foreground`` means focus it, ``bounds_changed`` means re-locate, ``not_capable``
     means ask the operator. Collapsing them into one failure throws the remedy away."""
 
-    NOT_FOREGROUND       = "not_foreground"        # keystrokes would land in another window
-    WINDOW_GONE          = "window_gone"           # the bound hwnd no longer resolves
-    PID_CHANGED          = "pid_changed"           # hwnd reused by a different process
-    BOUNDS_CHANGED       = "bounds_changed"         # moved/resized since locate()
-    DPI_CHANGED          = "dpi_changed"           # monitor move or scaling change
-    SCREEN_CHANGED       = "screen_changed"        # region repainted since locate()
-    TOKEN_EXPIRED        = "token_expired"         # older than its TTL
-    AMBIGUOUS_TARGET     = "ambiguous_target"      # >1 match; refuse, never pick
-    NO_SUCH_TARGET       = "no_such_target"        # nothing matched
-    NOT_CAPABLE          = "not_capable"           # seat lacks the Cap.SCREEN_* tier
-    MINIMIZED            = "minimized"             # iconic: cannot be typed into
+    NOT_FOREGROUND = "not_foreground"  # keystrokes would land in another window
+    WINDOW_GONE = "window_gone"  # the bound hwnd no longer resolves
+    PID_CHANGED = "pid_changed"  # hwnd reused by a different process
+    BOUNDS_CHANGED = "bounds_changed"  # moved/resized since locate()
+    DPI_CHANGED = "dpi_changed"  # monitor move or scaling change
+    SCREEN_CHANGED = "screen_changed"  # region repainted since locate()
+    TOKEN_EXPIRED = "token_expired"  # older than its TTL
+    AMBIGUOUS_TARGET = "ambiguous_target"  # >1 match; refuse, never pick
+    NO_SUCH_TARGET = "no_such_target"  # nothing matched
+    NOT_CAPABLE = "not_capable"  # seat lacks the Cap.SCREEN_* tier
+    MINIMIZED = "minimized"  # iconic: cannot be typed into
     POSTCONDITION_FAILED = "postcondition_failed"  # the effect never became observable
-    NO_UIA               = "no_uia"                # substrate absent / unreadable
-    BAD_VERB             = "bad_verb"              # unknown verb -- never a silent no-op
-    LOCKED               = "locked"                # secure desktop / workstation locked
-    DIALOG               = "dialog"                # a modal owns input
+    NO_UIA = "no_uia"  # substrate absent / unreadable
+    BAD_VERB = "bad_verb"  # unknown verb -- never a silent no-op
+    LOCKED = "locked"  # secure desktop / workstation locked
+    DIALOG = "dialog"  # a modal owns input
 
 
 #: Which Cap each verb demands. One table, so the guard and the guarded path cannot drift --
 #: the two-surfaces defect (a printer shortened while its source still emitted the long form)
 #: cost an evening already.
 VERB_CAPS = {
-    "focus":     "screen.focus",
-    "invoke":    "screen.act",
-    "type":      "screen.type",
-    "keys":      "screen.type",
-    "click_at":  "screen.act",
+    "focus": "screen.focus",
+    "invoke": "screen.act",
+    "type": "screen.type",
+    "keys": "screen.type",
+    "click_at": "screen.act",
     "read_back": "screen.observe",
 }
 
@@ -118,11 +119,11 @@ class TargetToken:
     hwnd: int
     pid: int
     exe: str
-    bounds: Tuple[int, int, int, int]        # physical px, left/top/right/bottom (may be NEGATIVE)
-    dpi: int                                 # GetDpiForWindow; 144 == 150% on this host
+    bounds: tuple[int, int, int, int]  # physical px, left/top/right/bottom (may be NEGATIVE)
+    dpi: int  # GetDpiForWindow; 144 == 150% on this host
     gen: int
-    frame_hash: str                          # sha256 of hash_rect's raw pixels
-    name: str                                # the control name it was located BY
+    frame_hash: str  # sha256 of hash_rect's raw pixels
+    name: str  # the control name it was located BY
     role: str
     minted_at: float
     ttl_s: float
@@ -131,7 +132,7 @@ class TargetToken:
     #: degenerate, so a verify() that re-derived it differently would compare two different
     #: regions and refuse forever. Defaults to a zero rect meaning "no frame guard was taken" --
     #: typed absence, so the guard is SKIPPED rather than silently comparing nothing.
-    hash_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)
+    hash_rect: tuple[int, int, int, int] = (0, 0, 0, 0)
 
     @property
     def age_s(self) -> float:
@@ -142,16 +143,26 @@ class TargetToken:
         return self.age_s > self.ttl_s
 
     @property
-    def rect(self) -> Tuple[int, int, int, int]:
+    def rect(self) -> tuple[int, int, int, int]:
         """(left, top, width, height) -- the form mss wants."""
-        l, t, r, b = self.bounds
-        return (l, t, max(1, r - l), max(1, b - t))
+        left, top, right, bottom = self.bounds
+        return (left, top, max(1, right - left), max(1, bottom - top))
 
     def to_dict(self) -> dict:
-        return {"hwnd": self.hwnd, "pid": self.pid, "exe": self.exe, "bounds": list(self.bounds),
-                "dpi": self.dpi, "gen": self.gen, "frame_hash": self.frame_hash[:16], "hash_rect": list(self.hash_rect),
-                "name": self.name, "role": self.role, "age_s": round(self.age_s, 3),
-                "ttl_s": self.ttl_s}
+        return {
+            "hwnd": self.hwnd,
+            "pid": self.pid,
+            "exe": self.exe,
+            "bounds": list(self.bounds),
+            "dpi": self.dpi,
+            "gen": self.gen,
+            "frame_hash": self.frame_hash[:16],
+            "hash_rect": list(self.hash_rect),
+            "name": self.name,
+            "role": self.role,
+            "age_s": round(self.age_s, 3),
+            "ttl_s": self.ttl_s,
+        }
 
 
 @dataclass(frozen=True)
@@ -160,34 +171,43 @@ class Located:
     'ambiguous' from 'no substrate' from 'not permitted' -- and those have different fixes."""
 
     ok: bool = False
-    target: Optional[TargetToken] = None
-    refusal: Optional[RefusalCode] = None
+    target: TargetToken | None = None
+    refusal: RefusalCode | None = None
     detail: str = ""
     elapsed_ms: float = 0.0
-    candidates: Tuple[str, ...] = ()          # what WAS seen, when the answer is no
+    candidates: tuple[str, ...] = ()  # what WAS seen, when the answer is no
 
     def to_dict(self) -> dict:
-        return {"ok": self.ok, "refusal": self.refusal.value if self.refusal else None,
-                "detail": self.detail, "elapsed_ms": round(self.elapsed_ms, 1),
-                "candidates": list(self.candidates),
-                "target": self.target.to_dict() if self.target else None}
+        return {
+            "ok": self.ok,
+            "refusal": self.refusal.value if self.refusal else None,
+            "detail": self.detail,
+            "elapsed_ms": round(self.elapsed_ms, 1),
+            "candidates": list(self.candidates),
+            "target": self.target.to_dict() if self.target else None,
+        }
 
 
 @dataclass(frozen=True)
 class ActResult:
     ok: bool = False
-    refusal: Optional[RefusalCode] = None
+    refusal: RefusalCode | None = None
     detail: str = ""
     verb: str = ""
-    what: str = ""                            # the post-condition that was asserted
-    observed: Optional[str] = None            # what the read-back actually saw (G3)
+    what: str = ""  # the post-condition that was asserted
+    observed: str | None = None  # what the read-back actually saw (G3)
     elapsed_ms: float = 0.0
 
     def to_dict(self) -> dict:
-        return {"ok": self.ok, "refusal": self.refusal.value if self.refusal else None,
-                "detail": self.detail, "verb": self.verb, "what": self.what,
-                "observed": (self.observed[:120] if self.observed else None),
-                "elapsed_ms": round(self.elapsed_ms, 1)}
+        return {
+            "ok": self.ok,
+            "refusal": self.refusal.value if self.refusal else None,
+            "detail": self.detail,
+            "verb": self.verb,
+            "what": self.what,
+            "observed": (self.observed[:120] if self.observed else None),
+            "elapsed_ms": round(self.elapsed_ms, 1),
+        }
 
 
 @dataclass(frozen=True)
@@ -196,26 +216,32 @@ class Settled:
     and 'we never looked' are different results and only one is the window's fault."""
 
     ok: bool = False
-    refusal: Optional[RefusalCode] = None
+    refusal: RefusalCode | None = None
     what: str = ""
     polls: int = 0
     elapsed_ms: float = 0.0
-    error: Optional[str] = None               # the predicate itself raised
+    error: str | None = None  # the predicate itself raised
 
     def to_dict(self) -> dict:
-        return {"ok": self.ok, "refusal": self.refusal.value if self.refusal else None,
-                "what": self.what, "polls": self.polls,
-                "elapsed_ms": round(self.elapsed_ms, 1), "error": self.error}
+        return {
+            "ok": self.ok,
+            "refusal": self.refusal.value if self.refusal else None,
+            "what": self.what,
+            "polls": self.polls,
+            "elapsed_ms": round(self.elapsed_ms, 1),
+            "error": self.error,
+        }
 
 
-# --------------------------------------------------------------------------- substrate (lazy)
+# --------------------------------------------------------------------------- substrate, imported lazily
 
 
 def _uia():
     """Lazy, fail-soft, matching the package discipline: the substrate is host-installed and
     NOT a pinned repo dependency, so absence is an honest refusal and never an ImportError."""
     try:
-        import uiautomation as auto  # type: ignore
+        import uiautomation as auto  # pyright: ignore[reportMissingImports]  # Windows-only dependency (sys_platform == win32)
+
         auto.SetGlobalSearchTimeout(1.0)
         return auto
     except Exception:  # noqa: BLE001
@@ -240,6 +266,7 @@ def _user32():
         return _U32
     try:
         from ctypes import wintypes
+
         u = ctypes.WinDLL("user32", use_last_error=True)
         u.GetForegroundWindow.restype = wintypes.HWND
         u.GetForegroundWindow.argtypes = []
@@ -269,7 +296,7 @@ def _user32():
         return None
 
 
-def workstation_locked() -> Optional[bool]:
+def workstation_locked() -> bool | None:
     """True when the input desktop is unreachable -- the locked/secure desktop.
 
     ``OpenInputDesktop`` is the authoritative probe: on a locked workstation it fails with
@@ -288,7 +315,7 @@ def workstation_locked() -> Optional[bool]:
         return None
     try:
         ctypes.set_last_error(0)
-        h = u.OpenInputDesktop(0, False, 0x0001)   # DESKTOP_READOBJECTS
+        h = u.OpenInputDesktop(0, False, 0x0001)  # DESKTOP_READOBJECTS
         if h:
             u.CloseDesktop(h)
             return False
@@ -302,8 +329,10 @@ def workstation_locked() -> Optional[bool]:
 def locked_detail() -> str:
     """The last-error context for a refusal message, so 'locked' is falsifiable by the reader."""
     try:
-        return "OpenInputDesktop failed, GetLastError=%d (5 == ERROR_ACCESS_DENIED, the " \
-               "locked/secure desktop)" % ctypes.get_last_error()
+        return (
+            f"OpenInputDesktop failed, GetLastError={ctypes.get_last_error()} (5 == ERROR_ACCESS_DENIED, the "
+            "locked/secure desktop)"
+        )
     except Exception:  # noqa: BLE001
         return "OpenInputDesktop failed"
 
@@ -345,13 +374,14 @@ def _pid_for(hwnd: int) -> int:
 
 def _exe_for(pid: int) -> str:
     try:
-        import psutil  # type: ignore
+        import psutil
+
         return psutil.Process(pid).name()
     except Exception:  # noqa: BLE001
         return ""
 
 
-def _region_sha(rect: Tuple[int, int, int, int]) -> str:
+def _region_sha(rect: tuple[int, int, int, int]) -> str:
     """sha256 of ONE REGION's raw pixels.
 
     Deliberately not ``capture.screen()``: that returns a FULL-SCREEN frame (its ``region``
@@ -362,13 +392,13 @@ def _region_sha(rect: Tuple[int, int, int, int]) -> str:
     """
     left, top, w, h = rect
     try:
-        import mss  # type: ignore
+        import mss
+
         with mss.mss() as sct:
-            shot = sct.grab({"left": int(left), "top": int(top),
-                             "width": int(w), "height": int(h)})
+            shot = sct.grab({"left": int(left), "top": int(top), "width": int(w), "height": int(h)})
             return hashlib.sha256(bytes(shot.raw)).hexdigest()
     except Exception:  # noqa: BLE001
-        return ""          # empty == "not measured"; never a fake-stable constant
+        return ""  # empty == "not measured"; never a fake-stable constant
 
 
 # --------------------------------------------------------------------------- clipboard
@@ -377,7 +407,7 @@ def _region_sha(rect: Tuple[int, int, int, int]) -> str:
 _CF_UNICODETEXT = 13
 
 
-def _clip_get() -> Optional[str]:
+def _clip_get() -> str | None:
     u, k = _user32(), None
     try:
         k = ctypes.windll.kernel32  # type: ignore[attr-defined]
@@ -418,7 +448,7 @@ def _clip_set(text: str) -> bool:
         return False
     try:
         u.EmptyClipboard()
-        h = k.GlobalAlloc(0x2000, size)        # GMEM_MOVEABLE
+        h = k.GlobalAlloc(0x2000, size)  # GMEM_MOVEABLE
         if not h:
             return False
         p = k.GlobalLock(h)
@@ -448,7 +478,7 @@ def _escape_sendkeys(text: str) -> str:
         elif ch == "}":
             out.append("{}}")
         elif _SENDKEYS_SPECIAL.match(ch):
-            out.append("{%s}" % ch)
+            out.append(f"{{{ch}}}")
         else:
             out.append(ch)
     return "".join(out)
@@ -463,22 +493,29 @@ def ambient_agent_id() -> str:
     return (os.getenv("AKASHIC_AGENT_ID") or os.getenv("AGENT_ID") or "claude").strip()
 
 
-def _capable(agent_id: Optional[str], verb: str) -> Tuple[bool, str]:
+def _cli() -> str:
+    """The CLI as printed commands spell it (`aurora`, or `uv run agent_cli.py` in a checkout)."""
+    from core.paths import cli_command
+
+    return cli_command()
+
+
+def _capable(agent_id: str | None, verb: str) -> tuple[bool, str]:
     """Resolve the seat's grant through the house ACL. Deny-by-default, checked HERE rather
     than trusted to the caller."""
     want = VERB_CAPS.get(verb)
     if want is None:
-        return (False, "unknown verb %r" % (verb,))
+        return (False, f"unknown verb {verb!r}")
     seat = agent_id or ambient_agent_id()
     try:
         from core.trust import registry
         from core.trust.capabilities import Cap
+
         grant = registry.resolve(seat)
         if grant is None:
-            return (False, "no grant resolves for seat %r" % (seat,))
+            return (False, f"no grant resolves for seat {seat!r}")
         if grant.has(Cap(want)):
-            return (True, "%s holds %s (role=%s, expires=%s)"
-                          % (seat, want, grant.role, grant.expires_at or "never"))
+            return (True, f"{seat} holds {want} (role={grant.role}, expires={grant.expires_at or 'never'})")
         # The remedy must RESTATE the seat's existing caps. `grant --caps` REPLACES the set
         # (core/trust/grant_writer.py: `eff_caps = caps_from(caps) if caps is not None else ...`),
         # so the obvious command -- naming only the new cap -- would silently strip the other
@@ -488,22 +525,27 @@ def _capable(agent_id: Optional[str], verb: str) -> Tuple[bool, str]:
         # agent_id == by ("a second party mints your authority"), so a seat cannot hand itself
         # the desktop -- which is correct, and is why this prints a command rather than running one.
         full = sorted({c.value for c in grant.caps} | {want})
-        return (False, "seat %r (role=%s) does not hold %s. A SECOND PARTY must grant it "
-                       "(self-grant raises PermissionError), time-boxed, restating the existing "
-                       "caps because --caps REPLACES them:\n"
-                       "  py agent_cli.py grant %s --role %s --by daniil --hours 12 \\\n"
-                       "    --caps %s \\\n"
-                       "    --reason '<why>'"
-                       % (seat, grant.role, want, seat, grant.role, ",".join(full)))
+        return (
+            False,
+            (
+                f"seat {seat!r} (role={grant.role}) does not hold {want}. A SECOND PARTY must grant it "
+                "(self-grant raises PermissionError), time-boxed, restating the existing "
+                "caps because --caps REPLACES them:\n"
+                f"  {_cli()} grant {seat} --role {grant.role} --by daniil --hours 12 \\\n"
+                f"    --caps {','.join(full)} \\\n"
+                "    --reason '<why>'"
+            ),
+        )
     except Exception as exc:  # noqa: BLE001 -- an unreadable ACL is a REFUSAL, never a pass
-        return (False, "ACL unreadable (%s: %s) -- refusing" % (type(exc).__name__, exc))
+        return (False, f"ACL unreadable ({type(exc).__name__}: {exc}) -- refusing")
 
 
 # --------------------------------------------------------------------------- settle
 
 
-def settle(predicate: Callable[[], bool], *, timeout_s: float = 3.0,
-           interval_s: float = 0.05, what: str = "") -> Settled:
+def settle(
+    predicate: Callable[[], bool], *, timeout_s: float = 3.0, interval_s: float = 0.05, what: str = ""
+) -> Settled:
     """Poll a REAL observable until it holds. The only admissible wait on the act path.
 
     A ``time.sleep`` between steps asserts nothing: if it happens to be long enough the step
@@ -513,20 +555,25 @@ def settle(predicate: Callable[[], bool], *, timeout_s: float = 3.0,
     """
     t0 = time.time()
     polls = 0
-    err: Optional[str] = None
+    err: str | None = None
     deadline = t0 + max(0.0, float(timeout_s))
     while True:
         polls += 1
         try:
             if predicate():
-                return Settled(ok=True, what=what, polls=polls,
-                               elapsed_ms=1000 * (time.time() - t0))
+                return Settled(ok=True, what=what, polls=polls, elapsed_ms=1000 * (time.time() - t0))
         except Exception as exc:  # noqa: BLE001 -- a raising predicate is a measurement, not a crash
-            err = "%s: %s" % (type(exc).__name__, exc)
+            err = f"{type(exc).__name__}: {exc}"
         if time.time() >= deadline:
-            return Settled(ok=False, refusal=RefusalCode.POSTCONDITION_FAILED, what=what,
-                           polls=polls, elapsed_ms=1000 * (time.time() - t0), error=err)
-        time.sleep(interval_s)      # the poll interval -- the ONE legitimate sleep here
+            return Settled(
+                ok=False,
+                refusal=RefusalCode.POSTCONDITION_FAILED,
+                what=what,
+                polls=polls,
+                elapsed_ms=1000 * (time.time() - t0),
+                error=err,
+            )
+        time.sleep(interval_s)  # the poll interval -- the ONE legitimate sleep here
 
 
 # --------------------------------------------------------------------------- locate
@@ -545,6 +592,7 @@ def windows_matching(title: str) -> list:
     if u is None:
         return []
     from ctypes import wintypes
+
     out: list = []
     needle = title or ""
     CB = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -582,10 +630,16 @@ def _uia_window(hwnd: int):
         return None
 
 
-def locate(name: Optional[str] = None, role: Optional[str] = None, *,
-           window_title: str = "Claude", hwnd: Optional[int] = None,
-           ttl_s: float = 5.0, search_depth: int = 24,
-           agent_id: Optional[str] = None) -> Located:
+def locate(
+    name: str | None = None,
+    role: str | None = None,
+    *,
+    window_title: str = "Claude",
+    hwnd: int | None = None,
+    ttl_s: float = 5.0,
+    search_depth: int = 24,
+    agent_id: str | None = None,
+) -> Located:
     """Phase one: bind a token to a named control in one unambiguous window.
 
     Args:
@@ -603,49 +657,56 @@ def locate(name: Optional[str] = None, role: Optional[str] = None, *,
 
     auto = _uia()
     if auto is None:
-        return done(refusal=RefusalCode.NO_UIA,
-                    detail="uiautomation substrate not importable on this host")
+        return done(refusal=RefusalCode.NO_UIA, detail="uiautomation substrate not importable on this host")
 
     wins = windows_matching(window_title)
     if hwnd is not None:
         wins = [w for w in wins if w[0] == int(hwnd)]
     if not wins:
-        return done(refusal=RefusalCode.NO_SUCH_TARGET,
-                    detail="no visible top-level window matching %r%s"
-                           % (window_title, " with hwnd %s" % hwnd if hwnd else ""))
+        return done(
+            refusal=RefusalCode.NO_SUCH_TARGET,
+            detail=f"no visible top-level window matching {window_title!r}" + (f" with hwnd {hwnd}" if hwnd else ""),
+        )
     if len(wins) > 1:
         return done(
             refusal=RefusalCode.AMBIGUOUS_TARGET,
-            candidates=tuple("%s(hwnd=%s,pid=%s)" % (t, h, _pid_for(h)) for h, t in wins[:8]),
-            detail="%d windows match %r -- refusing to pick. Pass hwnd=<n>. Picking the first "
-                   "would be a coin flip over which live session receives the input."
-                   % (len(wins), window_title))
+            candidates=tuple(f"{t}(hwnd={h},pid={_pid_for(h)})" for h, t in wins[:8]),
+            detail=f"{len(wins)} windows match {window_title!r} -- refusing to pick. Pass hwnd=<n>. Picking the first "
+            "would be a coin flip over which live session receives the input.",
+        )
 
     whandle, wtitle = wins[0]
     if _is_iconic(whandle):
-        return done(refusal=RefusalCode.MINIMIZED,
-                    detail="window %s (%r) is minimized; restore it before locating a control"
-                           % (whandle, wtitle))
+        return done(
+            refusal=RefusalCode.MINIMIZED,
+            detail=f"window {whandle} ({wtitle!r}) is minimized; restore it before locating a control",
+        )
 
     win = _uia_window(whandle)
     if win is None:
-        return done(refusal=RefusalCode.NO_UIA,
-                    detail="ControlFromHandle(%s) returned nothing -- the window exists to "
-                           "Win32 but not to UIA" % whandle)
+        return done(
+            refusal=RefusalCode.NO_UIA,
+            detail=f"ControlFromHandle({whandle}) returned nothing -- the window exists to Win32 but not to UIA",
+        )
     ctrl = win
     if name:
         try:
-            getter = getattr(win, "%sControl" % (role or "")) if role else None
-            ctrl = (getter(searchDepth=search_depth, Name=name) if getter
-                    else win.Control(searchDepth=search_depth, Name=name))
+            getter = getattr(win, f"{role or ''}Control") if role else None
+            ctrl = (
+                getter(searchDepth=search_depth, Name=name)
+                if getter
+                else win.Control(searchDepth=search_depth, Name=name)
+            )
             if not ctrl.Exists(0.5, 0.1):
-                return done(refusal=RefusalCode.NO_SUCH_TARGET,
-                            detail="no %s named %r within depth %d of %r"
-                                   % (role or "control", name, search_depth, wtitle))
+                return done(
+                    refusal=RefusalCode.NO_SUCH_TARGET,
+                    detail=f"no {role or 'control'} named {name!r} within depth {search_depth} of {wtitle!r}",
+                )
         except Exception as exc:  # noqa: BLE001
-            return done(refusal=RefusalCode.NO_SUCH_TARGET,
-                        detail="targeted search for %r failed: %s: %s"
-                               % (name, type(exc).__name__, exc))
+            return done(
+                refusal=RefusalCode.NO_SUCH_TARGET,
+                detail=f"targeted search for {name!r} failed: {type(exc).__name__}: {exc}",
+            )
 
     try:
         r = ctrl.BoundingRectangle
@@ -653,7 +714,7 @@ def locate(name: Optional[str] = None, role: Optional[str] = None, *,
         wr = win.BoundingRectangle
         wbounds = (int(wr.left), int(wr.top), int(wr.right), int(wr.bottom))
     except Exception as exc:  # noqa: BLE001
-        return done(refusal=RefusalCode.WINDOW_GONE, detail="bounds unreadable: %s" % exc)
+        return done(refusal=RefusalCode.WINDOW_GONE, detail=f"bounds unreadable: {exc}")
 
     pid = _pid_for(whandle) or int(getattr(win, "ProcessId", 0) or 0)
     bound_rect = bounds if name else wbounds
@@ -669,18 +730,31 @@ def locate(name: Optional[str] = None, role: Optional[str] = None, *,
     # thing we are about to click changes, which is the question the guard is actually asking.
     hl, ht, hr, hb = bound_rect
     degenerate = (hr - hl) <= 1 or (hb - ht) <= 1
-    hash_rect = ((wbounds[0], wbounds[1],
-                  max(1, wbounds[2] - wbounds[0]), max(1, wbounds[3] - wbounds[1]))
-                 if degenerate else (hl, ht, max(1, hr - hl), max(1, hb - ht)))
+    hash_rect = (
+        (wbounds[0], wbounds[1], max(1, wbounds[2] - wbounds[0]), max(1, wbounds[3] - wbounds[1]))
+        if degenerate
+        else (hl, ht, max(1, hr - hl), max(1, hb - ht))
+    )
 
-    tgt = TargetToken(hwnd=whandle, pid=pid, exe=_exe_for(pid),
-                 bounds=bound_rect,
-                 dpi=_dpi_for(whandle), gen=_gen_now(),
-                 frame_hash=_region_sha(hash_rect), hash_rect=hash_rect,
-                 name=name or wtitle, role=role or "Window",
-                 minted_at=time.time(), ttl_s=float(ttl_s))
-    return done(ok=True, target=tgt, detail="bound %s %r in %r (pid %s, dpi %s)"
-                                            % (tgt.role, tgt.name, wtitle, tgt.pid, tgt.dpi))
+    tgt = TargetToken(
+        hwnd=whandle,
+        pid=pid,
+        exe=_exe_for(pid),
+        bounds=bound_rect,
+        dpi=_dpi_for(whandle),
+        gen=_gen_now(),
+        frame_hash=_region_sha(hash_rect),
+        hash_rect=hash_rect,
+        name=name or wtitle,
+        role=role or "Window",
+        minted_at=time.time(),
+        ttl_s=float(ttl_s),
+    )
+    return done(
+        ok=True,
+        target=tgt,
+        detail=f"bound {tgt.role} {tgt.name!r} in {wtitle!r} (pid {tgt.pid}, dpi {tgt.dpi})",
+    )
 
 
 def _gen_now() -> int:
@@ -691,6 +765,7 @@ def _gen_now() -> int:
     """
     try:
         from core.screenspace import engine
+
         stream = getattr(engine, "_STREAM", None)
         g = getattr(stream, "gen", None)
         if isinstance(g, int):
@@ -703,43 +778,43 @@ def _gen_now() -> int:
 # --------------------------------------------------------------------------- verify the token
 
 
-def verify(target: TargetToken, *, require_foreground: bool = False,
-           require_frame: bool = False) -> Optional[ActResult]:
+def verify(target: TargetToken, *, require_foreground: bool = False, require_frame: bool = False) -> ActResult | None:
     """Re-read the world and compare it to what ``locate`` saw. Returns a refusal, or None
     when the token still describes reality."""
     t0 = time.time()
 
     def no(code: RefusalCode, detail: str) -> ActResult:
-        return ActResult(ok=False, refusal=code, detail=detail, verb="verify",
-                         elapsed_ms=1000 * (time.time() - t0))
+        return ActResult(ok=False, refusal=code, detail=detail, verb="verify", elapsed_ms=1000 * (time.time() - t0))
 
     if target.expired:
-        return no(RefusalCode.TOKEN_EXPIRED,
-                  "token is %.1fs old, ttl %.1fs -- re-locate" % (target.age_s, target.ttl_s))
+        return no(RefusalCode.TOKEN_EXPIRED, f"token is {target.age_s:.1f}s old, ttl {target.ttl_s:.1f}s -- re-locate")
 
     u = _user32()
     if u is None:
         return no(RefusalCode.NO_UIA, "user32 unavailable")
     try:
         if not u.IsWindow(target.hwnd):
-            return no(RefusalCode.WINDOW_GONE, "hwnd %s is no longer a window" % target.hwnd)
+            return no(RefusalCode.WINDOW_GONE, f"hwnd {target.hwnd} is no longer a window")
     except Exception as exc:  # noqa: BLE001
-        return no(RefusalCode.WINDOW_GONE, "IsWindow failed: %s" % exc)
+        return no(RefusalCode.WINDOW_GONE, f"IsWindow failed: {exc}")
 
     pid_now = _pid_for(target.hwnd)
     if pid_now and target.pid and pid_now != target.pid:
-        return no(RefusalCode.PID_CHANGED,
-                  "hwnd %s now belongs to pid %s, not %s (handles are reused)"
-                  % (target.hwnd, pid_now, target.pid))
+        return no(
+            RefusalCode.PID_CHANGED,
+            f"hwnd {target.hwnd} now belongs to pid {pid_now}, not {target.pid} (handles are reused)",
+        )
 
     if _is_iconic(target.hwnd):
-        return no(RefusalCode.MINIMIZED, "window %s was minimized since locate" % target.hwnd)
+        return no(RefusalCode.MINIMIZED, f"window {target.hwnd} was minimized since locate")
 
     dpi_now = _dpi_for(target.hwnd)
     if target.dpi and dpi_now and dpi_now != target.dpi:
-        return no(RefusalCode.DPI_CHANGED,
-                  "dpi moved %s -> %s (monitor move or scaling change); every coordinate the "
-                  "token carries is now wrong" % (target.dpi, dpi_now))
+        return no(
+            RefusalCode.DPI_CHANGED,
+            f"dpi moved {target.dpi} -> {dpi_now} (monitor move or scaling change); every coordinate the "
+            "token carries is now wrong",
+        )
 
     if require_foreground:
         # LOCKED is checked FIRST and reported separately: a locked workstation and a
@@ -749,34 +824,47 @@ def verify(target: TargetToken, *, require_foreground: bool = False,
         # answered for hwnd 67692) while the input desktop was unreachable. Being able to SEE a
         # window proves nothing about being able to type into it.
         if workstation_locked():
-            return no(RefusalCode.LOCKED,
-                      "the workstation is locked -- %s. The window is still readable, which is "
-                      "exactly why this is checked rather than inferred from a successful "
-                      "locate()." % locked_detail())
+            return no(
+                RefusalCode.LOCKED,
+                f"the workstation is locked -- {locked_detail()}. The window is still readable, which is "
+                "exactly why this is checked rather than inferred from a successful "
+                "locate().",
+            )
         fg = _foreground_hwnd()
         if fg != target.hwnd:
-            return no(RefusalCode.NOT_FOREGROUND,
-                      "foreground is hwnd %s, target is %s. Keystrokes follow the FOREGROUND "
-                      "window, not the control that was located -- typing now would land in "
-                      "whatever the operator is looking at." % (fg, target.hwnd))
+            return no(
+                RefusalCode.NOT_FOREGROUND,
+                f"foreground is hwnd {fg}, target is {target.hwnd}. Keystrokes follow the FOREGROUND "
+                "window, not the control that was located -- typing now would land in "
+                "whatever the operator is looking at.",
+            )
 
     if require_frame and target.frame_hash:
         now = _region_sha(target.hash_rect)
         if now and now != target.frame_hash:
-            return no(RefusalCode.SCREEN_CHANGED,
-                      "the target region repainted since locate (%s -> %s); a coordinate click "
-                      "would land on whatever moved there"
-                      % (target.frame_hash[:12], now[:12]))
+            return no(
+                RefusalCode.SCREEN_CHANGED,
+                f"the target region repainted since locate ({target.frame_hash[:12]} -> {now[:12]}); a coordinate click "
+                "would land on whatever moved there",
+            )
     return None
 
 
 # --------------------------------------------------------------------------- act
 
 
-def act(target: TargetToken, verb: str, value: Optional[str] = None, *,
-        expect: Optional[Callable[[], bool]] = None, expect_what: str = "",
-        timeout_s: float = 3.0, require_foreground: Optional[bool] = None,
-        restore_clipboard: bool = True, agent_id: Optional[str] = None) -> ActResult:
+def act(
+    target: TargetToken,
+    verb: str,
+    value: str | None = None,
+    *,
+    expect: Callable[[], bool] | None = None,
+    expect_what: str = "",
+    timeout_s: float = 3.0,
+    require_foreground: bool | None = None,
+    restore_clipboard: bool = True,
+    agent_id: str | None = None,
+) -> ActResult:
     """Phase two: do one thing, having first refused every reason not to.
 
     Order is deliberate: CAPABILITY, then TOKEN VALIDITY, then the action, then the asserted
@@ -791,13 +879,19 @@ def act(target: TargetToken, verb: str, value: Optional[str] = None, *,
     """
     t0 = time.time()
 
-    def no(code: RefusalCode, detail: str, observed: Optional[str] = None) -> ActResult:
-        return ActResult(ok=False, refusal=code, detail=detail, verb=verb, what=expect_what,
-                         observed=observed, elapsed_ms=1000 * (time.time() - t0))
+    def no(code: RefusalCode, detail: str, observed: str | None = None) -> ActResult:
+        return ActResult(
+            ok=False,
+            refusal=code,
+            detail=detail,
+            verb=verb,
+            what=expect_what,
+            observed=observed,
+            elapsed_ms=1000 * (time.time() - t0),
+        )
 
     if verb not in VERB_CAPS:
-        return no(RefusalCode.BAD_VERB,
-                  "unknown verb %r; known: %s" % (verb, ", ".join(sorted(VERB_CAPS))))
+        return no(RefusalCode.BAD_VERB, f"unknown verb {verb!r}; known: {', '.join(sorted(VERB_CAPS))}")
 
     allowed, why = _capable(agent_id, verb)
     if not allowed:
@@ -806,15 +900,21 @@ def act(target: TargetToken, verb: str, value: Optional[str] = None, *,
     need_fg = (verb in FOREGROUND_VERBS) if require_foreground is None else require_foreground
     bad = verify(target, require_foreground=need_fg, require_frame=(verb == "click_at"))
     if bad is not None:
-        return ActResult(ok=False, refusal=bad.refusal, detail=bad.detail, verb=verb,
-                         what=expect_what, elapsed_ms=1000 * (time.time() - t0))
+        return ActResult(
+            ok=False,
+            refusal=bad.refusal,
+            detail=bad.detail,
+            verb=verb,
+            what=expect_what,
+            elapsed_ms=1000 * (time.time() - t0),
+        )
 
     auto = _uia()
     if auto is None:
         return no(RefusalCode.NO_UIA, "uiautomation substrate absent")
 
-    observed: Optional[str] = None
-    clip_restore: Optional[str] = None       # set by `type`; replayed only AFTER expect settles,
+    observed: str | None = None
+    clip_restore: str | None = None  # set by `type`; replayed only AFTER expect settles,
     #                                          because a paste is asynchronous in the target app
     #                                          and restoring early makes Ctrl+V paste the OLD
     #                                          clipboard -- a silent, exact-looking corruption.
@@ -822,19 +922,22 @@ def act(target: TargetToken, verb: str, value: Optional[str] = None, *,
         if verb == "focus":
             u = _user32()
             u.SetForegroundWindow(target.hwnd)
-            got = settle(lambda: _foreground_hwnd() == target.hwnd,
-                         timeout_s=timeout_s, what="window %s is foreground" % target.hwnd)
+            got = settle(
+                lambda: _foreground_hwnd() == target.hwnd,
+                timeout_s=timeout_s,
+                what=f"window {target.hwnd} is foreground",
+            )
             if not got.ok:
-                return no(RefusalCode.NOT_FOREGROUND,
-                          "SetForegroundWindow did not take after %d polls / %.0f ms -- Windows "
-                          "refuses foreground changes from a process without recent input"
-                          % (got.polls, got.elapsed_ms))
+                return no(
+                    RefusalCode.NOT_FOREGROUND,
+                    f"SetForegroundWindow did not take after {got.polls} polls / {got.elapsed_ms:.0f} ms -- Windows "
+                    "refuses foreground changes from a process without recent input",
+                )
 
         elif verb == "invoke":
             ctrl = _rebind(target)
             if ctrl is None:
-                return no(RefusalCode.NO_SUCH_TARGET,
-                          "control %r no longer resolves for invoke" % target.name)
+                return no(RefusalCode.NO_SUCH_TARGET, f"control {target.name!r} no longer resolves for invoke")
             # InvokePattern over a synthetic click: it reaches the control directly, so it does
             # not depend on the control being visible, unobscured, or at the cached coordinate.
             if _has_invoke(ctrl):
@@ -853,43 +956,50 @@ def act(target: TargetToken, verb: str, value: Optional[str] = None, *,
             prev = _clip_get() if restore_clipboard else None
             if _clip_set(value):
                 auto.SendKeys("{Ctrl}v", waitTime=0)
-                clip_restore = prev          # replayed at the very end, after expect settles
+                clip_restore = prev  # replayed at the very end, after expect settles
             else:
                 # Degraded path: escape, because unescaped prose does not garble, it EXECUTES
                 # -- SendKeys reads {}() as grouping and !+^% as modifiers.
                 auto.SendKeys(_escape_sendkeys(value), waitTime=0)
 
         elif verb == "click_at":
-            l, t, r, b = target.bounds
-            auto.Click(int((l + r) // 2), int((t + b) // 2), waitTime=0)
+            left, top, right, bottom = target.bounds
+            auto.Click(int((left + right) // 2), int((top + bottom) // 2), waitTime=0)
 
         elif verb == "read_back":
             ctrl = _rebind(target)
             observed = _read_value(ctrl) if ctrl is not None else None
 
     except Exception as exc:  # noqa: BLE001
-        return no(RefusalCode.POSTCONDITION_FAILED,
-                  "%s raised during %r: %s" % (type(exc).__name__, verb, exc))
+        return no(RefusalCode.POSTCONDITION_FAILED, f"{type(exc).__name__} raised during {verb!r}: {exc}")
 
     try:
         if expect is not None:
-            got = settle(expect, timeout_s=timeout_s,
-                         what=expect_what or "the post-condition for %r" % verb)
+            got = settle(expect, timeout_s=timeout_s, what=expect_what or f"the post-condition for {verb!r}")
             if not got.ok:
-                return ActResult(ok=False, refusal=RefusalCode.POSTCONDITION_FAILED,
-                                 detail="%r dispatched but its effect never became observable "
-                                        "(%d polls / %.0f ms)%s"
-                                        % (verb, got.polls, got.elapsed_ms,
-                                           "; predicate raised %s" % got.error if got.error
-                                           else ""),
-                                 verb=verb, what=got.what, observed=observed,
-                                 elapsed_ms=1000 * (time.time() - t0))
+                return ActResult(
+                    ok=False,
+                    refusal=RefusalCode.POSTCONDITION_FAILED,
+                    detail=f"{verb!r} dispatched but its effect never became observable "
+                    f"({got.polls} polls / {got.elapsed_ms:.0f} ms)"
+                    + (f"; predicate raised {got.error}" if got.error else ""),
+                    verb=verb,
+                    what=got.what,
+                    observed=observed,
+                    elapsed_ms=1000 * (time.time() - t0),
+                )
     finally:
         if clip_restore is not None:
-            _clip_set(clip_restore)          # the operator's clipboard is theirs, not ours
+            _clip_set(clip_restore)  # the operator's clipboard is theirs, not ours
 
-    return ActResult(ok=True, verb=verb, what=expect_what, observed=observed,
-                     detail="%s ok" % verb, elapsed_ms=1000 * (time.time() - t0))
+    return ActResult(
+        ok=True,
+        verb=verb,
+        what=expect_what,
+        observed=observed,
+        detail=f"{verb} ok",
+        elapsed_ms=1000 * (time.time() - t0),
+    )
 
 
 def _rebind(target: TargetToken):
@@ -901,9 +1011,8 @@ def _rebind(target: TargetToken):
     if not target.name or target.role == "Window":
         return win
     try:
-        getter = getattr(win, "%sControl" % target.role, None)
-        ctrl = (getter(searchDepth=24, Name=target.name) if getter
-                else win.Control(searchDepth=24, Name=target.name))
+        getter = getattr(win, f"{target.role}Control", None)
+        ctrl = getter(searchDepth=24, Name=target.name) if getter else win.Control(searchDepth=24, Name=target.name)
         return ctrl if ctrl.Exists(0.4, 0.1) else None
     except Exception:  # noqa: BLE001
         return None
@@ -916,7 +1025,7 @@ def _has_invoke(ctrl) -> bool:
         return False
 
 
-def _read_value(ctrl) -> Optional[str]:
+def _read_value(ctrl) -> str | None:
     """G3's read-back. Tries Value then Text; returns None when neither is exposed, because
     'the control has no readable value' and 'the value is empty' are different facts."""
     for getter in ("GetValuePattern", "GetTextPattern"):

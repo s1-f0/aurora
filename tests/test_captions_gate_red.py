@@ -30,7 +30,6 @@ import inspect
 
 import pytest
 
-
 MODULE = "core.recall.gates.captions"
 
 
@@ -52,15 +51,15 @@ def _evaluate(tool_name, tool_args):
 # Pin 1 -- the golden case FIRES, teaches the verb, and carries its provenance.
 # ---------------------------------------------------------------------------
 
+
 def test_p1_webfetch_on_a_watch_url_fires_and_teaches():
-    v = _evaluate("WebFetch", {"url": "https://www.youtube.com/watch?v=aY92k2DAO0Q",
-                               "prompt": "summarize this"})
+    v = _evaluate("WebFetch", {"url": "https://www.youtube.com/watch?v=aY92k2DAO0Q", "prompt": "summarize this"})
     assert v["decision"] == "FIRE", v
-    assert "captions" in v["message"], (
-        f"the whole point is teaching the door verb at the moment of the miss: {v}")
+    assert "captions" in v["message"], f"the whole point is teaching the door verb at the moment of the miss: {v}"
     assert "agent_cli" in v["message"], "the message must give the runnable form, not a hint"
     assert v["lesson"] == "youtube_transcript_is_a_door_verb_not_a_script", (
-        f"a gate without provenance is an opinion; it must cite the lesson it enforces: {v}")
+        f"a gate without provenance is an opinion; it must cite the lesson it enforces: {v}"
+    )
     assert v["mode"] == "advise", "v1 advises; it never blocks"
 
 
@@ -68,12 +67,16 @@ def test_p1_webfetch_on_a_watch_url_fires_and_teaches():
 # Pin 2 -- URL shape coverage: short links, shorts, uppercase hosts, embedded.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("url", [
-    "https://youtu.be/MhMPsO2e8bw",
-    "https://www.youtube.com/shorts/abc123DEF45",
-    "https://YOUTUBE.COM/watch?v=gT01zWMnylE",
-    "http://m.youtube.com/watch?v=x",
-])
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://youtu.be/MhMPsO2e8bw",
+        "https://www.youtube.com/shorts/abc123DEF45",
+        "https://YOUTUBE.COM/watch?v=gT01zWMnylE",
+        "http://m.youtube.com/watch?v=x",
+    ],
+)
 def test_p2_video_url_shapes_fire(url):
     v = _evaluate("WebFetch", {"url": url})
     assert v["decision"] == "FIRE", (url, v)
@@ -82,6 +85,7 @@ def test_p2_video_url_shapes_fire(url):
 # ---------------------------------------------------------------------------
 # Pin 3 -- SILENCE IS A ROW: a non-video fetch returns a reasoned verdict, not None.
 # ---------------------------------------------------------------------------
+
 
 def test_p3_non_video_url_is_reasoned_silence_not_absence():
     v = _evaluate("WebFetch", {"url": "https://github.com/amd/skills"})
@@ -96,19 +100,23 @@ def test_p3_non_video_url_is_reasoned_silence_not_absence():
 # Pin 4 -- OUT-OF-SCOPE TOOL is a DIFFERENT silence than out-of-scope content.
 # ---------------------------------------------------------------------------
 
+
 def test_p4_scope_silence_is_distinguishable_from_content_silence():
     bash = _evaluate("Bash", {"command": "curl https://www.youtube.com/watch?v=x"})
     fetch = _evaluate("WebFetch", {"url": "https://example.com"})
-    assert bash["decision"] == "SILENT" and fetch["decision"] == "SILENT"
+    assert bash["decision"] == "SILENT"
+    assert fetch["decision"] == "SILENT"
     assert bash["reason"] != fetch["reason"], (
         "out-of-scope-tool and no-video-content are different quiets; collapsing them makes "
-        "the gate's declared scope invisible from its own record")
+        "the gate's declared scope invisible from its own record"
+    )
     assert "scope" in bash["reason"].lower(), bash
 
 
 # ---------------------------------------------------------------------------
 # Pin 5 -- deterministic, and structurally unable to look elsewhere.
 # ---------------------------------------------------------------------------
+
 
 def test_p5_same_input_same_verdict_and_no_clock_or_randomness():
     a = _evaluate("WebFetch", {"url": "https://youtu.be/x"})
@@ -120,7 +128,8 @@ def test_p5_same_input_same_verdict_and_no_clock_or_randomness():
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             assert not ({a2.name.split(".")[0] for a2 in node.names} & forbidden), (
-                "a gate that reads the clock scores the same call differently on replay")
+                "a gate that reads the clock scores the same call differently on replay"
+            )
         elif isinstance(node, ast.ImportFrom):
             assert (node.module or "").split(".")[0] not in forbidden
 
@@ -136,23 +145,27 @@ def test_p5b_module_imports_cannot_reach_a_writer():
             seen.append(node.module.split(".")[0])
     offenders = [s for s in seen if s not in allowed]
     assert not offenders, (
-        f"the gate is a pure function over its arguments; these imports give it reach it must "
-        f"not have: {offenders}")
+        f"the gate is a pure function over its arguments; these imports give it reach it must not have: {offenders}"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Pin 6 -- the gate can never break the call it watches.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("args", [
-    {},                            # no url at all
-    {"url": None},                 # explicit None
-    {"url": 42},                   # wrong type
-    {"url": ""},                   # empty
-    {"prompt": "no url key"},      # unrelated keys only
-])
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {},  # no url at all
+        {"url": None},  # explicit None
+        {"url": 42},  # wrong type
+        {"url": ""},  # empty
+        {"prompt": "no url key"},  # unrelated keys only
+    ],
+)
 def test_p6_malformed_args_are_reasoned_silence_never_an_exception(args):
-    v = _evaluate("WebFetch", args)   # must NOT raise
+    v = _evaluate("WebFetch", args)  # must NOT raise
     assert v["decision"] == "SILENT", (args, v)
     assert v["reason"], (args, v)
 
@@ -161,16 +174,18 @@ def test_p6_malformed_args_are_reasoned_silence_never_an_exception(args):
 # Pin 7 -- bounded output. Precision at the gate buys density in the pool.
 # ---------------------------------------------------------------------------
 
+
 def test_p7_fire_message_is_bounded():
     v = _evaluate("WebFetch", {"url": "https://www.youtube.com/watch?v=aY92k2DAO0Q"})
     assert len(v["message"]) <= 400, (
-        f"an advisory that costs more attention than the mistake it prevents is noise: "
-        f"{len(v['message'])} chars")
+        f"an advisory that costs more attention than the mistake it prevents is noise: {len(v['message'])} chars"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Pin 8 -- no promotion surface. The gate advises; nothing here scores or blocks.
 # ---------------------------------------------------------------------------
+
 
 def test_p8_no_blocking_or_scoring_surface_exists():
     mod = _mod()
@@ -178,4 +193,5 @@ def test_p8_no_blocking_or_scoring_surface_exists():
     present = sorted(n for n in dir(mod) if n.lower() in forbidden)
     assert not present, (
         f"v1 is advise-only by declared scope; these names offer a different delivery mode "
-        f"without its own gate: {present}")
+        f"without its own gate: {present}"
+    )

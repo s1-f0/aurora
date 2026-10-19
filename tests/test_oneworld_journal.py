@@ -12,9 +12,8 @@ The contract, modeled on core/eye/routes.py's authored/derived discipline:
 Each test repoints JOURNAL_PATH to a tmp file so the real state/world plane never grows under a run
 (build-beside-a-neighbour: copy its guards -- routes.py's tests monkeypatch the module path).
 """
-from __future__ import annotations
 
-import json
+from __future__ import annotations
 
 import pytest
 
@@ -31,10 +30,12 @@ def jp(tmp_path, monkeypatch):
 def test_append_then_replay_preserves_order(jp):
     a = journal.append("mode_set", "claude", {"surface": "fleet", "mode": "quiet"})
     b = journal.append("hail", "daniil", {"text": "walk day?"})
-    assert a.startswith("wf_") and b.startswith("wf_")
+    assert a.startswith("wf_")
+    assert b.startswith("wf_")
     facts = journal.replay()["facts"]
     assert [f["id"] for f in facts] == [a, b]
-    assert facts[0]["kind"] == "mode_set" and facts[0]["actor"] == "claude"
+    assert facts[0]["kind"] == "mode_set"
+    assert facts[0]["actor"] == "claude"
     assert facts[0]["payload"]["surface"] == "fleet"
     # every authored field the projection could need is carried on the record itself (T335).
     for f in facts:
@@ -84,4 +85,5 @@ def test_corrupt_line_is_counted_not_silently_dropped(jp):
 def test_empty_journal_is_clean_zero_not_an_error(jp):
     r = journal.replay()
     assert r == {"facts": [], "taken": 0, "unparsed": 0} or (
-        r["facts"] == [] and r["taken"] == 0 and r["unparsed"] == 0)
+        r["facts"] == [] and r["taken"] == 0 and r["unparsed"] == 0
+    )

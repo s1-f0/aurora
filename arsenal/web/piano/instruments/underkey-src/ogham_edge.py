@@ -10,20 +10,27 @@ Box: 0..1, y down. Stroke 0 is always the stemline (the core every letter
 shares); the cuts follow bottom-up, the order an Ogham reader meets them,
 so a velocity reveal 'cuts' the letter upward like a rising meter.
 """
-import json, math, os
+
+import json
+import math
+import os
+
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-OUT = os.path.dirname(os.path.abspath(__file__))   # ogham-edge.json, read by uk_glyphs_v2.py
-SHEETS = os.path.join(OUT, "out")                   # the review sheet
+OUT = os.path.dirname(os.path.abspath(__file__))  # ogham-edge.json, read by uk_glyphs_v2.py
+SHEETS = os.path.join(OUT, "out")  # the review sheet
 ID = "ogham-edge"
 
-R3 = lambda v: round(v, 3)
+
+def R3(v):
+    return round(v, 3)
+
 
 STEM_TOP, STEM_BOT = 0.05, 0.95
-SIDE = 0.25      # consonant cut length, stem to tip (footprint ~0.5 wide: the
-                 # brief's ~10 x 22 px slot under a 16.7 px white key)
-ACROSS = 0.21    # half-length of a vowel cut straight across
-PITCH = 0.2      # spacing between cuts along the stem
+SIDE = 0.25  # consonant cut length, stem to tip (footprint ~0.5 wide: the
+# brief's ~10 x 22 px slot under a 16.7 px white key)
+ACROSS = 0.21  # half-length of a vowel cut straight across
+PITCH = 0.2  # spacing between cuts along the stem
 
 
 def stem():
@@ -54,8 +61,7 @@ def ebhadh():
     # X straddling the stem (Unicode: a tall narrow X across the line;
     # rotated, a broad flat X). Rising diagonal first.
     w, h = 0.25, 0.16
-    return [[0.5 - w, 0.5 + h, 0.5 + w, 0.5 - h],
-            [0.5 - w, 0.5 - h, 0.5 + w, 0.5 + h]]
+    return [[0.5 - w, 0.5 + h, 0.5 + w, 0.5 - h], [0.5 - w, 0.5 - h, 0.5 + w, 0.5 + h]]
 
 
 def or_():
@@ -83,8 +89,8 @@ def ifin():
     D = 0.26
     out = []
     for y0, y1 in ((0.5, 0.8), (0.2, 0.5)):
-        out.append([0.5, y1, 0.5 + D, y0])   # rising diagonal
-        out.append([0.5, y0, 0.5 + D, y1])   # falling diagonal
+        out.append([0.5, y1, 0.5 + D, y0])  # rising diagonal
+        out.append([0.5, y0, 0.5 + D, y1])  # falling diagonal
     return out
 
 
@@ -92,44 +98,48 @@ def eamhancholl():
     # 'twin of coll': a lattice on the H side (left). The stem is one upright of
     # a '#': two rungs (coll's cuts) crossed by one rail parallel to the stem.
     # A 4 x 4 lattice (the Unicode form) is a blot at 16 px; this stays a '#'.
-    return [[0.5, 0.66, 0.2, 0.66],
-            [0.5, 0.34, 0.2, 0.34],
-            [0.32, 0.16, 0.32, 0.84]]
+    return [[0.5, 0.66, 0.2, 0.66], [0.5, 0.34, 0.2, 0.34], [0.32, 0.16, 0.32, 0.84]]
 
 
 GLYPHS = [
-    ("C",  "coll",        "U+1689", "4 cuts on the H side (left)",            side(4, right=False)),
-    ("C#", "eabhadh",     "U+1695", "forfid EA: X across the stem",           ebhadh()),
-    ("D",  "dair",        "U+1687", "2 cuts on the H side (left)",            side(2, right=False)),
-    ("D#", "or",          "U+1696", "forfid OI: lozenge across the stem",     or_()),
-    ("E",  "eadhadh",     "U+1693", "4 cuts straight across",                 across(4)),
-    ("F",  "fearn",       "U+1683", "3 cuts on the B side (right)",           side(3, right=True)),
-    ("F#", "uilleann",    "U+1697", "forfid UI: squared spiral, B side",      uilleann()),
-    ("G",  "gort",        "U+168C", "2 oblique cuts through the stem",        oblique(2)),
-    ("G#", "ifin",        "U+1698", "forfid IO/P: double X, B side",          ifin()),
-    ("A",  "ailm",        "U+1690", "1 cut straight across",                  across(1)),
+    ("C", "coll", "U+1689", "4 cuts on the H side (left)", side(4, right=False)),
+    ("C#", "eabhadh", "U+1695", "forfid EA: X across the stem", ebhadh()),
+    ("D", "dair", "U+1687", "2 cuts on the H side (left)", side(2, right=False)),
+    ("D#", "or", "U+1696", "forfid OI: lozenge across the stem", or_()),
+    ("E", "eadhadh", "U+1693", "4 cuts straight across", across(4)),
+    ("F", "fearn", "U+1683", "3 cuts on the B side (right)", side(3, right=True)),
+    ("F#", "uilleann", "U+1697", "forfid UI: squared spiral, B side", uilleann()),
+    ("G", "gort", "U+168C", "2 oblique cuts through the stem", oblique(2)),
+    ("G#", "ifin", "U+1698", "forfid IO/P: double X, B side", ifin()),
+    ("A", "ailm", "U+1690", "1 cut straight across", across(1)),
     ("A#", "eamhancholl", "U+1699", "forfid AE/X: lattice ('twin coll') as a #, H side", eamhancholl()),
-    ("B",  "beith",       "U+1681", "1 cut on the B side (right)",            side(1, right=True)),
+    ("B", "beith", "U+1681", "1 cut on the B side (right)", side(1, right=True)),
 ]
 
-TALLY = [("beith", "U+1681"), ("luis", "U+1682"), ("fearn", "U+1683"),
-         ("sail", "U+1684"), ("nion", "U+1685")]
+TALLY = [("beith", "U+1681"), ("luis", "U+1682"), ("fearn", "U+1683"), ("sail", "U+1684"), ("nion", "U+1685")]
 
 
 def build():
     glyphs = []
     for pc, name, cp, shape, cuts in GLYPHS:
-        strokes = [stem()] + cuts
+        strokes = [stem(), *cuts]
         assert 2 <= len(strokes) <= 5, (pc, len(strokes))
-        glyphs.append({"pc": pc, "name": name, "unicode": cp, "shape": shape,
-                       "strokes": [[R3(v) for v in s] for s in strokes]})
+        glyphs.append(
+            {"pc": pc, "name": name, "unicode": cp, "shape": shape, "strokes": [[R3(v) for v in s] for s in strokes]}
+        )
     tally = []
     for i, (name, cp) in enumerate(TALLY):
         n = i + 1
-        strokes = [stem()] + side(n, right=True, pitch=0.17)
-        tally.append({"level": n, "vel": [[1, 25], [26, 50], [51, 76], [77, 101], [102, 127]][i],
-                      "name": name, "unicode": cp,
-                      "strokes": [[R3(v) for v in s] for s in strokes]})
+        strokes = [stem(), *side(n, right=True, pitch=0.17)]
+        tally.append(
+            {
+                "level": n,
+                "vel": [[1, 25], [26, 50], [51, 76], [77, 101], [102, 127]][i],
+                "name": name,
+                "unicode": cp,
+                "strokes": [[R3(v) for v in s] for s in strokes],
+            }
+        )
     data = {
         "id": ID,
         "name": "Ogham",
@@ -165,11 +175,10 @@ def draw_glyph(strokes, size, bright=1.0, glow=0.0, frac_strokes=None):
     pad = 0.0
     use = strokes if frac_strokes is None else strokes[:frac_strokes]
     for s in use:
-        pts = [((s[i] * (1 - 2 * pad) + pad) * S, (s[i + 1] * (1 - 2 * pad) + pad) * S)
-               for i in range(0, len(s), 2)]
-        d.line(pts, fill=255, width=int(round(lw)), joint="curve")
+        pts = [((s[i] * (1 - 2 * pad) + pad) * S, (s[i + 1] * (1 - 2 * pad) + pad) * S) for i in range(0, len(s), 2)]
+        d.line(pts, fill=255, width=round(lw), joint="curve")
         r = lw / 2
-        for (x, y) in (pts[0], pts[-1]):
+        for x, y in (pts[0], pts[-1]):
             d.ellipse([x - r, y - r, x + r, y + r], fill=255)
     mask = mask.resize((size, size), Image.LANCZOS)
     tile = Image.new("RGB", (size, size), BG)
@@ -192,12 +201,25 @@ def font(sz):
     return ImageFont.load_default()
 
 
-KEY_X = {"C": 0.5, "C#": 0.93, "D": 1.5, "D#": 2.07, "E": 2.5, "F": 3.5, "F#": 3.9,
-         "G": 4.5, "G#": 5.0, "A": 5.5, "A#": 6.1, "B": 6.5}   # in white-key units
+KEY_X = {
+    "C": 0.5,
+    "C#": 0.93,
+    "D": 1.5,
+    "D#": 2.07,
+    "E": 2.5,
+    "F": 3.5,
+    "F#": 3.9,
+    "G": 4.5,
+    "G#": 5.0,
+    "A": 5.5,
+    "A#": 6.1,
+    "B": 6.5,
+}  # in white-key units
 
 
 def slip_band(glyphs, lit, box=22, pitch=16.7):
     from PIL import ImageChops
+
     W, H = int(7 * pitch) + 10, 28
     acc = Image.new("L", (W, H), 0)
     for g in glyphs:
@@ -205,12 +227,12 @@ def slip_band(glyphs, lit, box=22, pitch=16.7):
             continue
         t = draw_glyph(g["strokes"], box).convert("L").point(lambda v: max(0, v - 14) * 255 // 241)
         sub = Image.new("L", (W, H), 0)
-        sub.paste(t, (int(round(5 + KEY_X[g["pc"]] * pitch - box / 2)), (H - box) // 2))
+        sub.paste(t, (round(5 + KEY_X[g["pc"]] * pitch - box / 2), (H - box) // 2))
         acc = ImageChops.lighter(acc, sub)
     band = Image.new("RGB", (W, H), (22, 16, 36))
     dd = ImageDraw.Draw(band)
-    for k in range(8):   # white-key seams as faint ticks along the top edge
-        x = int(round(5 + k * pitch))
+    for k in range(8):  # white-key seams as faint ticks along the top edge
+        x = round(5 + k * pitch)
         dd.line([(x, 0), (x, 2)], fill=(70, 60, 100))
     band.paste(Image.new("RGB", (W, H), FG), (0, 0), acc)
     return band
@@ -222,33 +244,40 @@ def render(data):
     CELL = 160
     M = 24
     W = M * 2 + n * CELL
-    rows = []
     f_big, f_sm, f_hd = font(22), font(14), font(17)
 
     sheet_h = 1500
     img = Image.new("RGB", (W, sheet_h), BG)
     d = ImageDraw.Draw(img)
     y = 12
-    d.text((M, y), "ogham-edge  -  Ogham letter-name feda + the five forfeda (vertical stem, read upward; B-aicme right, H-aicme left)", font=f_hd, fill=LAB)
+    d.text(
+        (M, y),
+        "ogham-edge  -  Ogham letter-name feda + the five forfeda (vertical stem, read upward; B-aicme right, H-aicme left)",
+        font=f_hd,
+        fill=LAB,
+    )
     y += 34
 
     # row 1: 160 px
-    d.text((M, y), "160 px", font=f_sm, fill=LAB); y += 20
+    d.text((M, y), "160 px", font=f_sm, fill=LAB)
+    y += 20
     for i, g in enumerate(glyphs):
         x = M + i * CELL
         img.paste(draw_glyph(g["strokes"], CELL - 16), (x + 8, y))
-        d.text((x + 10, y + CELL - 14), f'{g["pc"]}  {g["name"]}', font=f_big if len(g["name"]) < 9 else f_sm, fill=FG)
+        d.text((x + 10, y + CELL - 14), f"{g['pc']}  {g['name']}", font=f_big if len(g["name"]) < 9 else f_sm, fill=FG)
     y += CELL + 22
 
     # row 2: 48 px
-    d.text((M, y), "48 px (Cinema buffer)", font=f_sm, fill=LAB); y += 20
+    d.text((M, y), "48 px (Cinema buffer)", font=f_sm, fill=LAB)
+    y += 20
     for i, g in enumerate(glyphs):
         x = M + i * CELL + (CELL - 48) // 2
         img.paste(draw_glyph(g["strokes"], 48), (x, y))
     y += 48 + 18
 
     # row 3: 16 px, native
-    d.text((M, y), "16 px (live view), native", font=f_sm, fill=LAB); y += 20
+    d.text((M, y), "16 px (live view), native", font=f_sm, fill=LAB)
+    y += 20
     for i, g in enumerate(glyphs):
         x = M + i * CELL + (CELL - 16) // 2
         img.paste(draw_glyph(g["strokes"], 16), (x, y))
@@ -256,7 +285,8 @@ def render(data):
     y += 16 + 14
 
     # row 3b: 16 px, magnified 6x nearest so the pixels can be judged
-    d.text((M, y), "the same 16 px tiles, magnified 6x (nearest neighbour)", font=f_sm, fill=LAB); y += 20
+    d.text((M, y), "the same 16 px tiles, magnified 6x (nearest neighbour)", font=f_sm, fill=LAB)
+    y += 20
     for i, g in enumerate(glyphs):
         t = draw_glyph(g["strokes"], 16).resize((96, 96), Image.NEAREST)
         x = M + i * CELL + (CELL - 96) // 2
@@ -266,7 +296,13 @@ def render(data):
     # row 3c: slip preview -- glyphs at their real key positions under one octave
     # (white keys 16.7 px apart, black-key glyphs near the white-key seams),
     # 22 px glyph box in the 28 px slip band, composited as light.
-    d.text((M, y), "slip preview at real key positions (one octave = 7 x 16.7 px, 22 px glyph box, 28 px band): C7 chord (C E G A#), then all 12 lit (worst case) -- native, then 4x", font=f_sm, fill=LAB); y += 20
+    d.text(
+        (M, y),
+        "slip preview at real key positions (one octave = 7 x 16.7 px, 22 px glyph box, 28 px band): C7 chord (C E G A#), then all 12 lit (worst case) -- native, then 4x",
+        font=f_sm,
+        fill=LAB,
+    )
+    y += 20
     bx = M
     for lit in (("C", "E", "G", "A#"), tuple(g["pc"] for g in glyphs)):
         band = slip_band(glyphs, lit)
@@ -276,7 +312,13 @@ def render(data):
     y += 28 * 4 + 22
 
     # row 4: velocity reveal of one glyph (C coll, 5 strokes) at 4 levels
-    d.text((M, y), "velocity: C coll at vel 32 / 64 / 96 / 127  (strokes = max(1, ceil(n*v)), brightness and halo rise)", font=f_sm, fill=LAB); y += 20
+    d.text(
+        (M, y),
+        "velocity: C coll at vel 32 / 64 / 96 / 127  (strokes = max(1, ceil(n*v)), brightness and halo rise)",
+        font=f_sm,
+        fill=LAB,
+    )
+    y += 20
     g = glyphs[0]
     ns = len(g["strokes"])
     for k, vel in enumerate((32, 64, 96, 127)):
@@ -294,12 +336,18 @@ def render(data):
     y += CELL + 22
 
     # row 5: alternate tally
-    d.text((M, y), "alternate velocity tally (every key): beith . luis . fearn . sail . nion  =  vel 1-25 / 26-50 / 51-76 / 77-101 / 102-127", font=f_sm, fill=LAB); y += 20
+    d.text(
+        (M, y),
+        "alternate velocity tally (every key): beith . luis . fearn . sail . nion  =  vel 1-25 / 26-50 / 51-76 / 77-101 / 102-127",
+        font=f_sm,
+        fill=LAB,
+    )
+    y += 20
     for k, t in enumerate(data["alt_tally"]["levels"]):
         v = t["vel"][1] / 127
         x = M + k * CELL
         img.paste(draw_glyph(t["strokes"], CELL - 16, bright=0.35 + 0.65 * v, glow=v * v), (x + 8, y))
-        d.text((x + 10, y + CELL - 14), f'{t["name"]}  {t["vel"][0]}-{t["vel"][1]}', font=f_sm, fill=LAB)
+        d.text((x + 10, y + CELL - 14), f"{t['name']}  {t['vel'][0]}-{t['vel'][1]}", font=f_sm, fill=LAB)
     for k, t in enumerate(data["alt_tally"]["levels"]):
         x = M + 5 * CELL + 40 + k * 40
         img.paste(draw_glyph(t["strokes"], 16), (x, y + 60))

@@ -4,6 +4,7 @@ A result is a dict: api, source {path, id, size, mtime_ns}, params (every defaul
 payload keys, and blind (what this primitive cannot see). write() keeps it as a receipt under
 <state>/receipts/<verb>/, the storyboard/motion/floors manifest habit in one place.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -13,10 +14,13 @@ import sys
 import time
 import warnings
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import TYPE_CHECKING
 
 from . import API, api
 from .ff import state_dir, version_short
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 _CHUNK = 1 << 20
 
@@ -49,15 +53,23 @@ def source(path, *, with_id: bool = True) -> dict:
     return out
 
 
-def computed_with(extra: Optional[dict] = None) -> dict:
+def computed_with(extra: dict | None = None) -> dict:
     out = {"arsenal.media": API, "ffmpeg": version_short(), "python": sys.version.split()[0]}
     if extra:
         out.update(extra)
     return out
 
 
-def result(verb: str, src, params: dict, payload: dict, blind: Iterable[str] = (), *,
-           engine: Optional[dict] = None, write_receipt: bool = True) -> dict:
+def result(
+    verb: str,
+    src,
+    params: dict,
+    payload: dict,
+    blind: Iterable[str] = (),
+    *,
+    engine: dict | None = None,
+    write_receipt: bool = True,
+) -> dict:
     """Build the house result dict for one call; src is a path, a list of paths, or an already-built source dict."""
     if isinstance(src, dict) or src is None:
         srcs = src
@@ -71,7 +83,7 @@ def result(verb: str, src, params: dict, payload: dict, blind: Iterable[str] = (
     if write_receipt:
         try:
             res["receipt"] = write(verb, res)
-        except OSError as exc:              # the primitive's answer stands; the missing receipt is said out loud
+        except OSError as exc:  # the primitive's answer stands; the missing receipt is said out loud
             res["receipt"] = None
             res["blind"].append(f"receipt not written: {exc}")
             warnings.warn(f"arsenal.media {verb}: receipt not written ({exc})", stacklevel=2)

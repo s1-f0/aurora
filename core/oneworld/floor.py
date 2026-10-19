@@ -38,11 +38,13 @@ wired," never all-clear. Each real sensor (a roster x inbox scan, a guard-execut
 detector, an external last-eval watchdog) is a small follow-on adapter named in the sensor's own
 detail string; wiring each is safe to do incrementally because everything starts in shadow.
 """
+
 from __future__ import annotations
 
 from collections import namedtuple
-from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable  # noqa: TC003  # runtime-evaluated annotations (annotation_sensitive module)
+from dataclasses import dataclass, replace
+from typing import Any
 
 from core.oneworld import journal
 
@@ -68,24 +70,33 @@ class FloorEntry:
     budget_s: float = 0.0
 
 
-def make_entry(key: str, sensor: Callable[[], Signal], *, state: str = "shadow",
-               description: str = "", budget_s: float = 0.0,
-               falsifier: Callable[[], Signal] = None) -> FloorEntry:
+def make_entry(
+    key: str,
+    sensor: Callable[[], Signal],
+    *,
+    state: str = "shadow",
+    description: str = "",
+    budget_s: float = 0.0,
+    falsifier: Callable[[], Signal] | None = None,
+) -> FloorEntry:
     """Build and validate one floor entry. state must be off/shadow/live. Default state is shadow
     (the learning gear). A missing falsifier defaults to one that fires -- but a real entry should
     carry a falsifier that constructs its OWN dangerous condition, so self_check proves it can fire."""
     if state not in STATES:
         raise ValueError(f"unknown state {state!r}; must be one of {STATES}")
     if falsifier is None:
-        def falsifier():  # noqa: E306 -- a firing default so an entry is never un-falsifiable
+
+        def falsifier():  # a firing default so an entry is never un-falsifiable
             return Signal(FIRED, "falsifier: synthetic fire")
-    return FloorEntry(key=str(key), state=state, sensor=sensor, falsifier=falsifier,
-                      description=description, budget_s=float(budget_s))
+
+    return FloorEntry(
+        key=str(key), state=state, sensor=sensor, falsifier=falsifier, description=description, budget_s=float(budget_s)
+    )
 
 
-def evaluate(entries: List[FloorEntry],
-             previous: Optional[Dict[str, str]] = None,
-             now: Optional[Callable[[], str]] = None) -> Dict[str, Any]:
+def evaluate(
+    entries: list[FloorEntry], previous: dict[str, str] | None = None, now: Callable[[], str] | None = None
+) -> dict[str, Any]:
     """Run each non-off entry's sensor and bucket the result, journaling fires as world-facts: a
     shadow fire is a `floor_would_fire` (the diary); a live fire is a `floor_fired` (a real alarm).
     Returns a report whose buckets account for EVERY entry, plus an engine-written legend, plus
@@ -103,13 +114,13 @@ def evaluate(entries: List[FloorEntry],
     A sensor that raises is caught as UNAVAILABLE -- a sensor crashing means the floor cannot see
     that risk right now, which is a real (and honest) state, not a reason to take the floor down.
     """
-    live_firing: List[dict] = []
-    shadow_would_fire: List[dict] = []
-    clear: List[dict] = []
-    unavailable: List[dict] = []
-    off: List[dict] = []
-    diary_errors: List[str] = []
-    statuses: Dict[str, str] = {}
+    live_firing: list[dict] = []
+    shadow_would_fire: list[dict] = []
+    clear: list[dict] = []
+    unavailable: list[dict] = []
+    off: list[dict] = []
+    diary_errors: list[str] = []
+    statuses: dict[str, str] = {}
     checked = suppressed = 0
 
     for e in entries:
@@ -155,26 +166,34 @@ def evaluate(entries: List[FloorEntry],
         + (f"; {len(diary_errors)} diary write error(s)" if diary_errors else "")
     )
     return {
-        "live_firing": live_firing, "shadow_would_fire": shadow_would_fire,
-        "clear": clear, "unavailable": unavailable, "off": off,
-        "checked": checked, "total": total, "diary_errors": diary_errors, "legend": legend,
-        "statuses": statuses, "journal_suppressed": suppressed,
+        "live_firing": live_firing,
+        "shadow_would_fire": shadow_would_fire,
+        "clear": clear,
+        "unavailable": unavailable,
+        "off": off,
+        "checked": checked,
+        "total": total,
+        "diary_errors": diary_errors,
+        "legend": legend,
+        "statuses": statuses,
+        "journal_suppressed": suppressed,
     }
 
 
-def self_check(entries: List[FloorEntry]) -> Dict[str, bool]:
+def self_check(entries: list[FloorEntry]) -> dict[str, bool]:
     """Run every entry's falsifier and confirm it FIRES. A False here means an entry that cannot
     fire -- it guards nothing and must not be trusted until its falsifier is fixed."""
-    out: Dict[str, bool] = {}
+    out: dict[str, bool] = {}
     for e in entries:
         try:
-            out[e.key] = (e.falsifier().status == FIRED)
+            out[e.key] = e.falsifier().status == FIRED
         except Exception:  # noqa: BLE001
             out[e.key] = False
     return out
 
 
 # ------------------------------------------------------------------ the four entries
+
 
 def _unwired(msg: str) -> Callable[[], Signal]:
     return lambda: Signal(UNAVAILABLE, msg)
@@ -184,11 +203,12 @@ def _falsify(msg: str) -> Callable[[], Signal]:
     return lambda: Signal(FIRED, msg)
 
 
-def default_manifest() -> List[FloorEntry]:
+def default_manifest() -> list[FloorEntry]:
     """The four entries, ALL in shadow (shadow-first), with honestly-unwired sensors. Each sensor's
     detail names the real adapter that would wire it (UNWIRE-WHEN); each falsifier constructs the
     entry's own dangerous condition so self_check proves the entry can fire."""
     from core.oneworld import sensors  # imported here: sensors imports this module's Signal and states
+
     return [
         make_entry(
             "undeliverable_mail",
@@ -197,49 +217,63 @@ def default_manifest() -> List[FloorEntry]:
             sensor=lambda: sensors.undeliverable_mail(),
             falsifier=lambda: sensors.undeliverable_mail_falsifier(),
             description="mail to a specific agent that cannot be delivered -- more urgent than a "
-                        "backlog, because it never arrives unless someone notices"),
+            "backlog, because it never arrives unless someone notices",
+        ),
         make_entry(
             "noop_guard_success",
-            sensor=_unwired("not wired: needs a guard-execution audit "
-                            "(fail-open / swallowed-exception detector)"),
-            falsifier=_falsify("falsifier: a guard that returned OK while its body raised and was "
-                               "swallowed"),
+            sensor=_unwired("not wired: needs a guard-execution audit (fail-open / swallowed-exception detector)"),
+            falsifier=_falsify("falsifier: a guard that returned OK while its body raised and was swallowed"),
             description="a safety check that did nothing and reported success -- broken in a way "
-                        "that looks exactly like working"),
+            "that looks exactly like working",
+        ),
         make_entry(
             "secret_egress",
-            sensor=_unwired("not wired: needs an outbound egress detector; blast radius is OUTSIDE "
-                            "the house, so this is the one worth a force-dump"),
+            sensor=_unwired(
+                "not wired: needs an outbound egress detector; blast radius is OUTSIDE "
+                "the house, so this is the one worth a force-dump"
+            ),
             falsifier=_falsify("falsifier: a credential-shaped string crossing an outbound boundary"),
-            description="a secret leaving the house"),
+            description="a secret leaving the house",
+        ),
         make_entry(
             "floor_own_silence",
-            sensor=_unwired("not wired: needs an EXTERNAL watchdog reading the floor's last-eval "
-                            "stamp -- the floor cannot detect its own stop from inside"),
+            sensor=_unwired(
+                "not wired: needs an EXTERNAL watchdog reading the floor's last-eval "
+                "stamp -- the floor cannot detect its own stop from inside"
+            ),
             falsifier=_falsify("falsifier: last floor eval older than its budget"),
             description="the floor itself going quiet -- a dead floor and a calm floor look "
-                        "identical unless the floor is made to prove it is alive",
-            budget_s=300.0),
+            "identical unless the floor is made to prove it is alive",
+            budget_s=300.0,
+        ),
     ]
 
 
 # ------------------------------------------------------------------ modes (named presets)
 
-MODES: Dict[str, Dict[str, str]] = {
+MODES: dict[str, dict[str, str]] = {
     # nothing speaks; everything watches -- the safe default for a new floor or a quiet night.
-    "night": {k: "shadow" for k in _KEYS},
+    "night": dict.fromkeys(_KEYS, "shadow"),
     # everything live and loud.
-    "firehose": {k: "live" for k in _KEYS},
+    "firehose": dict.fromkeys(_KEYS, "live"),
     # the two whose silence hurts most are live; the rest keep watching.
-    "focus": {"secret_egress": "live", "undeliverable_mail": "live",
-              "noop_guard_success": "shadow", "floor_own_silence": "shadow"},
+    "focus": {
+        "secret_egress": "live",
+        "undeliverable_mail": "live",
+        "noop_guard_success": "shadow",
+        "floor_own_silence": "shadow",
+    },
     # near-silent, but a secret leak still fires even here -- its blast radius is outside the house.
-    "quiet": {"secret_egress": "live", "undeliverable_mail": "off",
-              "noop_guard_success": "off", "floor_own_silence": "off"},
+    "quiet": {
+        "secret_egress": "live",
+        "undeliverable_mail": "off",
+        "noop_guard_success": "off",
+        "floor_own_silence": "off",
+    },
 }
 
 
-def apply_mode(entries: List[FloorEntry], name: str) -> List[FloorEntry]:
+def apply_mode(entries: list[FloorEntry], name: str) -> list[FloorEntry]:
     """Return a copy of `entries` with each state set by the named mode. A mode leaves an entry it
     does not name at its current state. Refuses an unknown mode."""
     if name not in MODES:

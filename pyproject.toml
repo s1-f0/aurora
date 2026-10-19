@@ -411,6 +411,9 @@ testpaths = ["tests"]
 # pytest-randomly is installed with the dev tools (G1) but stays off until the G5.P1
 # experiment adopts it on evidence: -p no:randomly keeps today's file order and seeding.
 addopts = ["-q", "-p", "no:randomly", "--strict-markers", "--strict-config"]
+# --strict-markers refuses any marker not declared here. `slow` came with the shader school
+# (E: line, 2026-10-13): GLSL twin parity sweeps that render many frames. Declared, not deselected.
+markers = ["slow: long-running render or parity sweep (the shader school's GLSL twin suites)"]
 # A test that `return`s a value (instead of asserting) is almost always a mistake;
 # make it an error so the convention stays clean going forward.
 filterwarnings = ["error::pytest.PytestReturnNotNoneWarning"]

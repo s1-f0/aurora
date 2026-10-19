@@ -27,6 +27,7 @@ and the SwiftShader render is the device under test.
 
 Apache-2.0, Akashic Aurora. Written fresh for the house; no corpus code.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -82,7 +83,8 @@ def test_xor_is_the_signed_product_so_any_grouping_and_order_agree():
     assert close(1.0 - 2.0 * x.cmpXor(a, b), (1.0 - 2.0 * a) * (1.0 - 2.0 * b), 1e-12)
     assert close(x.cmpXor(x.cmpXor(a, b), c), x.cmpXor(a, x.cmpXor(b, c)), 1e-12)
     assert close(x.cmpXor(a, b), x.cmpXor(b, a), 1e-12)
-    assert close(x.cmpXor(a, 0.0), a) and close(x.cmpXor(a, 1.0), 1.0 - a)
+    assert close(x.cmpXor(a, 0.0), a)
+    assert close(x.cmpXor(a, 1.0), 1.0 - a)
 
 
 def test_xor_of_two_coverages_is_the_chance_exactly_one_is_set():
@@ -100,20 +102,42 @@ def test_xor_holds_its_inputs_to_zero_one():
     assert x.cmpXor(-0.5, 0.25) == x.cmpXor(0.0, 0.25)
     assert x.cmpXor(1.7, 0.25) == x.cmpXor(1.0, 0.25)
     v = x.cmpXor(RNG.uniform(-3, 3, 1000), RNG.uniform(-3, 3, 1000))
-    assert v.min() >= 0.0 and v.max() <= 1.0
+    assert v.min() >= 0.0
+    assert v.max() <= 1.0
 
 
 # ==================================================================================================== groups/neon-line
-NEON_DEFAULTS = dict(widthPx=1.6, haloPx=14.0, profile=0, coreHeat=1.6, combine=0, defocus=0.35, view=0)
+NEON_DEFAULTS = {
+    "widthPx": 1.6,
+    "haloPx": 14.0,
+    "profile": 0,
+    "coreHeat": 1.6,
+    "combine": 0,
+    "defocus": 0.35,
+    "view": 0,
+}
 
 
 def _neon(t, d, px, tint=(0.2, 0.55, 1.0), energy=1.0, depth=0.0, acc=None, **over):
     kw = dict(NEON_DEFAULTS)
     kw.update(over)
     d = np.asarray(d, dtype=np.float64)
-    acc = np.zeros(d.shape + (3,)) if acc is None else acc
-    return t.neonLine(acc, d, px, np.array(tint), energy, depth, kw["widthPx"], kw["haloPx"], kw["profile"],
-                      kw["coreHeat"], kw["combine"], kw["defocus"], kw["view"])
+    acc = np.zeros((*d.shape, 3)) if acc is None else acc
+    return t.neonLine(
+        acc,
+        d,
+        px,
+        np.array(tint),
+        energy,
+        depth,
+        kw["widthPx"],
+        kw["haloPx"],
+        kw["profile"],
+        kw["coreHeat"],
+        kw["combine"],
+        kw["defocus"],
+        kw["view"],
+    )
 
 
 def test_profile_is_one_at_the_line_and_falls_away_monotonically():
@@ -138,7 +162,7 @@ def test_profiles_are_the_atlas_line_shapes_measured_in_halo_widths():
     assert close(n.neonProfile(0.25 * halo, halo, 1), 0.5, 1e-6)
     assert close(n.neonProfile(d, halo, 2), (0.35 / (x + 0.35)) ** 2, 1e-5)
     assert np.all(n.neonProfile(d, halo, 3) == 0.0)
-    assert np.all(n.neonProfile(d, 0.0, 0) == 0.0)                   # no halo width: no halo, never a division by 0
+    assert np.all(n.neonProfile(d, 0.0, 0) == 0.0)  # no halo width: no halo, never a division by 0
 
 
 def test_path_step_keeps_the_nearest_segment_and_its_curve_parameter():
@@ -162,7 +186,7 @@ def test_path_step_keeps_the_nearest_segment_and_its_curve_parameter():
 
 def _ink(n, px, **over):
     """The peak channel of a line's light integrated across it, in pixels: what an eye sees as how much line there is."""
-    d = np.linspace(-1500 * px, 1500 * px, 60001)                      # wide: the Lorentzian's tails are long
+    d = np.linspace(-1500 * px, 1500 * px, 60001)  # wide: the Lorentzian's tails are long
     light = _neon(n, d, px, tint=(0.2, 0.55, 1.0), **over)
     return np.trapezoid(light[:, 2], d) / px
 
@@ -185,20 +209,20 @@ def test_the_core_is_its_width_in_pixels_at_any_scale():
             ink = _ink(n, px, widthPx=width, haloPx=0.0, defocus=0.0)
             assert abs(ink - width) < 0.01 * width, (px, width, ink)
     thin = _ink(n, 0.01, widthPx=0.5, haloPx=0.0, defocus=0.0)
-    assert abs(thin - 0.5) < 0.01                                        # a half-pixel line dims, never breaks
+    assert abs(thin - 0.5) < 0.01  # a half-pixel line dims, never breaks
     core = _neon(n, np.linspace(-1, 1, 41) * 0.01, 0.01, widthPx=0.5, haloPx=0.0, defocus=0.0)
-    assert core[:, 2].max() < 0.55                                      # ... drawn one pixel wide at half strength
+    assert core[:, 2].max() < 0.55  # ... drawn one pixel wide at half strength
 
 
 def test_defocus_spreads_the_light_and_never_adds_any():
     n = twin("neon_line")
     for profile in (0, 1, 2, 3):
-        sharp = _ink(n, 0.01, profile=profile, defocus=1.0)                  # depth 0: no blur at all
+        sharp = _ink(n, 0.01, profile=profile, defocus=1.0)  # depth 0: no blur at all
         soft = _ink(n, 0.01, profile=profile, defocus=1.0, depth=1.0)
         assert abs(soft - sharp) < 0.02 * sharp, (profile, sharp, soft)
         peak_sharp = _neon(n, [0.0], 0.01, defocus=1.0, profile=profile)[0, 2]
         peak_soft = _neon(n, [0.0], 0.01, defocus=1.0, depth=1.0, profile=profile)[0, 2]
-        assert peak_soft < 0.5 * peak_sharp                                  # four times wider, a quarter as high
+        assert peak_soft < 0.5 * peak_sharp  # four times wider, a quarter as high
 
 
 def test_the_core_whitens_with_heat_while_the_halo_keeps_its_hue():
@@ -206,14 +230,16 @@ def test_the_core_whitens_with_heat_while_the_halo_keeps_its_hue():
     tint = np.array([0.2, 0.55, 1.0])
     cool = _neon(n, [0.0], 0.01, tint=tint, coreHeat=0.0, haloPx=0.0)[0]
     hot = _neon(n, [0.0], 0.01, tint=tint, coreHeat=4.0, haloPx=0.0)[0]
-    assert close(cool / cool[2], tint, 1e-9)                             # no heat: the core is the tint itself
-    assert close(hot[2], cool[2], 1e-9)                                  # the peak channel is the energy, always
-    assert hot[0] / hot[2] > 0.9 and hot[1] / hot[2] > 0.9               # heat carries the others up toward white
-    halo = _neon(n, [0.2], 0.01, tint=tint, coreHeat=4.0)[0]             # 20 pixels out: halo only
-    assert halo[2] > 0 and close(halo / halo[2], tint, 1e-9)
+    assert close(cool / cool[2], tint, 1e-9)  # no heat: the core is the tint itself
+    assert close(hot[2], cool[2], 1e-9)  # the peak channel is the energy, always
+    assert hot[0] / hot[2] > 0.9
+    assert hot[1] / hot[2] > 0.9
+    halo = _neon(n, [0.2], 0.01, tint=tint, coreHeat=4.0)[0]  # 20 pixels out: halo only
+    assert halo[2] > 0
+    assert close(halo / halo[2], tint, 1e-9)
     softer = _neon(n, [0.0], 0.01, tint=tint, energy=0.25, haloPx=0.0)[0]
     louder = _neon(n, [0.0], 0.01, tint=tint, energy=1.0, haloPx=0.0)[0]
-    assert softer[0] / softer[2] < louder[0] / louder[2]                 # a soft note keeps its colour, a hard one whitens
+    assert softer[0] / softer[2] < louder[0] / louder[2]  # a soft note keeps its colour, a hard one whitens
 
 
 def test_max_keeps_crossings_crisp_and_add_sums_light():
@@ -221,7 +247,7 @@ def test_max_keeps_crossings_crisp_and_add_sums_light():
     d = np.array([0.0, 0.03, 0.2])
     one = _neon(n, d, 0.01, combine=0)
     crossed = _neon(n, d, 0.01, combine=0, acc=one)
-    assert close(crossed, one, 1e-12)                                    # max: a crossing is as bright as one line
+    assert close(crossed, one, 1e-12)  # max: a crossing is as bright as one line
     summed = _neon(n, d, 0.01, combine=1, acc=one)
     assert close(summed, 2 * one, 1e-12)
 
@@ -232,30 +258,58 @@ def test_debug_views_show_the_core_alone_and_the_halo_alone():
     full = _neon(n, d, 0.01)
     core = _neon(n, d, 0.01, view=1)
     halo = _neon(n, d, 0.01, view=2)
-    assert close(core[:, 0], core[:, 1]) and core.max() <= 1.0 + 1e-9 and core[300, 0] > 0.99   # white coverage
-    assert np.all(halo <= full + 1e-12) and halo[300, 2] > 0 and halo[:, 2].max() < full[:, 2].max()
+    assert close(core[:, 0], core[:, 1])
+    assert core.max() <= 1.0 + 1e-9
+    assert core[300, 0] > 0.99
+    assert np.all(halo <= full + 1e-12)
+    assert halo[300, 2] > 0
+    assert halo[:, 2].max() < full[:, 2].max()
 
 
 def test_no_light_from_no_energy_and_nothing_non_finite_at_the_edges():
     n = twin("neon_line")
     assert np.all(_neon(n, [0.0, 0.1], 0.01, energy=0.0) == 0.0)
     for px in (1e-9, 0.0, 1.0):
-        for over in (dict(haloPx=0.0, widthPx=0.0), dict(defocus=1.0), dict(profile=2, haloPx=64.0)):
+        for over in ({"haloPx": 0.0, "widthPx": 0.0}, {"defocus": 1.0}, {"profile": 2, "haloPx": 64.0}):
             v = _neon(n, [0.0, 1e-7, 3.0], px, depth=1.0, **over)
-            assert np.all(np.isfinite(v)) and v.min() >= 0.0
+            assert np.all(np.isfinite(v))
+            assert v.min() >= 0.0
 
 
 # ===================================================================================================== groups/hex-neon
-HEX_DEFAULTS = dict(cellSize=0.22, lineWidth=1.5, haloPx=7.0, waveSpeed=0.6, sizeAmp=0.55, spin=0.35, palette=0,
-                    accent=0.1, combine=0, view=0)
+HEX_DEFAULTS = {
+    "cellSize": 0.22,
+    "lineWidth": 1.5,
+    "haloPx": 7.0,
+    "waveSpeed": 0.6,
+    "sizeAmp": 0.55,
+    "spin": 0.35,
+    "palette": 0,
+    "accent": 0.1,
+    "combine": 0,
+    "view": 0,
+}
 
 
 def _hex(h, p, px, t, origin=(0.0, 0.0), **over):
     kw = dict(HEX_DEFAULTS)
     kw.update(over)
-    return h.hexNeon(np.asarray(p, dtype=np.float64), px, t, np.asarray(origin, dtype=np.float64), kw["cellSize"],
-                     kw["lineWidth"], kw["haloPx"], kw["waveSpeed"], kw["sizeAmp"], kw["spin"], kw["palette"],
-                     kw["accent"], kw["combine"], kw["view"])
+    return h.hexNeon(
+        np.asarray(p, dtype=np.float64),
+        px,
+        t,
+        np.asarray(origin, dtype=np.float64),
+        kw["cellSize"],
+        kw["lineWidth"],
+        kw["haloPx"],
+        kw["waveSpeed"],
+        kw["sizeAmp"],
+        kw["spin"],
+        kw["palette"],
+        kw["accent"],
+        kw["combine"],
+        kw["view"],
+    )
 
 
 def test_the_six_steps_reach_the_six_neighbouring_centres():
@@ -281,9 +335,9 @@ def test_a_cell_is_posed_by_its_centre_alone_and_the_wave_arrives_cell_by_cell()
         assert close(pose[2], h.hexNeonSwell(9.0 - dist / 0.6, dice), 1e-6)
     a = h.hexNeonPose(np.array([1.0, 0.0]), 5.0, np.zeros(2), 0.6, 0.55, 0.35)
     b = h.hexNeonPose(np.array([1.0, 0.0]), 5.0 + 1.0 / 0.6, np.array([-1.0, 0.0]), 0.6, 0.55, 0.35)
-    assert close(a, b, 1e-5)                                             # twice as far, as much later: the same pose
+    assert close(a, b, 1e-5)  # twice as far, as much later: the same pose
     rest = h.hexNeonPose(np.array([2.0, 0.0]), 3.0, np.zeros(2), 0.6, 0.0, 0.35)
-    assert close(rest[:2], [0.36, 0.0], 1e-6)                            # no swing: the rest size, no turn
+    assert close(rest[:2], [0.36, 0.0], 1e-6)  # no swing: the rest size, no turn
 
 
 def test_size_swing_stays_inside_its_band_and_the_turn_follows_the_size():
@@ -292,10 +346,12 @@ def test_size_swing_stays_inside_its_band_and_the_turn_follows_the_size():
     for amp in (0.3, 0.55, 1.0):
         poses = np.array([h.hexNeonPose(np.array([1.0, 0.0]), t, np.zeros(2), 0.6, amp, 0.35) for t in ts])
         r, angle, swell = poses[:, 0], poses[:, 1], poses[:, 2]
-        assert r.min() >= 0.36 * (1 - 0.65 * amp) - 1e-9 and r.max() <= 0.36 * (1 + 0.65 * amp) + 1e-9
-        assert np.ptp(r) > 0.36 * 0.65 * amp                             # it really breathes
+        assert r.min() >= 0.36 * (1 - 0.65 * amp) - 1e-9
+        assert r.max() <= 0.36 * (1 + 0.65 * amp) + 1e-9
+        assert np.ptp(r) > 0.36 * 0.65 * amp  # it really breathes
         assert close(angle, 2 * math.pi * 0.35 * (r / 0.36 - 1.0), 1e-9)  # spin coupled to size (Hexagone's iris)
-        assert swell.min() >= 0.0 and swell.max() <= 1.0
+        assert swell.min() >= 0.0
+        assert swell.max() <= 1.0
 
 
 def test_lines_keep_their_pixel_width_whatever_the_cell_size():
@@ -303,8 +359,8 @@ def test_lines_keep_their_pixel_width_whatever_the_cell_size():
     and canvas, because every width is measured in pixels of the unwarped coordinate."""
     h = twin("hex_neon")
     for cell, px in ((0.22, 2 / 270), (0.6, 2 / 1080), (0.08, 2 / 540)):
-        r = 0.36 * cell                                                  # sizeAmp 0: the outline sits at the rest size
-        reach = min(25 * px, 0.14 * cell)                                # half way to the neighbour's outline
+        r = 0.36 * cell  # sizeAmp 0: the outline sits at the rest size
+        reach = min(25 * px, 0.14 * cell)  # half way to the neighbour's outline
         xs = np.linspace(r - reach, r + reach, 6001)
         pts = np.stack([xs, np.zeros_like(xs)], -1)
         bare = _hex(h, pts, px, 1.0, cellSize=cell, sizeAmp=0.0, haloPx=0.0, accent=0.0)
@@ -318,8 +374,8 @@ def test_no_seams_where_cells_meet_because_each_cell_is_seen_by_its_neighbours()
     is continuous across every cell border (a halo clipped at a border would jump there)."""
     h = twin("hex_neon")
     px = 2 / 270
-    for over in (dict(), dict(sizeAmp=1.0, haloPx=14.0), dict(combine=1, spin=1.0)):
-        xs = np.linspace(-0.9, 0.9, 30001)                               # sub-pixel steps, crossing many borders
+    for over in ({}, {"sizeAmp": 1.0, "haloPx": 14.0}, {"combine": 1, "spin": 1.0}):
+        xs = np.linspace(-0.9, 0.9, 30001)  # sub-pixel steps, crossing many borders
         pts = np.stack([xs, 0.11 + 0.37 * xs], -1)
         v = _hex(h, pts, px, 2.3, **over).max(axis=-1)
         step = np.abs(np.diff(v))
@@ -343,13 +399,14 @@ def test_cosine_palette_is_analogous_cool_with_a_coral_accent():
     dice = RNG.uniform(0, 1, 4000)
     rgb = np.array([h.hexNeonColour(np.zeros(2), u, 0, 0.1) for u in dice])
     hue = col.oklchFromOklab(col.oklabFromLinear(rgb))[:, 2] % 1.0
-    warm = (hue > 0.0) & (hue < 0.15)                                    # coral sits near 0.1 turns in OKLCH
-    assert abs(np.mean(warm) - 0.1) < 0.02                               # one cell in ten, as asked
+    warm = (hue > 0.0) & (hue < 0.15)  # coral sits near 0.1 turns in OKLCH
+    assert abs(np.mean(warm) - 0.1) < 0.02  # one cell in ten, as asked
     cool = hue[~warm]
-    assert np.all((cool > 0.5) & (cool < 0.88)) and np.ptp(cool) < 0.35  # cyan through blue to violet, nothing else
+    assert np.all((cool > 0.5) & (cool < 0.88))
+    assert np.ptp(cool) < 0.35
     none = np.array([h.hexNeonColour(np.zeros(2), u, 0, 0.0) for u in dice[:500]])
     hue0 = col.oklchFromOklab(col.oklabFromLinear(none))[:, 2] % 1.0
-    assert not np.any((hue0 > 0.0) & (hue0 < 0.15))                      # no accent asked, no coral
+    assert not np.any((hue0 > 0.0) & (hue0 < 0.15))  # no accent asked, no coral
 
 
 def test_combine_add_max_and_xor():
@@ -357,26 +414,30 @@ def test_combine_add_max_and_xor():
     filled hexagons whose overlaps cancel (the even-odd rule of cmpXor)."""
     h, lat = twin("hex_neon"), twin("draw2")
     px, cell = 2 / 270, 0.22
-    pts = np.random.default_rng(4).uniform(-0.8, 0.8, (8000, 2))      # its own dice: the result never hangs on order
+    pts = np.random.default_rng(4).uniform(-0.8, 0.8, (8000, 2))  # its own dice: the result never hangs on order
     add = _hex(h, pts, px, 1.3, sizeAmp=1.0, combine=0)
     mx = _hex(h, pts, px, 1.3, sizeAmp=1.0, combine=1)
-    assert np.all(mx <= add + 1e-9) and np.mean(add > mx + 1e-6) > 0.01  # overlaps: add is brighter, max never is
+    assert np.all(mx <= add + 1e-9)
+    assert np.mean(add > mx + 1e-6) > 0.01
     xor = _hex(h, pts, px, 4.0, sizeAmp=1.0, combine=2)
-    assert np.all(np.isfinite(xor)) and xor.min() >= 0.0
+    assert np.all(np.isfinite(xor))
+    assert xor.min() >= 0.0
     home = lat.latHex((pts / cell).astype(F32)).astype(np.float64)
     fills = []
     for k in range(7):
         step = np.zeros(2) if k == 0 else np.asarray(h.hexNeonStep(k - 1))
-        _, fill = h.hexNeonCell(home[:, :2] - step, home[:, 2:] + step, px / cell, 4.0, np.zeros(2), 1.5, 7.0, 0.6,
-                                1.0, 0.35, 0, 0.1, 2)
+        _, fill = h.hexNeonCell(
+            home[:, :2] - step, home[:, 2:] + step, px / cell, 4.0, np.zeros(2), 1.5, 7.0, 0.6, 1.0, 0.35, 0, 0.1, 2
+        )
         fills.append(fill)
     fills = np.stack(fills, -1)
     full, touched = (fills >= 1.0).sum(axis=1), (fills > 0.0).sum(axis=1)
     two = (full == 2) & (touched == 2)
     one = (full == 1) & (touched == 1)
-    assert two.mean() > 0.005 and one.mean() > 0.2
-    assert np.all(xor[two].max(axis=1) < 1e-6)                          # two fills overlap: the ink cancels
-    assert np.all(xor[one].max(axis=1) > 1e-3)                          # one fill alone: it shows
+    assert two.mean() > 0.005
+    assert one.mean() > 0.2
+    assert np.all(xor[two].max(axis=1) < 1e-6)  # two fills overlap: the ink cancels
+    assert np.all(xor[one].max(axis=1) > 1e-3)  # one fill alone: it shows
 
 
 def test_cells_view_numbers_the_cells():
@@ -384,14 +445,31 @@ def test_cells_view_numbers_the_cells():
     px = 2 / 270
     pts = RNG.uniform(-0.8, 0.8, (2000, 2))
     v = _hex(h, pts, px, 0.0, view=1)
-    assert np.all(np.isfinite(v)) and v.min() >= 0.0 and v.max() <= 1.0 + 1e-9
-    assert len({tuple(np.round(c, 3)) for c in v}) > 50                  # cells differ, and so does the place in them
+    assert np.all(np.isfinite(v))
+    assert v.min() >= 0.0
+    assert v.max() <= 1.0 + 1e-9
+    assert len({tuple(np.round(c, 3)) for c in v}) > 50  # cells differ, and so does the place in them
 
 
 # ================================================================================================ groups/studio-object
-STUDIO_DEFAULTS = dict(lens=3.2, keyTurn=0.85, keyElevation=48.0, boxSize=0.42, backdrop=0.3, fresnelFloor=0.04, metal=0.0,
-                       roughness=0.25, shadowAngle=6.0, aoReach=0.35, poolRadius=1.1, floorDrop=0.62, bound=0.75,
-                       steps=96.0, omega=1.0, view=0)
+STUDIO_DEFAULTS = {
+    "lens": 3.2,
+    "keyTurn": 0.85,
+    "keyElevation": 48.0,
+    "boxSize": 0.42,
+    "backdrop": 0.3,
+    "fresnelFloor": 0.04,
+    "metal": 0.0,
+    "roughness": 0.25,
+    "shadowAngle": 6.0,
+    "aoReach": 0.35,
+    "poolRadius": 1.1,
+    "floorDrop": 0.62,
+    "bound": 0.75,
+    "steps": 96.0,
+    "omega": 1.0,
+    "view": 0,
+}
 EYE = np.array([0.0, 0.55, 4.2])
 TARGET = np.zeros(3)
 
@@ -407,11 +485,30 @@ def grey(p, n, ident):
 def _studio(s, pixel, res=(160, 90), eye=EYE, scene=ball, material=grey, **over):
     kw = dict(STUDIO_DEFAULTS)
     kw.update(over)
-    return s.studioObject(eye, TARGET, np.asarray(pixel, dtype=np.float64), np.asarray(res, dtype=np.float64),
-                          kw["lens"], kw["keyTurn"], kw["keyElevation"], kw["boxSize"], kw["backdrop"], kw["fresnelFloor"],
-                          kw["metal"],
-                          kw["roughness"], kw["shadowAngle"], kw["aoReach"], kw["poolRadius"], kw["floorDrop"],
-                          kw["bound"], kw["steps"], kw["omega"], kw["view"], scene, material)
+    return s.studioObject(
+        eye,
+        TARGET,
+        np.asarray(pixel, dtype=np.float64),
+        np.asarray(res, dtype=np.float64),
+        kw["lens"],
+        kw["keyTurn"],
+        kw["keyElevation"],
+        kw["boxSize"],
+        kw["backdrop"],
+        kw["fresnelFloor"],
+        kw["metal"],
+        kw["roughness"],
+        kw["shadowAngle"],
+        kw["aoReach"],
+        kw["poolRadius"],
+        kw["floorDrop"],
+        kw["bound"],
+        kw["steps"],
+        kw["omega"],
+        kw["view"],
+        scene,
+        material,
+    )
 
 
 def _pixel_of(s, point, res=(160, 90), eye=EYE, lens=3.2):
@@ -427,22 +524,27 @@ def test_the_rig_is_the_neutral_studio_at_the_default_knobs():
     s, light = twin("studio_object"), twin("light")
     rig = s.studioObjectRig(0.85, 48.0, 0.42, 1.1, 0.62)
     ref = light.studio_default()
-    assert float(np.dot(rig.keyDir, ref.keyDir)) > 0.999                  # the key: high on the upper left, in front
-    assert float(np.dot(rig.fillDir, ref.fillDir)) > 0.99                 # the fill: behind, on the right
-    assert close(rig.keyCol, ref.keyCol) and close(rig.fillCol, ref.fillCol) and close(rig.floorCol, ref.floorCol)
-    assert rig.floorDrop == 0.62 and rig.poolRadius == 1.1 and close(rig.boxSize, [0.42, 0.42 * 0.66])
+    assert float(np.dot(rig.keyDir, ref.keyDir)) > 0.999  # the key: high on the upper left, in front
+    assert float(np.dot(rig.fillDir, ref.fillDir)) > 0.99  # the fill: behind, on the right
+    assert close(rig.keyCol, ref.keyCol)
+    assert close(rig.fillCol, ref.fillCol)
+    assert close(rig.floorCol, ref.floorCol)
+    assert rig.floorDrop == 0.62
+    assert rig.poolRadius == 1.1
+    assert close(rig.boxSize, [0.42, 0.42 * 0.66])
 
 
 def test_a_miss_shows_the_bare_studio_and_a_hit_is_lit_by_the_rig():
     s, light = twin("studio_object"), twin("light")
-    sky = _studio(s, (80.5, 88.5))                                       # top centre: above the horizon, past the ball
+    sky = _studio(s, (80.5, 88.5))  # top centre: above the horizon, past the ball
     rig = s.studioObjectRig(0.85, 48.0, 0.42, 1.1, 0.62)
     bare = s.studioObjectBare(rig)
     ray = twin("ray")
     rd = ray.camRay(np.array([80.5, 88.5]), np.array([160.0, 90.0]), ray.camLookAt(EYE, TARGET, 0.0), 3.2)
-    assert close(sky, 0.3 * light.litStudioEnv(rd, 0.0, bare), 1e-5)               # the backdrop knob's black flag
+    assert close(sky, 0.3 * light.litStudioEnv(rd, 0.0, bare), 1e-5)  # the backdrop knob's black flag
     centre = _studio(s, _pixel_of(s, [0.0, 0.0, 0.45]))
-    assert centre.sum() > sky.sum() and np.all(np.isfinite(centre))
+    assert centre.sum() > sky.sum()
+    assert np.all(np.isfinite(centre))
 
 
 def test_a_black_dielectric_with_no_fresnel_floor_is_black_and_a_mirror_shows_its_studio():
@@ -454,7 +556,7 @@ def test_a_black_dielectric_with_no_fresnel_floor_is_black_and_a_mirror_shows_it
     n = np.array([0.3, 0.5, 0.8]) / np.linalg.norm([0.3, 0.5, 0.8])
     v = np.array([0.1, 0.2, 1.0]) / np.linalg.norm([0.1, 0.2, 1.0])
     mirror = s.studioObjectSurface(np.zeros(3), n, v, rig, 0.04, 1.0, 0.0, 0.5, 0.8, lambda p, nn, i: np.ones(3))
-    want = light.litStudioEnv(2 * np.dot(n, v) * n - v, 0.0, rig) * 0.8   # a white metal: the studio, times the AO
+    want = light.litStudioEnv(2 * np.dot(n, v) * n - v, 0.0, rig) * 0.8  # a white metal: the studio, times the AO
     assert close(mirror, want, 1e-6)
 
 
@@ -467,7 +569,7 @@ def test_the_floor_carries_a_shadow_and_a_contact_darkening_under_the_object():
     the umbra; right beside the ball's foot the occlusion darkens it; far away the ball changes nothing."""
     s = twin("studio_object")
     rig = s.studioObjectRig(0.85, 48.0, 0.42, 1.1, 0.62)
-    spot = -rig.keyDir / rig.keyDir[1] * 0.62                            # the ball's centre projected along the key
+    spot = -rig.keyDir / rig.keyDir[1] * 0.62  # the ball's centre projected along the key
     for where, most in ((spot, 0.5), ([0.0, -0.62, 0.0], 0.5)):
         at = _pixel_of(s, where)
         with_ball, without = _studio(s, at), _studio(s, at, scene=_no_object)
@@ -481,7 +583,7 @@ def test_the_floor_dissolves_into_the_horizon_with_no_edge():
     s = twin("studio_object")
     res = (160, 90)
     eye = np.array([0.0, 0.3, 4.2])
-    rows = [_studio(s, (20.5, y + 0.5), res=res, eye=eye, lens=1.2) for y in range(0, 90)]
+    rows = [_studio(s, (20.5, y + 0.5), res=res, eye=eye, lens=1.2) for y in range(90)]
     lum = np.array([r @ [0.2126, 0.7152, 0.0722] for r in rows])
     assert np.max(np.abs(np.diff(lum))) < 0.02
 
@@ -492,14 +594,15 @@ def test_silhouettes_are_covered_by_the_cone_not_cut():
     edge = _pixel_of(s, [0.45, 0.0, 0.0], res)
     row = [_studio(s, (edge[0] + dx, edge[1]), res) for dx in np.linspace(-3, 3, 25)]
     lum = np.array([r @ [0.2126, 0.7152, 0.0722] for r in row])
-    assert np.max(np.abs(np.diff(lum))) < 0.6 * np.ptp(lum)              # at least two steps across the edge
+    assert np.max(np.abs(np.diff(lum))) < 0.6 * np.ptp(lum)  # at least two steps across the edge
 
 
 def test_debug_views_are_finite_and_the_step_heat_rises_toward_the_silhouette():
     s = twin("studio_object")
     for view in range(1, 6):
         v = _studio(s, (80.5, 45.5), view=view)
-        assert np.all(np.isfinite(v)) and v.min() >= 0.0, view
+        assert np.all(np.isfinite(v)), view
+        assert v.min() >= 0.0, view
     centre = _studio(s, _pixel_of(s, [0.0, 0.0, 0.45]), view=1)
     rim = _studio(s, _pixel_of(s, [0.445, 0.0, 0.05]), view=1)
     assert rim.sum() > centre.sum()
@@ -522,8 +625,10 @@ def library():
 def _module(lib, file, table=None):
     table = table or {**RECIPES, **HELPERS}
     name = table[file]
-    assert name in lib.modules, f"no module named {name} (expected in arsenal/web/glsl/{file}); " \
-                                f"quarantined: {[p for p in lib.problems if file in p['path'].replace(chr(92), '/')]}"
+    assert name in lib.modules, (
+        f"no module named {name} (expected in arsenal/web/glsl/{file}); "
+        f"quarantined: {[p for p in lib.problems if file in p['path'].replace(chr(92), '/')]}"
+    )
     m = lib.modules[name]
     assert Path(m.path).resolve() == (LIB / file).resolve(), f"{name} lives in {m.path}, not {file}"
     return m
@@ -552,23 +657,35 @@ def test_recipe_headers_carry_every_library_field(library, file):
     h = m.header
     g = _group(GROUP_OF[m.name])
     cats = {c["id"]: c for c in _atlas()["categories"]}
-    assert h["name"] == RECIPES[file] and h["kind"] == "recipe"
-    assert h["cat"] in cats and h["family"] == cats[h["cat"]]["family"]
-    assert re.fullmatch(r"\d+\.\d+\.\d+", h["version"]) and 50 <= h["order"] <= 90
+    assert h["name"] == RECIPES[file]
+    assert h["kind"] == "recipe"
+    assert h["cat"] in cats
+    assert h["family"] == cats[h["cat"]]["family"]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", h["version"])
+    assert 50 <= h["order"] <= 90
     assert h["license"] == "Apache-2.0"
-    assert isinstance(h["credits"], list) and h["credits"] and all("http" in c for c in h["credits"])
-    assert h["cost"]["class"] == g["cost"] and h["cost"]["tex"] == 0 and h["cost"].get("loop")
+    assert isinstance(h["credits"], list)
+    assert h["credits"]
+    assert all("http" in c for c in h["credits"])
+    assert h["cost"]["class"] == g["cost"]
+    assert h["cost"]["tex"] == 0
+    assert h["cost"].get("loop")
     for key in ("contract", "note"):
-        assert isinstance(h[key], str) and len(h[key]) > 120, key
-    assert h["status"] == "P0" and h["targets"]["glsl"] == "300es"
+        assert isinstance(h[key], str), key
+        assert len(h[key]) > 120, key
+    assert h["status"] == "P0"
+    assert h["targets"]["glsl"] == "300es"
     assert set(h["targets"]["needs"]) <= set(M.KNOWN_NEEDS)
-    assert h["card"] == f"{m.name}.card" and (LIB / "cards" / h["card"]).is_file()
+    assert h["card"] == f"{m.name}.card"
+    assert (LIB / "cards" / h["card"]).is_file()
     assert sorted(h["exemplars"]) == sorted(g["exemplars"])
-    assert h["learn"] and all(isinstance(x, str) for x in h["learn"])
+    assert h["learn"]
+    assert all(isinstance(x, str) for x in h["learn"])
     for path in h["twin"].split(";"):
         assert (REPO / path.strip().split(":")[0]).is_file()
     assert sorted(h.get("hooks") or []) == sorted(g["hook_signatures"].values())
-    assert isinstance(h.get("debug"), list) and h["debug"]
+    assert isinstance(h.get("debug"), list)
+    assert h["debug"]
 
 
 @pytest.mark.parametrize("file", sorted(RECIPES))
@@ -583,16 +700,18 @@ def test_every_knob_is_a_valid_descriptor_with_a_uniform_and_an_entry_argument(l
         # Vandor's ruling (b), 2026-10-13: u_<recipeCamel>_<param>, one rule across every group recipe
         assert p["uniform"] == f"u_{camel}_{p['name']}", p["uniform"]
         if "choices" not in p:
-            assert {"unit", "range", "step"} <= set(p) and p["unit"] in P.NUMERIC_UNITS, p
+            assert {"unit", "range", "step"} <= set(p), p
+            assert p["unit"] in P.NUMERIC_UNITS, p
         else:
-            assert [c["value"] for c in p["choices"]] == list(range(len(p["choices"]))), \
+            assert [c["value"] for c in p["choices"]] == list(range(len(p["choices"]))), (
                 "choices are numbered 0, 1, 2, ... so a card's const int holds the same number the Workbench writes"
+            )
     assert len({p["uniform"] for p in params}) == len(params)
     descriptors = P.params_from_module(m.header)
     assert P.check_descriptors(descriptors) == [], P.check_descriptors(descriptors)
     args = _entry_args(m)
-    assert [a[1] for a in args[-len(params):]] == names, "the knobs are the entry's last arguments, in header order"
-    for (typ, _), p in zip(args[-len(params):], params):
+    assert [a[1] for a in args[-len(params) :]] == names, "the knobs are the entry's last arguments, in header order"
+    for (typ, _), p in zip(args[-len(params) :], params, strict=False):
         assert typ == ("int" if "choices" in p else "float"), (p["name"], typ)
 
 
@@ -602,7 +721,7 @@ def test_the_recipe_reaches_every_required_part_and_one_of_each_alternative(libr
     up, such as uvCentered) by the recipe's own card, the reference host."""
     m = _module(library, file)
     g = _group(GROUP_OF[m.name])
-    graph = {}                                                           # function -> the functions its body calls
+    graph = {}  # function -> the functions its body calls
     for name in library.resolve([m.name]):
         code = M.strip_comments(library.modules[name].body)
         for d in M.DEFINITION_RE.finditer(code):
@@ -640,12 +759,14 @@ def test_each_module_composes_and_lints_clean(library, file):
 def test_each_module_has_a_card_that_builds_and_binds_its_knobs_at_their_defaults(library, file):
     m = _module(library, file)
     card = K.load_card(m.name)
-    assert m.name in card.uses and card.note
+    assert m.name in card.uses
+    assert card.note
     built = K.build_card(card, library=library)
     assert m.name in built["card"]["modules"]
     if m.kind != "recipe":
         return
-    assert list(card.times) == [0.0, 2.0, 4.0] and card.size == (480, 270)
+    assert list(card.times) == [0.0, 2.0, 4.0]
+    assert card.size == (480, 270)
     body = M.strip_comments(card.body)
     for p in m.header["params"]:
         want = p["default"]
@@ -654,19 +775,24 @@ def test_each_module_has_a_card_that_builds_and_binds_its_knobs_at_their_default
         mm = re.search(rf"^\s*const\s+(float|int)\s+{p['uniform']}\s*=\s*([-0-9.eE]+)\s*;", body, re.M)
         assert mm, f"{card.name} does not hold {p['uniform']} as a const (the Workbench binds a knob there)"
         assert float(mm.group(2)) == float(want), (p["uniform"], mm.group(2), want)
-        assert re.search(rf"\b{p['uniform']}\b", body[mm.end():]), f"{p['uniform']} is declared and never used"
+        assert re.search(rf"\b{p['uniform']}\b", body[mm.end() :]), f"{p['uniform']} is declared and never used"
 
 
 def test_parity_helper_header_follows_the_atlas(library):
     m = _module(library, "composite/parity.glsl")
     h = m.header
     part = next(p for p in _atlas()["parts"] if "cmpXor" in p["functions"])
-    assert h["kind"] == "helper" and h["cat"] == part["category"] == "K3" and h["family"] == "K"
-    assert set(m.functions) == {"cmpXor"} and h["license"] == "Apache-2.0"
-    assert all("http" in c for c in h["credits"]) and 10 <= h["order"] <= 30
-    assert sorted(h["exemplars"]) == sorted(part["exemplars"]) and h["status"] == "P1"
+    assert h["kind"] == "helper"
+    assert h["cat"] == part["category"] == "K3"
+    assert h["family"] == "K"
+    assert set(m.functions) == {"cmpXor"}
+    assert h["license"] == "Apache-2.0"
+    assert all("http" in c for c in h["credits"])
+    assert 10 <= h["order"] <= 30
+    assert sorted(h["exemplars"]) == sorted(part["exemplars"])
+    assert h["status"] == "P1"
     assert (REPO / h["twin"].split(":")[0]).is_file()
-    defs = [d for d in M.DEFINITION_RE.finditer(M.strip_comments(m.body))]
+    defs = list(M.DEFINITION_RE.finditer(M.strip_comments(m.body)))
     assert [(d.group(1), d.group(2)) for d in defs] == [("float", "cmpXor")]
 
 
@@ -674,7 +800,8 @@ def test_no_module_redeclares_a_batch_a_name_or_reaches_for_the_sine_hash(librar
     for file in {**RECIPES, **HELPERS}:
         m = _module(library, file)
         code = M.strip_comments(m.body)
-        assert "hashSine" not in code and not re.search(r"\bsin\s*\(\s*dot", code)
+        assert "hashSine" not in code
+        assert not re.search(r"\bsin\s*\(\s*dot", code)
         assert not re.search(r"\bconst\s+float\s+(PI|TAU|PHI|SQRT3)\b", code)
         assert not re.search(r"\buniform\b", code), "recipes take knobs as arguments; the host declares the uniforms"
     assert "composite-parity" in library.resolve(["hex-neon"])
@@ -761,54 +888,96 @@ def _twin_parity_image(studio_every=2):
     best = np.stack([np.full((64, 64), 1e9), np.zeros((64, 64))], -1)
     best = n.neonPathStep(p, (-0.9, -0.6), (0.1, 0.5), (0.0, 0.5), best)
     best = n.neonPathStep(p, (0.1, 0.5), (0.8, -0.2), (0.5, 1.0), best)
-    v = n.neonLine(z, best[..., 0], px, np.array([0.2, 0.55, 1.0]), 1.0 - 0.5 * best[..., 1], 0.0, 1.6, 14.0, 0, 1.6,
-                   0, 0.35, 0)
+    v = n.neonLine(
+        z, best[..., 0], px, np.array([0.2, 0.55, 1.0]), 1.0 - 0.5 * best[..., 1], 0.0, 1.6, 14.0, 0, 1.6, 0, 0.35, 0
+    )
     seg = d2.sd2Segment(p.astype(F32), np.array([-0.8, 0.6], F32), np.array([0.9, -0.7], F32))[..., 0]
     v = n.neonLine(v, seg, px, np.array([1.0, 0.35, 0.2]), 0.8, 0.0, 1.6, 14.0, 0, 1.6, 0, 0.35, 0)
     out[:, 0:64] = 0.5 * v
     depth = local[..., 0] / 64.0
-    v = n.neonLine(z, np.abs(p[..., 1] - 0.3 * p[..., 0]), px, np.array([0.6, 0.3, 1.0]), 1.0, depth, 2.5, 10.0, 1,
-                   3.0, 1, 1.0, 0)
+    v = n.neonLine(
+        z, np.abs(p[..., 1] - 0.3 * p[..., 0]), px, np.array([0.6, 0.3, 1.0]), 1.0, depth, 2.5, 10.0, 1, 3.0, 1, 1.0, 0
+    )
     v = n.neonLine(v, np.abs(p[..., 1] + 0.5), px, np.array([0.1, 0.9, 0.7]), 0.7, 0.0, 0.7, 20.0, 2, 0.5, 1, 0.0, 0)
     out[:, 64:128] = 0.5 * v
     dd, halo = local[..., 0] * 0.5, 4.0 + local[..., 1] * 0.25
     out[:, 128:192] = np.stack([n.neonProfile(dd, halo, k) for k in range(3)], -1)
-    out[:, 192:256] = 0.5 * h.hexNeon(p * 0.6, px * 0.6, 1.7, np.zeros(2), 0.22, 1.5, 7.0, 0.6, 0.55, 0.35, 0, 0.1, 0, 0)
-    out[:, 256:320] = 0.5 * h.hexNeon(p * 0.6, px * 0.6, 4.1, np.array([0.2, -0.1]), 0.25, 2.0, 5.0, 0.9, 1.0, 0.8, 1,
-                                      0.1, 1, 0)
+    out[:, 192:256] = 0.5 * h.hexNeon(
+        p * 0.6, px * 0.6, 1.7, np.zeros(2), 0.22, 1.5, 7.0, 0.6, 0.55, 0.35, 0, 0.1, 0, 0
+    )
+    out[:, 256:320] = 0.5 * h.hexNeon(
+        p * 0.6, px * 0.6, 4.1, np.array([0.2, -0.1]), 0.25, 2.0, 5.0, 0.9, 1.0, 0.8, 1, 0.1, 1, 0
+    )
     out[:, 320:384] = h.hexNeon(p * 0.6, px * 0.6, 2.9, np.zeros(2), 0.3, 1.5, 7.0, 0.6, 1.0, 0.35, 0, 0.2, 2, 0)
-    fill = lambda c: d2.aaFill(d2.sd2Circle((p - c).astype(F32), F32(0.5)), F32(px)).astype(np.float64)
+
+    def fill(c):
+        return d2.aaFill(d2.sd2Circle((p - c).astype(F32), F32(0.5)), F32(px)).astype(np.float64)
+
     a, b, c = fill([-0.25, 0.1]), fill([0.25, 0.1]), fill([0.0, -0.35])
     out[:, 384:448] = np.stack([x.cmpXor(a, b), x.cmpXor(b, c), x.cmpXor(x.cmpXor(a, b), c)], -1)
     for j in range(0, 64, studio_every):
         for i in range(0, 64, studio_every):
-            out[j, 448 + i] = 0.6 * s.studioObject(np.array([0.6, 0.8, 3.9]), np.zeros(3), local[j, i],
-                                                   np.array([64.0, 64.0]), 3.2, 0.85, 48.0, 0.42, 0.5, 0.04, 0.0, 0.25, 6.0,
-                                                   0.35, 1.1, 0.62, 0.75, 96.0, 1.0, 0, _parity_scene, _parity_material)
-    return (np.round(np.clip(out, 0, 1) * 255.0))[::-1]                  # PNG rows run top down
+            out[j, 448 + i] = 0.6 * s.studioObject(
+                np.array([0.6, 0.8, 3.9]),
+                np.zeros(3),
+                local[j, i],
+                np.array([64.0, 64.0]),
+                3.2,
+                0.85,
+                48.0,
+                0.42,
+                0.5,
+                0.04,
+                0.0,
+                0.25,
+                6.0,
+                0.35,
+                1.1,
+                0.62,
+                0.75,
+                96.0,
+                1.0,
+                0,
+                _parity_scene,
+                _parity_material,
+            )
+    return (np.round(np.clip(out, 0, 1) * 255.0))[::-1]  # PNG rows run top down
 
 
 @pytest.mark.slow
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH (the headless driver)")
 def test_the_glsl_matches_its_twins_on_swiftshader(tmp_path):
     from PIL import Image
+
     cards_dir = tmp_path / "cards"
     cards_dir.mkdir()
     (cards_dir / "parity-groups-g2.card").write_text(PARITY_CARD, encoding="utf-8", newline="\n")
-    report = K.render_cards(["parity-groups-g2"], cards_dir=cards_dir, out_root=tmp_path / "out",
-                            allow_tracked=True, lock_wait_min=5, quiet=True)
+    report = K.render_cards(
+        ["parity-groups-g2"],
+        cards_dir=cards_dir,
+        out_root=tmp_path / "out",
+        allow_tracked=True,
+        lock_wait_min=5,
+        quiet=True,
+    )
     if report["driver"].get("error") and "lock" in str(report["driver"]["error"]).lower():
         pytest.skip(f"the GPU lock stayed busy: {report['driver']['error']}")
     row = report["cards"][0]
-    assert row["compile_ok"] is True and row["nan_pixels"] == 0, row
+    assert row["compile_ok"] is True, row
+    assert row["nan_pixels"] == 0, row
     png = sorted((tmp_path / "out" / "parity-groups-g2").glob("t0*.png"))[0]
     gpu = np.asarray(Image.open(png).convert("RGB")).astype(np.float64)
     cpu = _twin_parity_image()
     miss = np.abs(gpu - cpu)
-    smooth = miss[:, 0:192]                                       # lines and profiles: continuous everywhere
-    assert smooth.max() <= 3 and np.mean(smooth > 1) < 0.003, f"neon drift: max {smooth.max()}"
-    tiles = miss[:, 192:448]                                      # lattices and coverage: a tie may land in the next cell
+    smooth = miss[:, 0:192]  # lines and profiles: continuous everywhere
+    assert smooth.max() <= 3, f"neon drift: max {smooth.max()}"
+    assert np.mean(smooth > 1) < 0.003, f"neon drift: max {smooth.max()}"
+    tiles = miss[:, 192:448]  # lattices and coverage: a tie may land in the next cell
     assert np.mean(tiles > 2) < 0.01, f"hex/parity drift: {np.mean(tiles > 2):.4f} of pixels"
-    studio = miss[:, 448:512][np.isfinite(cpu[:, 448:512])]       # a march: silhouettes may step differently
-    assert np.mean(studio > 3) < 0.03 and np.mean(studio) < 1.0, \
+    studio = miss[:, 448:512][np.isfinite(cpu[:, 448:512])]  # a march: silhouettes may step differently
+    assert np.mean(studio > 3) < 0.03, (
         f"studio drift: {np.mean(studio > 3):.4f} of pixels over 3, mean {np.mean(studio):.3f}"
+    )
+    assert np.mean(studio) < 1.0, (
+        f"studio drift: {np.mean(studio > 3):.4f} of pixels over 3, mean {np.mean(studio):.3f}"
+    )

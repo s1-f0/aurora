@@ -46,6 +46,7 @@ Run::
 
     py -m pytest tests/test_the_lock_scan_does_not_cost_the_whole_keyspace.py -q
 """
+
 from __future__ import annotations
 
 import sys
@@ -66,19 +67,20 @@ class CountingClient:
     """
 
     def __init__(self, total_keys: int = 66_700, matching: int = 0):
-        self.keys = ["bifrost:other:%d" % i for i in range(total_keys - matching)]
-        self.keys += ["bifrost:lock:p%d" % i for i in range(matching)]
+        self.keys = [f"bifrost:other:{i}" for i in range(total_keys - matching)]
+        self.keys += [f"bifrost:lock:p{i}" for i in range(matching)]
         self.scan_calls = 0
 
     def scan(self, cursor=0, match=None, count=None, **_kw):
         self.scan_calls += 1
-        page = int(count or 10)                      # Redis's own default is 10
+        page = int(count or 10)  # Redis's own default is 10
         start = int(cursor)
-        chunk = self.keys[start:start + page]
+        chunk = self.keys[start : start + page]
         nxt = start + page
         if nxt >= len(self.keys):
             nxt = 0
         import fnmatch
+
         hits = [k for k in chunk if (match is None or fnmatch.fnmatch(k, match))]
         return nxt, hits
 
@@ -86,8 +88,7 @@ class CountingClient:
         cursor = 0
         while True:
             cursor, data = self.scan(cursor=cursor, match=match, count=count)
-            for d in data:
-                yield d
+            yield from data
             if cursor == 0:
                 return
 
@@ -103,18 +104,20 @@ def test_listing_locks_does_not_scale_with_the_keyspace():
     6,503 against the live server. A bounded scan does it in tens.
     """
     from core.comm.locks import LockManager
+
     c = CountingClient(total_keys=66_700, matching=0)
     lm = LockManager("probe", client=c)
     try:
         got = lm.list_locks()
     except TypeError:
         pytest.skip("LockManager does not accept an injected client on this checkout")
-    assert got == [], "the synthetic keyspace holds no locks; got %r" % (got,)
+    assert got == [], f"the synthetic keyspace holds no locks; got {got!r}"
     assert c.scan_calls <= 200, (
-        "list_locks issued %d SCAN round trips over a 66,700-key keyspace holding ZERO locks. "
+        f"list_locks issued {c.scan_calls} SCAN round trips over a 66,700-key keyspace holding ZERO locks. "
         "core/comm/locks.py:157 calls scan_iter without `count`, so Redis's default of 10 keys per "
         "round trip makes the cost O(keyspace) and independent of how many locks exist. Measured "
-        "live: 6,503 calls, 3.96s -- and 0.05s with count=1000." % c.scan_calls)
+        "live: 6,503 calls, 3.96s -- and 0.05s with count=1000."
+    )
 
 
 def test_the_unread_counter_does_not_buy_locks_it_discards():
@@ -125,24 +128,28 @@ def test_the_unread_counter_does_not_buy_locks_it_discards():
     call graph rather than on time, so making SCAN fast cannot silence it.
     """
     import ast
+
     src = (ROOT / "agent" / "harness" / "context.py").read_text(encoding="utf-8", errors="replace")
     tree = ast.parse(src)
-    fn = next((n for n in ast.walk(tree)
-               if isinstance(n, ast.FunctionDef) and n.name == "_unread_count"), None)
+    fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_unread_count"), None)
     assert fn is not None, "no _unread_count to inspect"
-    calls = {getattr(c.func, "attr", None) or getattr(c.func, "id", None)
-             for c in ast.walk(fn) if isinstance(c, ast.Call)}
+    calls = {
+        getattr(c.func, "attr", None) or getattr(c.func, "id", None) for c in ast.walk(fn) if isinstance(c, ast.Call)
+    }
     if "collect_boot_bifrost" not in calls:
-        return                                        # already routed somewhere cheaper
+        return  # already routed somewhere cheaper
     kw = set()
     for c in ast.walk(fn):
-        if isinstance(c, ast.Call) and (getattr(c.func, "attr", None)
-                                        or getattr(c.func, "id", None)) == "collect_boot_bifrost":
+        if (
+            isinstance(c, ast.Call)
+            and (getattr(c.func, "attr", None) or getattr(c.func, "id", None)) == "collect_boot_bifrost"
+        ):
             kw |= {k.arg for k in (c.keywords or [])}
     assert kw & {"with_locks", "locks", "want_locks", "cheap", "counts_only"}, (
         "_unread_count calls collect_boot_bifrost with no way to decline the lock peek, so a "
         "once-per-turn counter pays for presence AND a full lock enumeration and uses neither. "
-        "Keywords passed: %r" % (sorted(kw),))
+        f"Keywords passed: {sorted(kw)!r}"
+    )
 
 
 # ------------------------------------------------------------------ ratchets
@@ -150,6 +157,7 @@ def test_a_real_lock_is_still_found():
     """RATCHET. Speed is worthless if the door stops seeing locks. A bounded scan must return the
     same set a slow one would."""
     import json as _json
+
     from core.comm.locks import LockManager
 
     class WithLock(CountingClient):
@@ -164,7 +172,7 @@ def test_a_real_lock_is_still_found():
         got = lm.list_locks()
     except TypeError:
         pytest.skip("LockManager does not accept an injected client on this checkout")
-    assert len(got) == 3, "expected the 3 seeded locks, got %r" % (got,)
+    assert len(got) == 3, f"expected the 3 seeded locks, got {got!r}"
     assert all(g.get("path") == "core/x.py" for g in got)
 
 
@@ -172,6 +180,7 @@ def test_the_seq_key_is_still_skipped():
     """RATCHET on an existing behaviour that is easy to drop while editing this loop:
     `:_seq` keys are bookkeeping, not locks."""
     import json as _json
+
     from core.comm.locks import LockManager
 
     class WithSeq(CountingClient):
@@ -188,4 +197,4 @@ def test_the_seq_key_is_still_skipped():
         got = lm.list_locks()
     except TypeError:
         pytest.skip("LockManager does not accept an injected client on this checkout")
-    assert len(got) == 1, "the :_seq bookkeeping key leaked into the lock list: %r" % (got,)
+    assert len(got) == 1, f"the :_seq bookkeeping key leaked into the lock list: {got!r}"

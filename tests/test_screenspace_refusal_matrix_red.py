@@ -39,10 +39,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # names the missing seam and the refusal shape it must eventually return.
 _IMPORT_ERROR = None  # so the skipif reason string is safe when the import SUCCEEDS
 try:
-    from core.screenspace import capture  # noqa: F401  (capture.screen is the observe seam)
-    from core.screenspace import peek, refs  # noqa: F401
+    from core.screenspace import (  # noqa: F401  # imported to prove the seam exists; a failure is reported by the skipif
+        capture,  # capture.screen is the observe seam
+        peek,
+        refs,
+    )
+
     _IMPORT_OK = True
-except Exception as exc:  # noqa: BLE001  (module may not exist yet — that IS the red)
+except Exception as exc:  # noqa: BLE001  # the module may not exist yet, and that IS the red
     _IMPORT_OK = False
     _IMPORT_ERROR = exc
 
@@ -50,11 +54,12 @@ except Exception as exc:  # noqa: BLE001  (module may not exist yet — that IS 
 pytestmark = pytest.mark.skipif(
     not _IMPORT_OK,
     reason="core/screenspace not yet built — RED: engine must satisfy this contract "
-           f"(import failed: {_IMPORT_ERROR!r})",
+    f"(import failed: {_IMPORT_ERROR!r})",
 )
 
 
 # --------------------------------------------------------------------------- TIER-A: OBSERVE
+
 
 def test_a1_locked_workstation_capture_refuses():
     """§4.5 'locked workstation': an L5 pixels-screen capture of the secure desktop
@@ -97,14 +102,15 @@ def test_a2_wrong_window_l4_refuses():
     assert result.source == "screen"
     assert hasattr(result, "focus")
     assert hasattr(result, "stale_ms")
-    assert isinstance(result.gen, int) and result.gen >= 0
+    assert isinstance(result.gen, int)
+    assert result.gen >= 0
 
 
 def test_a3_stale_ref_observe_refuses():
     """Stable-ref + gen currency (your (d) pin, §2 L3 / §3 'see-side currency is
     refs+gen'): observing against a ref whose gen has advanced must surface
     stale_ms rather than silently returning the stale snapshot."""
-    from core.screenspace import refs, peek
+    from core.screenspace import peek, refs
 
     # CONTRACT (present teeth): refs() returns structured Ref objects carrying a
     # monotone gen, and peek()'s result carries gen + stale_ms so a stale ref is
@@ -116,11 +122,14 @@ def test_a3_stale_ref_observe_refuses():
     r = refs(scope="foreground")
     assert isinstance(r, list)
     p = peek(level="L0")
-    assert hasattr(p, "gen") and hasattr(p, "stale_ms")
-    assert isinstance(p.gen, int) and p.gen >= 0
+    assert hasattr(p, "gen")
+    assert hasattr(p, "stale_ms")
+    assert isinstance(p.gen, int)
+    assert p.gen >= 0
 
 
 # --------------------------------------------------------------------------- TIER-B: ACT (gated on step 0)
+
 
 def test_b1_focus_theft_mid_action_refuses():
     """§4.5 'focus theft mid-action': locate→act is two-phase; if focus moves between

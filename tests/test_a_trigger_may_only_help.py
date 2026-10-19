@@ -48,6 +48,7 @@ Run::
 
     py -m pytest tests/test_a_trigger_may_only_help.py -q
 """
+
 from __future__ import annotations
 
 import sys
@@ -56,7 +57,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from core.recall import at_action as A  # noqa: E402
+from core.recall import at_action as A  # noqa: E402  # after the sys.path bootstrap
 
 QUERY = "fix the zebrafish counter in the narwhal pipeline"
 
@@ -64,8 +65,9 @@ QUERY = "fix the zebrafish counter in the narwhal pipeline"
 #: blend `0.6*trigger + 0.4*prose`, a perfect prose score of 1.0 can never be improved by any
 #: trigger at all, so a perfect-prose fixture could only ever demonstrate harm. A partial match
 #: is the honest case and the one where a good trigger has room to pay.
-PROSE = ("the counter overflows after nine runs on a cold store, and the operator sees "
-         "nothing in the log until the ninth")
+PROSE = (
+    "the counter overflows after nine runs on a cold store, and the operator sees nothing in the log until the ninth"
+)
 
 #: A trigger about something else entirely. This is the COMMON case, not a pathological one:
 #: a trigger names one situation, and most moments are not that situation.
@@ -77,8 +79,13 @@ ON_TOPIC_TRIGGER = "Use when the zebrafish counter overflows, before touching th
 
 def _score(trigger: str) -> float:
     """Score one projected item through the function the Ranker actually calls."""
-    item = {"text": PROSE, "match_text": PROSE, "source": "learn:experiment:probe",
-            "trigger": trigger, "trigger_terms": []}
+    item = {
+        "text": PROSE,
+        "match_text": PROSE,
+        "source": "learn:experiment:probe",
+        "trigger": trigger,
+        "trigger_terms": [],
+    }
     by_text = {PROSE: item}
     fn = A._trigger_aware_relevance(by_text)
     return float(fn(PROSE, QUERY))
@@ -90,11 +97,11 @@ def test_an_off_topic_trigger_does_not_cost_the_lesson_its_prose_match():
     without = _score("")
     with_off = _score(OFF_TOPIC_TRIGGER)
     assert with_off >= without - 1e-9, (
-        "writing a trigger COST this lesson %.1f%% of its score (%.3f -> %.3f) at a moment the "
+        f"writing a trigger COST this lesson {100.0 * (1 - (with_off / without if without else 1)):.1f}% of its score ({without:.3f} -> {with_off:.3f}) at a moment the "
         "trigger does not name. AGENTS.md instructs every agent to write triggers; the scorer "
         "charges 0.6 of the weight to a term that misses, so obeying the doctrine is a penalty "
         "at every moment the lesson was not written for."
-        % (100.0 * (1 - (with_off / without if without else 1)), without, with_off))
+    )
 
 
 def test_an_on_topic_trigger_still_WINS():
@@ -104,8 +111,9 @@ def test_an_on_topic_trigger_still_WINS():
     without = _score("")
     with_on = _score(ON_TOPIC_TRIGGER)
     assert with_on > without + 1e-9, (
-        "an ON-TOPIC trigger no longer beats having no trigger (%.3f vs %.3f) -- the fix "
-        "removed the signal instead of removing the penalty" % (with_on, without))
+        f"an ON-TOPIC trigger no longer beats having no trigger ({with_on:.3f} vs {without:.3f}) -- the fix "
+        "removed the signal instead of removing the penalty"
+    )
 
 
 def test_the_on_topic_trigger_outranks_the_off_topic_one():
@@ -126,14 +134,10 @@ def test_a_trigger_never_lowers_a_score_across_a_spread_of_queries():
     ]
     bad = []
     for q in queries:
-        item = {"text": PROSE, "match_text": PROSE, "source": "s",
-                "trigger": OFF_TOPIC_TRIGGER, "trigger_terms": []}
-        plain = {"text": PROSE, "match_text": PROSE, "source": "s",
-                 "trigger": "", "trigger_terms": []}
+        item = {"text": PROSE, "match_text": PROSE, "source": "s", "trigger": OFF_TOPIC_TRIGGER, "trigger_terms": []}
+        plain = {"text": PROSE, "match_text": PROSE, "source": "s", "trigger": "", "trigger_terms": []}
         with_t = float(A._trigger_aware_relevance({PROSE: item})(PROSE, q))
         without = float(A._trigger_aware_relevance({PROSE: plain})(PROSE, q))
         if with_t < without - 1e-9:
             bad.append((q[:46], round(without, 3), round(with_t, 3)))
-    assert not bad, (
-        "a trigger lowered the score on %d of %d queries: %s"
-        % (len(bad), len(queries), bad))
+    assert not bad, f"a trigger lowered the score on {len(bad)} of {len(queries)} queries: {bad}"

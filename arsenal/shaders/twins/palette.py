@@ -16,14 +16,23 @@ so it reproduces the piano's scan without its 68-step loop.
 Apache-2.0, Akashic Aurora. Written fresh from the mathematics; credits in colour/palette.glsl's header (Inigo Quilez's
 cosine palettes; Bjorn Ottosson's OKLab; the piano's own palette, piano.js).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
 import numpy as np
 
-from .colour import (linearFromOklab, luminance, mixOklab, oklabFromLinear, oklabFromOklch, oklchClip,
-                     oklchCusp, oklchMaxChroma, srgbDecode)
+from .colour import (
+    linearFromOklab,
+    luminance,
+    oklabFromLinear,
+    oklabFromOklch,
+    oklchClip,
+    oklchCusp,
+    oklchMaxChroma,
+    srgbDecode,
+)
 
 TAU = 2.0 * np.pi
 
@@ -35,16 +44,17 @@ def _v(x):
 @dataclass(frozen=True)
 class PitchPalette:
     """The knobs of palPitchFifths, field for field as the GLSL struct PitchPalette declares them."""
-    hueC: float        # hue of pitch class C, in turns (the piano: 200 degrees)
-    hueStep: float     # hue added per fifth, in turns (1/12: twelve fifths close the circle)
-    baseL: float       # the lightness every hue starts from
-    cuspPull: float    # 0..1: how far each hue moves toward its own most colourful lightness
-    cuspGrid: float    # the cusp lightness snaps to this grid (the piano scans in 0.01 steps); 0 = the exact cusp
-    edge: float        # the fraction of the sRGB chroma edge used (0.95: near the wall, never on it)
-    gamutEps: float    # the in-gamut tolerance of the chroma search (the piano's 1e-4)
+
+    hueC: float  # hue of pitch class C, in turns (the piano: 200 degrees)
+    hueStep: float  # hue added per fifth, in turns (1/12: twelve fifths close the circle)
+    baseL: float  # the lightness every hue starts from
+    cuspPull: float  # 0..1: how far each hue moves toward its own most colourful lightness
+    cuspGrid: float  # the cusp lightness snaps to this grid (the piano scans in 0.01 steps); 0 = the exact cusp
+    edge: float  # the fraction of the sRGB chroma edge used (0.95: near the wall, never on it)
+    gamutEps: float  # the in-gamut tolerance of the chroma search (the piano's 1e-4)
     lumaTarget: float  # the shared luminance every colour is pulled toward; 0 = no pull
-    lumaPull: float    # 0..1: how far toward it (the piano: 0.65)
-    octaveL: float     # lightness added per octave above octave 4 (the piano: 0, it ignores the octave)
+    lumaPull: float  # 0..1: how far toward it (the piano: 0.65)
+    octaveL: float  # lightness added per octave above octave 4 (the piano: 0, it ignores the octave)
 
 
 # The geometric mean luminance of the piano's twelve un-pulled pitch colours. palPitchLumaMean computes it; a test holds
@@ -54,8 +64,18 @@ PIANO_LUMA_TARGET = 0.37631920377545836
 
 def palPitchPiano() -> PitchPalette:
     """The piano page's pitch palette (arsenal/web/piano.js, colour mode "pitch")."""
-    return PitchPalette(hueC=200.0 / 360.0, hueStep=1.0 / 12.0, baseL=0.72, cuspPull=0.75, cuspGrid=0.01, edge=0.95,
-                        gamutEps=1e-4, lumaTarget=PIANO_LUMA_TARGET, lumaPull=0.65, octaveL=0.0)
+    return PitchPalette(
+        hueC=200.0 / 360.0,
+        hueStep=1.0 / 12.0,
+        baseL=0.72,
+        cuspPull=0.75,
+        cuspGrid=0.01,
+        edge=0.95,
+        gamutEps=1e-4,
+        lumaTarget=PIANO_LUMA_TARGET,
+        lumaPull=0.65,
+        octaveL=0.0,
+    )
 
 
 def palCos(t, a, b, c, d):
@@ -107,8 +127,9 @@ def palPitchFifths(pitchClass, octave, pp: PitchPalette):
     if pp.cuspGrid > 0.0:
         below = np.floor(cusp_l / pp.cuspGrid) * pp.cuspGrid
         above = below + pp.cuspGrid
-        cusp_l = np.where(oklchMaxChroma(below, hue, pp.gamutEps) >= oklchMaxChroma(above, hue, pp.gamutEps),
-                          below, above)
+        cusp_l = np.where(
+            oklchMaxChroma(below, hue, pp.gamutEps) >= oklchMaxChroma(above, hue, pp.gamutEps), below, above
+        )
     base_l = pp.baseL + pp.octaveL * (_v(octave) - 4.0)
     L = np.clip(base_l * (1.0 - pp.cuspPull) + cusp_l * pp.cuspPull, 0.0, 1.0)
     c = pp.edge * oklchMaxChroma(L, hue, pp.gamutEps)
@@ -126,5 +147,14 @@ def palPitchLumaMean(pp: PitchPalette) -> float:
     return float(np.exp(np.mean(np.log(lum))))
 
 
-__all__ = ["PitchPalette", "palPitchPiano", "palCos", "palCosLinear", "palOklch", "palRamp3", "palHeatPowers",
-           "palPitchFifths", "palPitchLumaMean"]
+__all__ = [
+    "PitchPalette",
+    "palCos",
+    "palCosLinear",
+    "palHeatPowers",
+    "palOklch",
+    "palPitchFifths",
+    "palPitchLumaMean",
+    "palPitchPiano",
+    "palRamp3",
+]

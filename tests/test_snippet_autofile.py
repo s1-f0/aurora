@@ -1,4 +1,4 @@
-"""PINS: scripts/hooks/snippet_autofile.py -- inline Python goes to a file first (version 1).
+"""PINS: agent/harness/hooks/snippet_autofile.py -- inline Python goes to a file first (version 1).
 
 Spec (binding): research/in-flight/snippet-autofile-2026-10-13/design-notes.md, sections
 "Version 1 spec" and "Heimdall's fence read". Daniel, 2026-10-13: "For point 1, can we put in an
@@ -38,6 +38,7 @@ placeholders by fill(). Every test writes only under pytest's tmp_path; nothing 
 
 Run: py -m pytest tests/test_snippet_autofile.py -q
 """
+
 from __future__ import annotations
 
 import base64
@@ -56,7 +57,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-HOOK = ROOT / "scripts" / "hooks" / "snippet_autofile.py"
+HOOK = ROOT / "agent" / "harness" / "hooks" / "snippet_autofile.py"  # scripts/hooks/ holds a runpy shim
 BASH = Path(r"C:\Program Files\Git\bin\bash.exe")
 POWERSHELL = shutil.which("powershell.exe")
 NOW = 1760389200.0
@@ -66,11 +67,17 @@ need_ps = pytest.mark.skipif(not POWERSHELL, reason="powershell.exe is not on PA
 
 
 def fill(text: str) -> str:
-    return (text.replace("<TAB>", "\t").replace("<E>", "\u00e9").replace("<U>", "\u00fc")
-            .replace("<K>", "\u6f22").replace("<RSQ>", "\u2019"))
+    return (
+        text.replace("<TAB>", "\t")
+        .replace("<E>", "\u00e9")
+        .replace("<U>", "\u00fc")
+        .replace("<K>", "\u6f22")
+        .replace("<RSQ>", "\u2019")
+    )
 
 
 # ---------------------------------------------------------------------------------- fixtures
+
 
 @pytest.fixture(scope="module")
 def sa():
@@ -95,11 +102,16 @@ def snips(tmp_path):
 
 # ---------------------------------------------------------------------------------- helpers
 
+
 def payload(command, tool="Bash", transcript="C:/transcripts/one.jsonl", session="sess-1"):
-    return {"session_id": session, "transcript_path": transcript, "cwd": "E:\\AI-Setup",
-            "hook_event_name": "PreToolUse", "tool_name": tool,
-            "tool_input": {"command": command, "description": "pin call", "timeout": 120000,
-                           "run_in_background": False}}
+    return {
+        "session_id": session,
+        "transcript_path": transcript,
+        "cwd": "E:\\AI-Setup",
+        "hook_event_name": "PreToolUse",
+        "tool_name": tool,
+        "tool_input": {"command": command, "description": "pin call", "timeout": 120000, "run_in_background": False},
+    }
 
 
 def check_contract(out):
@@ -112,7 +124,8 @@ def check_contract(out):
     if "permissionDecision" in h:
         assert h["permissionDecision"] == "deny", h
         assert set(h) == {"hookEventName", "permissionDecision", "permissionDecisionReason"}, h
-        assert isinstance(h["permissionDecisionReason"], str) and h["permissionDecisionReason"]
+        assert isinstance(h["permissionDecisionReason"], str)
+        assert h["permissionDecisionReason"]
     elif "updatedInput" in h:
         assert set(h) == {"hookEventName", "updatedInput", "additionalContext"}, h
     else:
@@ -159,7 +172,7 @@ def split_file(path):
     data = Path(path).read_bytes()
     first = data.index(b"\n")
     second = data.index(b"\n", first + 1)
-    return data[:second + 1], data[second + 1:]
+    return data[: second + 1], data[second + 1 :]
 
 
 def bq(path):
@@ -179,8 +192,7 @@ def ps_sq(text):
 
 def bash_dq(text):
     """Encode text as the inside of a bash double-quoted string."""
-    return (text.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
-            .replace("`", "\\`"))
+    return text.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
 
 
 def lc(text, idx):
@@ -191,56 +203,55 @@ def lc(text, idx):
 
 # ---------------------------------------------------------------------------------- sources
 
-SRC_BASH_SQ = fill(r'''import re
+SRC_BASH_SQ = fill(r"""import re
 pat = re.compile(r"\bcaf<E>\d+\b")
 print(pat.findall("x caf<E>12 y"), "tab:<TAB>end", "back\\slash", "<K>")
 print(len("\n"))
-''')
+""")
 
 # Built by hand with bash's double-quote rules: \d stays \d, \\ -> \, \" -> ", \$ -> $,
 # \` -> `, and backslash-newline disappears.
 CMD_BASH_DQ = fill(r'''py -c "import re
 print(re.findall(r'\d+\\b', 'a1 b22'), \"dq\", '\$x', '\`', 'caf<E>', 'it\\'s', \
 'joined')"''')
-SRC_BASH_DQ = fill(r'''import re
-print(re.findall(r'\d+\b', 'a1 b22'), "dq", '$x', '`', 'caf<E>', 'it\'s', 'joined')''')
+SRC_BASH_DQ = fill(r"""import re
+print(re.findall(r'\d+\b', 'a1 b22'), "dq", '$x', '`', 'caf<E>', 'it\'s', 'joined')""")
 
-BODY = fill(r'''import re
+BODY = fill(r"""import re
 s = 'single' + "double"
 print(re.findall(r"\bcaf<E>\d+\b", "x caf<E>12 y"), s, "$HOME stays", "`tick`", "tab:<TAB>end")
 print("<U>n<K>", len("\\"))
-''')
+""")
 
-BODY_PLAIN = fill('''import sys
+BODY_PLAIN = fill("""import sys
 a = 1
 b = 2
 print(a + b, 'plain', "caf<E>")
-''')
+""")
 
-SRC_PS_SQ = fill(r'''import re
+SRC_PS_SQ = fill(r"""import re
 print(re.findall(r'\bcaf<E>\d+\b', 'x caf<E>12 y'), 'it' + chr(39) + 's', 'tab:<TAB>end', '<U><K>')
 # it<RSQ>s a comment with a typographic apostrophe
-print(len('\\'))''')
+print(len('\\'))""")
 
 SRC_PS_DQ = fill(r"import re; print(re.findall(r'\d+', 'a1 b22'), 'caf<E>', len('\\'))")
 
 BODY_HS = BODY.rstrip("\n")
 
-BODY_HS_DQ = fill(r'''import re
+BODY_HS_DQ = fill(r"""import re
 s = 'single' + "double" + ""
 print(re.findall(r"\bcaf<E>\d+\b", "x caf<E>12 y"), s)
-print("<U><K>", len("\\"))''')
+print("<U><K>", len("\\"))""")
 
-SRC_PS_C_HS = fill(r'''import re
+SRC_PS_C_HS = fill(r"""import re
 print(re.findall(r'\bcaf<E>\d+\b', 'x caf<E>12 y'))
 print('<U>n<K>')
-print('tab:<TAB>end')''')
+print('tab:<TAB>end')""")
 
 ROUND_TRIP = [
     ("bash-c-single", "Bash", "py -c '" + SRC_BASH_SQ + "'", SRC_BASH_SQ),
     ("bash-c-double", "Bash", CMD_BASH_DQ, SRC_BASH_DQ),
-    ("bash-c-assignment-prefix", "Bash",
-     "PYTHONIOENCODING=utf-8 python -c '" + SRC_BASH_SQ + "'", SRC_BASH_SQ),
+    ("bash-c-assignment-prefix", "Bash", "PYTHONIOENCODING=utf-8 python -c '" + SRC_BASH_SQ + "'", SRC_BASH_SQ),
     ("bash-heredoc-dash", "Bash", "py - <<'EOF'\n" + BODY + "EOF\n", BODY),
     ("bash-heredoc-implicit", "Bash", 'python3 <<"PY"\n' + BODY + "PY", BODY),
     ("bash-heredoc-space", "Bash", "py - << 'EOF'\n" + BODY + "EOF\n", BODY),
@@ -249,8 +260,12 @@ ROUND_TRIP = [
     ("ps-c-double", "PowerShell", 'py -c "' + SRC_PS_DQ + '"', SRC_PS_DQ),
     ("ps-herestring-dash", "PowerShell", "@'\n" + BODY_HS + "\n'@ | py -", BODY_HS),
     ("ps-herestring-implicit", "PowerShell", "@'\n" + BODY_HS + "\n'@ | python", BODY_HS),
-    ("ps-herestring-crlf", "PowerShell",
-     "@'\r\n" + BODY_HS.replace("\n", "\r\n") + "\r\n'@ | py -", BODY_HS.replace("\n", "\r\n")),
+    (
+        "ps-herestring-crlf",
+        "PowerShell",
+        "@'\r\n" + BODY_HS.replace("\n", "\r\n") + "\r\n'@ | py -",
+        BODY_HS.replace("\n", "\r\n"),
+    ),
     ("ps-herestring-double", "PowerShell", '@"\n' + BODY_HS_DQ + '\n"@ | py -', BODY_HS_DQ),
     ("ps-c-herestring-arg", "PowerShell", "py -c @'\n" + SRC_PS_C_HS + "\n'@", SRC_PS_C_HS),
 ]
@@ -258,8 +273,8 @@ ROUND_TRIP = [
 
 # ---------------------------------------------------------------------------------- 1. round trip
 
-@pytest.mark.parametrize("tool,command,source", [r[1:] for r in ROUND_TRIP],
-                         ids=[r[0] for r in ROUND_TRIP])
+
+@pytest.mark.parametrize(("tool", "command", "source"), [r[1:] for r in ROUND_TRIP], ids=[r[0] for r in ROUND_TRIP])
 def test_round_trip_byte_for_byte(sa, snips, tool, command, source):
     h = filed(run_decide(sa, command, tool, snips))
     files = snip_files(snips)
@@ -278,11 +293,12 @@ def test_header_is_two_lines_naming_the_command_hash_and_the_time(sa, snips):
     filed(run_decide(sa, command, "Bash", snips))
     header = split_file(snip_files(snips)[0])[0].decode("utf-8")
     lines = header.split("\n")
-    assert len(lines) == 3 and lines[2] == ""
+    assert len(lines) == 3
+    assert lines[2] == ""
     assert hashlib.sha256(command.encode("utf-8")).hexdigest()[:12] in lines[0]
     assert time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(NOW)) in lines[0]
-    assert not lines[0].startswith("#!")                 # the py launcher reads a shebang
-    assert "coding" not in header                        # nor a PEP 263 cookie on lines 1-2
+    assert not lines[0].startswith("#!")  # the py launcher reads a shebang
+    assert "coding" not in header  # nor a PEP 263 cookie on lines 1-2
 
 
 def test_ps_typographic_quote_doubling_decodes_like_powershell(sa, snips):
@@ -290,7 +306,8 @@ def test_ps_typographic_quote_doubling_decodes_like_powershell(sa, snips):
     second (measured on 5.1: 'a<RSQ><RSQ>b' -> a<RSQ>b, 'a'<RSQ>b' -> a<RSQ>b)."""
     filed(run_decide(sa, "py -c '" + ps_sq(SRC_PS_SQ) + "'", "PowerShell", snips))
     body = split_file(snip_files(snips)[0])[1].decode("utf-8")
-    assert "it\u2019s a comment" in body and "\u2019\u2019" not in body
+    assert "it\u2019s a comment" in body
+    assert "\u2019\u2019" not in body
 
 
 # ---------------------------------------------------------------------------------- 2. hints
@@ -303,11 +320,11 @@ R_HD_UNQUOTED_DOLLAR = "py - <<EOF\nimport os\na = 1\nb = 2\nprint(a, b, '$HOME'
 R_HD_UNQUOTED_BACKQUOTE = "py - <<EOF\nimport os\na = 1\nb = 2\nprint(a, b, '`whoami`')\nEOF\n"
 R_PS_DQ_DOLLAR = r'''py -c "import re; print(re.findall(r'\d', '$env:USERNAME'))"'''
 R_PS_DQ_BACKTICK = r'''py -c "import re; print(re.findall(r'\d', 'a`tb'))"'''
-R_PS_HS_DQ_DOLLAR = '@"\nimport re\nprint(re.findall(r\'\\d\', \'$env:USERNAME\'))\n"@ | py -'
-R_PS_SQ_DQUOTE = r'''py -c 'import re; print(re.findall(r"\d+", "a1 b22"))' '''.strip()
+R_PS_HS_DQ_DOLLAR = "@\"\nimport re\nprint(re.findall(r'\\d', '$env:USERNAME'))\n\"@ | py -"
+R_PS_SQ_DQUOTE = r"""py -c 'import re; print(re.findall(r"\d+", "a1 b22"))' """.strip()
 R_PS_BACKSLASH_BACKTICK = r'''py -c "import re; print(re.findall(r'\d', 'a\`<b'))"'''
 R_PS_BACKSLASH_BACKTICK_AND_DOLLAR = r'''py -c "import re; print(re.findall(r'\d', '$x a\`<b'))"'''
-R_PS_HS_BACKSLASH_BACKTICK_N = '@"\nimport re\nprint(re.findall(r\'\\d\', \'a\\`nb\'))\n"@ | py -'
+R_PS_HS_BACKSLASH_BACKTICK_N = "@\"\nimport re\nprint(re.findall(r'\\d', 'a\\`nb'))\n\"@ | py -"
 
 EXPANSIONS = [
     ("bash-dq-dollar", "Bash", R_BASH_DQ_DOLLAR, "$HOME"),
@@ -321,14 +338,14 @@ EXPANSIONS = [
 ]
 
 
-@pytest.mark.parametrize("tool,command,named", [r[1:] for r in EXPANSIONS],
-                         ids=[r[0] for r in EXPANSIONS])
+@pytest.mark.parametrize(("tool", "command", "named"), [r[1:] for r in EXPANSIONS], ids=[r[0] for r in EXPANSIONS])
 def test_expansion_cases_get_only_a_hint_and_run_as_today(sa, snips, tool, command, named):
     ctx = hinted(run_decide(sa, command, tool, snips))
     assert named in ctx, ctx
-    assert "Write a file" in ctx and len(ctx) < 200, ctx
-    assert "in 10 min" not in ctx                        # the first press is quiet
-    assert snip_files(snips) == []                       # nothing filed
+    assert "Write a file" in ctx, ctx
+    assert len(ctx) < 200, ctx
+    assert "in 10 min" not in ctx  # the first press is quiet
+    assert snip_files(snips) == []  # nothing filed
 
 
 def test_short_expansion_snippets_stay_untouched_without_a_hint(sa, snips):
@@ -339,9 +356,9 @@ def test_short_expansion_snippets_stay_untouched_without_a_hint(sa, snips):
 
 
 def test_the_third_hint_in_ten_minutes_names_its_count(sa, snips):
-    ctxs = [hinted(run_decide(sa, R_BASH_DQ_DOLLAR, "Bash", snips, now=NOW + 60 * i))
-            for i in range(4)]
-    assert "in 10 min" not in ctxs[0] and "in 10 min" not in ctxs[1]
+    ctxs = [hinted(run_decide(sa, R_BASH_DQ_DOLLAR, "Bash", snips, now=NOW + 60 * i)) for i in range(4)]
+    assert "in 10 min" not in ctxs[0]
+    assert "in 10 min" not in ctxs[1]
     assert "hint 3 in 10 min" in ctxs[2], ctxs[2]
     assert "hint 4 in 10 min" in ctxs[3], ctxs[3]
     assert all(len(c) < 200 for c in ctxs)
@@ -351,7 +368,7 @@ def test_hints_older_than_ten_minutes_do_not_count(sa, snips):
     for t in (NOW, NOW + 60):
         hinted(run_decide(sa, R_BASH_DQ_DOLLAR, "Bash", snips, now=t))
     late = hinted(run_decide(sa, R_BASH_DQ_DOLLAR, "Bash", snips, now=NOW + 700))
-    assert "in 10 min" not in late                      # the two early hints fell out
+    assert "in 10 min" not in late  # the two early hints fell out
     hinted(run_decide(sa, R_BASH_DQ_DOLLAR, "Bash", snips, now=NOW + 710))
     third = hinted(run_decide(sa, R_BASH_DQ_DOLLAR, "Bash", snips, now=NOW + 720))
     assert "hint 3 in 10 min" in third, third
@@ -359,9 +376,8 @@ def test_hints_older_than_ten_minutes_do_not_count(sa, snips):
 
 def test_the_hint_counter_lives_in_each_agents_snips_folder(sa, snips):
     for i, transcript in enumerate(["C:/t/a.jsonl", "C:/t/a.jsonl", "C:/t/b.jsonl"]):
-        ctx = hinted(run_decide(sa, R_BASH_DQ_DOLLAR, "Bash", snips, now=NOW + i,
-                                transcript=transcript))
-        assert "in 10 min" not in ctx                    # 2 + 1, never 3 in one folder
+        ctx = hinted(run_decide(sa, R_BASH_DQ_DOLLAR, "Bash", snips, now=NOW + i, transcript=transcript))
+        assert "in 10 min" not in ctx  # 2 + 1, never 3 in one folder
     folders = sorted(p for p in snips.iterdir() if p.is_dir())
     assert len(folders) == 2
     assert all((d / "_expansion_hints.json").is_file() for d in folders)
@@ -370,16 +386,24 @@ def test_the_hint_counter_lives_in_each_agents_snips_folder(sa, snips):
 
 LONG_NAME = "$A_VERY_LONG_SHELL_VARIABLE_NAME_THAT_KEEPS_GOING_FOR_A_WHILE_LONGER_STILL"
 LONG_HINT_CASES = [
-    ("Bash", 'py -c "import os\nprint(os.sep == \'\\\\\\\\\', \'' + LONG_NAME + '\')"'),
-    ("Bash", "py - <<A_REALLY_LONG_HEREDOC_DELIMITER_NAME_FOR_SNIPPETS\nimport re\n"
-             "print(re.findall(r'\\d', 'a1'))\nA_REALLY_LONG_HEREDOC_DELIMITER_NAME_FOR_SNIPPETS\n"),
-    ("Bash", "py - <<A_REALLY_LONG_HEREDOC_DELIMITER_NAME_FOR_SNIPPETS\nimport os\na = 1\nb = 2\n"
-             "print('" + LONG_NAME + "')\nA_REALLY_LONG_HEREDOC_DELIMITER_NAME_FOR_SNIPPETS\n"),
-    ("PowerShell", 'py -c "import re; print(re.findall(r\'\\d\', \'' + LONG_NAME + '\'))"'),
+    ("Bash", "py -c \"import os\nprint(os.sep == '\\\\\\\\', '" + LONG_NAME + "')\""),
+    (
+        "Bash",
+        (
+            "py - <<A_REALLY_LONG_HEREDOC_DELIMITER_NAME_FOR_SNIPPETS\nimport re\n"
+            "print(re.findall(r'\\d', 'a1'))\nA_REALLY_LONG_HEREDOC_DELIMITER_NAME_FOR_SNIPPETS\n"
+        ),
+    ),
+    (
+        "Bash",
+        "py - <<A_REALLY_LONG_HEREDOC_DELIMITER_NAME_FOR_SNIPPETS\nimport os\na = 1\nb = 2\n"
+        "print('" + LONG_NAME + "')\nA_REALLY_LONG_HEREDOC_DELIMITER_NAME_FOR_SNIPPETS\n",
+    ),
+    ("PowerShell", "py -c \"import re; print(re.findall(r'\\d', '" + LONG_NAME + "'))\""),
 ]
 
 
-@pytest.mark.parametrize("tool,command", LONG_HINT_CASES)
+@pytest.mark.parametrize(("tool", "command"), LONG_HINT_CASES)
 def test_a_hint_stays_under_200_characters_even_with_a_count(sa, snips, tool, command):
     for i in range(5):
         ctx = hinted(run_decide(sa, command, tool, snips, now=NOW + i))
@@ -393,46 +417,59 @@ def test_a_filed_snippet_and_a_hinted_one_share_one_command(sa, snips):
     files = snip_files(snips)
     assert len(files) == 1
     assert h["updatedInput"]["command"] == "py " + bq(files[0]) + " && " + R_BASH_DQ_DOLLAR
-    assert "saved as" in h["additionalContext"] and "$HOME" in h["additionalContext"]
+    assert "saved as" in h["additionalContext"]
+    assert "$HOME" in h["additionalContext"]
 
 
 # ---------------------------------------------------------------------------------- 3. refusals
 
 PS_MANGLING = [
-    ("ps-arg-double-quote", R_PS_SQ_DQUOTE, '"',
-     ["Windows PowerShell 5.1 would have", "quote", "here-string"]),
-    ("ps-backslash-backtick", R_PS_BACKSLASH_BACKTICK, "\\`",
-     ["Windows PowerShell 5.1 would have", "kept the backslash", "dropped the backtick"]),
-    ("ps-backslash-backtick-beats-the-dollar-hint", R_PS_BACKSLASH_BACKTICK_AND_DOLLAR, "\\`",
-     ["Windows PowerShell 5.1 would have", "dropped the backtick"]),
-    ("ps-herestring-backslash-backtick-n", R_PS_HS_BACKSLASH_BACKTICK_N, "\\`",
-     ["Windows PowerShell 5.1 would have", "newline"]),
+    ("ps-arg-double-quote", R_PS_SQ_DQUOTE, '"', ["Windows PowerShell 5.1 would have", "quote", "here-string"]),
+    (
+        "ps-backslash-backtick",
+        R_PS_BACKSLASH_BACKTICK,
+        "\\`",
+        ["Windows PowerShell 5.1 would have", "kept the backslash", "dropped the backtick"],
+    ),
+    (
+        "ps-backslash-backtick-beats-the-dollar-hint",
+        R_PS_BACKSLASH_BACKTICK_AND_DOLLAR,
+        "\\`",
+        ["Windows PowerShell 5.1 would have", "dropped the backtick"],
+    ),
+    (
+        "ps-herestring-backslash-backtick-n",
+        R_PS_HS_BACKSLASH_BACKTICK_N,
+        "\\`",
+        ["Windows PowerShell 5.1 would have", "newline"],
+    ),
 ]
 
 
-@pytest.mark.parametrize("command,culprit,phrases", [r[1:] for r in PS_MANGLING],
-                         ids=[r[0] for r in PS_MANGLING])
-def test_powershell_mangling_is_refused_saying_what_powershell_would_do(sa, snips, command,
-                                                                        culprit, phrases):
+@pytest.mark.parametrize(
+    ("command", "culprit", "phrases"), [r[1:] for r in PS_MANGLING], ids=[r[0] for r in PS_MANGLING]
+)
+def test_powershell_mangling_is_refused_saying_what_powershell_would_do(sa, snips, command, culprit, phrases):
     reason = denied(run_decide(sa, command, "PowerShell", snips))
     assert lc(command, command.index(culprit)) + " of the command" in reason, reason
     for phrase in phrases:
         assert phrase in reason, (phrase, reason)
-    assert snip_files(snips) == []                       # a refusal files nothing
+    assert snip_files(snips) == []  # a refusal files nothing
 
 
 SYNTAX_CASES = [
-    ("heredoc", "Bash", "py - <<'EOF'\n{src}EOF\n",
-     "import re\nx = 1\ny = (x +)\nprint(re.findall(r'\\d', 'a1'))\n"),
-    ("bash-c", "Bash", "py -c '{src}'",
-     'import re\nprint(re.findall(r"\\d", "a1")\nprint(2)\n'),
-    ("ps-herestring", "PowerShell", "@'\n{src}\n'@ | py -",
-     "import re\nfor x in [1]\nprint(re.findall(r'\\d', 'a1'))\nprint(4)"),
+    ("heredoc", "Bash", "py - <<'EOF'\n{src}EOF\n", "import re\nx = 1\ny = (x +)\nprint(re.findall(r'\\d', 'a1'))\n"),
+    ("bash-c", "Bash", "py -c '{src}'", 'import re\nprint(re.findall(r"\\d", "a1")\nprint(2)\n'),
+    (
+        "ps-herestring",
+        "PowerShell",
+        "@'\n{src}\n'@ | py -",
+        "import re\nfor x in [1]\nprint(re.findall(r'\\d', 'a1'))\nprint(4)",
+    ),
 ]
 
 
-@pytest.mark.parametrize("tool,template,src", [c[1:] for c in SYNTAX_CASES],
-                         ids=[c[0] for c in SYNTAX_CASES])
+@pytest.mark.parametrize(("tool", "template", "src"), [c[1:] for c in SYNTAX_CASES], ids=[c[0] for c in SYNTAX_CASES])
 def test_syntax_error_is_refused_with_its_line_and_column(sa, snips, tool, template, src):
     try:
         compile(src, "<snippet>", "exec")
@@ -441,7 +478,8 @@ def test_syntax_error_is_refused_with_its_line_and_column(sa, snips, tool, templ
     else:
         pytest.fail("the pin's source must not compile")
     reason = denied(run_decide(sa, template.replace("{src}", src), tool, snips))
-    assert where in reason and "SyntaxError" in reason, reason
+    assert where in reason, reason
+    assert "SyntaxError" in reason, reason
     assert snip_files(snips) == []
 
 
@@ -452,21 +490,30 @@ def test_backspace_trap_is_refused_at_the_exact_escape(sa, snips):
     reason = denied(run_decide(sa, "py -c '" + SRC_TRAP + "'", "Bash", snips))
     assert "line 2, column 19 of the snippet" in reason, reason
     assert lc(SRC_TRAP, SRC_TRAP.index("\\b")) == "line 2, column 19"
-    assert "r'" in reason and "backspace" in reason.lower(), reason
+    assert "r'" in reason, reason
+    assert "backspace" in reason.lower(), reason
     assert "# autofile: control-chars-ok" in reason
     assert snip_files(snips) == []
 
 
 CONTROL_LITERALS = [
-    ("bell", '"\\a"'), ("vtab", '"\\v"'), ("formfeed", '"\\f"'), ("hex-08", '"\\x08"'),
-    ("hex-0C-upper", '"\\x0C"'), ("octal-010", '"\\010"'), ("octal-7", '"\\7"'),
-    ("bytes", 'b"\\b"'), ("fstring", 'f"\\b{1}"'), ("named", '"\\N{BACKSPACE}"'),
-    ("u-escape", '"\\u0008"'), ("literal-char", '"a\x08b"'), ("docstring-ish", '"""x\n\\b"""'),
+    ("bell", '"\\a"'),
+    ("vtab", '"\\v"'),
+    ("formfeed", '"\\f"'),
+    ("hex-08", '"\\x08"'),
+    ("hex-0C-upper", '"\\x0C"'),
+    ("octal-010", '"\\010"'),
+    ("octal-7", '"\\7"'),
+    ("bytes", 'b"\\b"'),
+    ("fstring", 'f"\\b{1}"'),
+    ("named", '"\\N{BACKSPACE}"'),
+    ("u-escape", '"\\u0008"'),
+    ("literal-char", '"a\x08b"'),
+    ("docstring-ish", '"""x\n\\b"""'),
 ]
 
 
-@pytest.mark.parametrize("literal", [c[1] for c in CONTROL_LITERALS],
-                         ids=[c[0] for c in CONTROL_LITERALS])
+@pytest.mark.parametrize("literal", [c[1] for c in CONTROL_LITERALS], ids=[c[0] for c in CONTROL_LITERALS])
 def test_control_characters_in_non_raw_strings_are_refused(sa, snips, literal):
     src = "import re\nx = 1\ny = " + literal + "\nprint(re.findall(r'\\d', 'a1'))\n"
     reason = denied(run_decide(sa, "py - <<'EOF'\n" + src + "EOF\n", "Bash", snips))
@@ -509,8 +556,7 @@ SHORT_CLEAN = [
 ]
 
 
-@pytest.mark.parametrize("tool,command", [c[1:] for c in SHORT_CLEAN],
-                         ids=[c[0] for c in SHORT_CLEAN])
+@pytest.mark.parametrize(("tool", "command"), [c[1:] for c in SHORT_CLEAN], ids=[c[0] for c in SHORT_CLEAN])
 def test_short_clean_snippets_pass_untouched(sa, snips, tool, command):
     assert run_decide(sa, command, tool, snips) is None
     assert snip_files(snips) == []
@@ -529,20 +575,20 @@ def test_a_long_snippet_without_backslashes_is_filed(sa, snips):
 UNKNOWN = [
     ("script-file", "Bash", "py script.py '\\d+\\b' --flag"),
     ("module", "Bash", "py -m pytest -k 'a\\b' tests/"),
-    ("inside-a-string", "Bash", "echo \"py -c 'print(\\\"\\\\d\\\")'\""),
+    ("inside-a-string", "Bash", 'echo "py -c \'print(\\"\\\\d\\")\'"'),
     ("grep-c", "Bash", "grep -c '\\d' file.txt"),
     ("ansi-c-quoting", "Bash", "python -c $'print(\"\\\\x41\")'"),
     ("combined-flags", "Bash", "py -uc 'import re; print(re.escape(\"a\\\\b\"))'"),
     ("heredoc-to-cat", "Bash", "cat <<'EOF' | py -\nimport re\nprint(re.findall(r'\\d', 'a1'))\nEOF\n"),
     ("heredoc-strip-tabs", "Bash", "py - <<-'EOF'\n\timport re\n\tprint(re.findall(r'\\d', 'a1'))\n\tEOF\n"),
-    ("bash-herestring", "Bash", "py <<<'import re; print(re.findall(r\"\\d\", \"a1\"))'"),
+    ("bash-herestring", "Bash", 'py <<<\'import re; print(re.findall(r"\\d", "a1"))\''),
     ("mypy", "Bash", "mypy -c 'x = \"\\d\"'"),
     ("pytest-c", "Bash", "pytest -c 'a\\b'"),
     ("comment", "Bash", "# py -c 'print(\"\\d\")'\necho hi"),
-    ("unterminated", "Bash", "py -c 'print(\"\\d\")"),
+    ("unterminated", "Bash", 'py -c \'print("\\d")'),
     ("no-argument", "Bash", "py -c"),
     ("mixed-quoting", "Bash", "py -c 'a'\\''b\\d'"),
-    ("timeout-prefix", "Bash", "timeout 60 py -c 'import re; print(re.findall(r\"\\d\", \"a1\"))'"),
+    ("timeout-prefix", "Bash", 'timeout 60 py -c \'import re; print(re.findall(r"\\d", "a1"))\''),
     ("ps-inside-a-string", "PowerShell", "Write-Output 'py -c ''print(\"\\d\")'''"),
     ("ps-script-file", "PowerShell", "py script.py '\\d'"),
     ("ps-quoted-name", "PowerShell", "& 'py' -c 'import re; print(re.findall(r''\\d'', ''a1''))'"),
@@ -553,7 +599,7 @@ UNKNOWN = [
 ]
 
 
-@pytest.mark.parametrize("tool,command", [c[1:] for c in UNKNOWN], ids=[c[0] for c in UNKNOWN])
+@pytest.mark.parametrize(("tool", "command"), [c[1:] for c in UNKNOWN], ids=[c[0] for c in UNKNOWN])
 def test_unknown_shapes_pass_untouched(sa, snips, tool, command):
     assert run_decide(sa, command, tool, snips) is None
     assert snip_files(snips) == []
@@ -566,25 +612,29 @@ def test_from_future_snippets_pass_untouched(sa, snips):
     assert run_decide(sa, "py -c '" + src + "'", "Bash", snips) is None
 
 
-@pytest.mark.parametrize("bad", [
-    {"tool_name": "Edit", "tool_input": {"command": "py -c '" + SRC_BASH_SQ + "'"}},
-    {"tool_name": "Bash", "tool_input": None},
-    {"tool_name": "Bash", "tool_input": "py -c 'x'"},
-    {"tool_name": "Bash", "tool_input": {"command": 5}},
-    {"tool_name": "Bash"},
-    {"tool_input": {"command": "py -c '" + SRC_BASH_SQ + "'"}},
-    [],
-    None,
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"tool_name": "Edit", "tool_input": {"command": "py -c '" + SRC_BASH_SQ + "'"}},
+        {"tool_name": "Bash", "tool_input": None},
+        {"tool_name": "Bash", "tool_input": "py -c 'x'"},
+        {"tool_name": "Bash", "tool_input": {"command": 5}},
+        {"tool_name": "Bash"},
+        {"tool_input": {"command": "py -c '" + SRC_BASH_SQ + "'"}},
+        [],
+        None,
+    ],
+)
 def test_malformed_payloads_pass_untouched(sa, snips, bad):
     assert sa.decide(bad, snips_root=str(snips), now=NOW) is None
 
 
 # ---------------------------------------------------------------------------------- 4. the rewrite
 
+
 def test_bash_surroundings_are_kept_byte_for_byte(sa, snips):
     head = "cd /e/AI-Setup && PYTHONIOENCODING=utf-8 py -X utf8 -u "
-    tail = " arg1 \"arg 2\" 2>&1 | tail -n 3 > out.txt; echo done"
+    tail = ' arg1 "arg 2" 2>&1 | tail -n 3 > out.txt; echo done'
     h = filed(run_decide(sa, head + "-c '" + SRC_BASH_SQ + "'" + tail, "Bash", snips))
     assert h["updatedInput"]["command"] == head + bq(snip_files(snips)[0]) + tail
 
@@ -594,7 +644,8 @@ def test_bash_heredoc_rewrite_keeps_the_line_and_drops_only_the_body(sa, snips):
     h = filed(run_decide(sa, cmd, "Bash", snips))
     f = snip_files(snips)[0]
     assert h["updatedInput"]["command"] == (
-        "py -X utf8 " + bq(f) + " a1 'a 2' </dev/null 2>&1 | sort && echo ok\necho after\n")
+        "py -X utf8 " + bq(f) + " a1 'a 2' </dev/null 2>&1 | sort && echo ok\necho after\n"
+    )
 
 
 def test_bash_implicit_heredoc_rewrite_inserts_the_file(sa, snips):
@@ -647,18 +698,20 @@ def test_updated_input_is_the_complete_original_with_only_command_replaced(sa, s
         if key != "command":
             assert ui[key] == value
     assert ui["command"] != p["tool_input"]["command"]
-    assert p == before                                   # the caller's payload is not mutated
+    assert p == before  # the caller's payload is not mutated
 
 
 def test_additional_context_is_one_line_naming_the_file_and_the_habit(sa, snips):
     h = filed(run_decide(sa, "py -c '" + SRC_BASH_SQ + "'", "Bash", snips))
     ctx = h["additionalContext"]
-    assert "\n" not in ctx and "\r" not in ctx
+    assert "\n" not in ctx
+    assert "\r" not in ctx
     assert str(snip_files(snips)[0]) in ctx
     assert "Write a file" in ctx
 
 
 # ---------------------------------------------------------------------------------- 5. files
+
 
 def test_missing_x_drive_falls_back_to_temp(sa, tmp_path, monkeypatch):
     gone = tmp_path / "no-such-drive"
@@ -703,7 +756,8 @@ def test_hostile_agent_id_stays_inside_the_snips_root(sa, snips, monkeypatch):
     monkeypatch.setenv("AKASHIC_AGENT_ID", "..\\..\\evil:x/../y")
     filed(run_decide(sa, "py -c '" + SRC_BASH_SQ + "'", "Bash", snips))
     f = snip_files(snips)[0]
-    assert f.parent.parent == snips and ".." not in f.parent.name
+    assert f.parent.parent == snips
+    assert ".." not in f.parent.name
 
 
 def test_rotation_keeps_the_newest_n(sa, snips, monkeypatch):
@@ -717,6 +771,7 @@ def test_rotation_keeps_the_newest_n(sa, snips, monkeypatch):
 
 # ---------------------------------------------------------------------------------- 6. spawn
 
+
 def _env():
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
@@ -726,21 +781,30 @@ def _env():
 def run_intended(src, folder, args=()):
     path = Path(folder) / "intended_source.py"
     path.write_bytes(src.encode("utf-8"))
-    return subprocess.run(["py", str(path), *args], cwd=folder, capture_output=True,
-                          env=_env(), timeout=120)
+    return subprocess.run(["py", str(path), *args], cwd=folder, capture_output=True, env=_env(), timeout=120)
 
 
 def run_bash(command, folder, scratch):
     script = Path(scratch) / "rewritten.sh"
     script.write_bytes(command.encode("utf-8"))
-    return subprocess.run([str(BASH), "--noprofile", "--norc", str(script).replace("\\", "/")],
-                          cwd=folder, capture_output=True, env=_env(), timeout=120)
+    return subprocess.run(
+        [str(BASH), "--noprofile", "--norc", str(script).replace("\\", "/")],
+        cwd=folder,
+        capture_output=True,
+        env=_env(),
+        timeout=120,
+    )
 
 
 def run_ps(command, folder):
     encoded = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
-    return subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                          cwd=folder, capture_output=True, env=_env(), timeout=120)
+    return subprocess.run(
+        [POWERSHELL, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        cwd=folder,
+        capture_output=True,
+        env=_env(),
+        timeout=120,
+    )
 
 
 def assert_same_stdout(reference, rewritten):
@@ -750,44 +814,41 @@ def assert_same_stdout(reference, rewritten):
     assert rewritten.stdout.replace(b"\r\n", b"\n") == reference.stdout.replace(b"\r\n", b"\n")
 
 
-SP_BASH_SQ = fill(r'''import re, sys
+SP_BASH_SQ = fill(r"""import re, sys
 words = re.findall(r"\b\w+\d\b", "x caf<E> abc1 d22")
 print(ascii(words), ascii("tab:<TAB>end"), ascii("caf<E> <K>"))
 print(len("back\\slash"), sys.argv[1:])
-''')
+""")
 
-SP_BASH_DQ = fill(r'''import re, sys
+SP_BASH_DQ = fill(r"""import re, sys
 print(ascii(re.findall(r'\d+\b', 'a1 b22')), "dq", '$x', '`', ascii('caf<E>'))
-print(len('a\\b'), sys.argv[1:])''')
+print(len('a\\b'), sys.argv[1:])""")
 
-SP_BODY = fill(r'''import re, sys
+SP_BODY = fill(r"""import re, sys
 print(ascii(re.findall(r"\bcaf\w\b", "a caf<E> b")))
 print("$HOME stays", "`tick`", sys.argv[1:])
 print(ascii("tab:<TAB>end <U><K>"))
-''')
+""")
 
-SP_PS_SQ = fill(r'''import re, sys
+SP_PS_SQ = fill(r"""import re, sys
 words = re.findall(r'\b\w+\d\b', 'x caf<E> abc1 d22')
 print(ascii(words), ascii('tab:<TAB>end'), ascii('caf<E> <K> it' + chr(39) + 's'))
-print(len('back\\slash'), sys.argv[1:])''')
+print(len('back\\slash'), sys.argv[1:])""")
 
 SPAWN_BASH = [
-    ("c-single", "py -c '" + SP_BASH_SQ + "' one 'two words' | cat", SP_BASH_SQ,
-     ["one", "two words"]),
+    ("c-single", "py -c '" + SP_BASH_SQ + "' one 'two words' | cat", SP_BASH_SQ, ["one", "two words"]),
     ("c-double", 'py -c "' + bash_dq(SP_BASH_DQ) + '" one', SP_BASH_DQ, ["one"]),
     ("heredoc", "py - a1 <<'EOF' | cat\n" + SP_BODY + "EOF\n", SP_BODY, ["a1"]),
 ]
 
 
 @need_bash
-@pytest.mark.parametrize("command,src,args", [c[1:] for c in SPAWN_BASH],
-                         ids=[c[0] for c in SPAWN_BASH])
+@pytest.mark.parametrize(("command", "src", "args"), [c[1:] for c in SPAWN_BASH], ids=[c[0] for c in SPAWN_BASH])
 def test_spawn_bash_rewrite_prints_what_the_source_prints(sa, tmp_path, command, src, args):
     h = filed(run_decide(sa, command, "Bash", tmp_path / "snips"))
     work = tmp_path / "work"
     work.mkdir()
-    assert_same_stdout(run_intended(src, work, args),
-                       run_bash(h["updatedInput"]["command"], work, tmp_path))
+    assert_same_stdout(run_intended(src, work, args), run_bash(h["updatedInput"]["command"], work, tmp_path))
 
 
 SPAWN_PS = [
@@ -797,7 +858,7 @@ SPAWN_PS = [
 
 
 @need_ps
-@pytest.mark.parametrize("command,src,args", [c[1:] for c in SPAWN_PS], ids=[c[0] for c in SPAWN_PS])
+@pytest.mark.parametrize(("command", "src", "args"), [c[1:] for c in SPAWN_PS], ids=[c[0] for c in SPAWN_PS])
 def test_spawn_powershell_rewrite_prints_what_the_source_prints(sa, tmp_path, command, src, args):
     h = filed(run_decide(sa, command, "PowerShell", tmp_path / "snips"))
     work = tmp_path / "work"
@@ -833,16 +894,17 @@ def test_spawn_powershell_snippet_still_imports_from_the_cwd(sa, tmp_path):
     assert_same_stdout(run_intended(SP_IMPORT, work), run_ps(h["updatedInput"]["command"], work))
 
 
-SP_SEMANTICS = ('import sys\nprint(sys.argv[0])\nprint(repr(sys.path[0]))\n'
-                'print("__file__" in globals(), globals().get("__file__"))\nprint(sys.argv[1:])\n')
+SP_SEMANTICS = (
+    "import sys\nprint(sys.argv[0])\nprint(repr(sys.path[0]))\n"
+    'print("__file__" in globals(), globals().get("__file__"))\nprint(sys.argv[1:])\n'
+)
 
 
 @need_bash
 def test_spawn_bash_c_keeps_argv0_path0_and_file_semantics(sa, tmp_path):
     h = filed(run_decide(sa, "py -c '" + SP_SEMANTICS + "' a1", "Bash", tmp_path / "snips"))
     work = _work_with_module(tmp_path)
-    reference = subprocess.run(["py", "-c", SP_SEMANTICS, "a1"], cwd=work, capture_output=True,
-                               env=_env(), timeout=120)
+    reference = subprocess.run(["py", "-c", SP_SEMANTICS, "a1"], cwd=work, capture_output=True, env=_env(), timeout=120)
     assert reference.stdout.startswith(b"-c")
     assert_same_stdout(reference, run_bash(h["updatedInput"]["command"], work, tmp_path))
 
@@ -852,8 +914,9 @@ def test_spawn_bash_heredoc_keeps_stdin_mode_semantics(sa, tmp_path):
     cmd = "py - a1 <<'EOF'\n" + SP_SEMANTICS + "EOF\n"
     h = filed(run_decide(sa, cmd, "Bash", tmp_path / "snips"))
     work = _work_with_module(tmp_path)
-    reference = subprocess.run(["py", "-", "a1"], input=SP_SEMANTICS.encode("utf-8"), cwd=work,
-                               capture_output=True, env=_env(), timeout=120)
+    reference = subprocess.run(
+        ["py", "-", "a1"], input=SP_SEMANTICS.encode("utf-8"), cwd=work, capture_output=True, env=_env(), timeout=120
+    )
     assert reference.stdout.startswith(b"-")
     assert_same_stdout(reference, run_bash(h["updatedInput"]["command"], work, tmp_path))
 
@@ -863,18 +926,19 @@ def test_spawn_powershell_implicit_stdin_keeps_its_semantics(sa, tmp_path):
     cmd = "@'\n" + SP_SEMANTICS.rstrip("\n") + "\n'@ | py"
     h = filed(run_decide(sa, cmd, "PowerShell", tmp_path / "snips"))
     work = _work_with_module(tmp_path)
-    reference = subprocess.run(["py"], input=SP_SEMANTICS.encode("utf-8"), cwd=work,
-                               capture_output=True, env=_env(), timeout=120)
+    reference = subprocess.run(
+        ["py"], input=SP_SEMANTICS.encode("utf-8"), cwd=work, capture_output=True, env=_env(), timeout=120
+    )
     assert_same_stdout(reference, run_ps(h["updatedInput"]["command"], work))
 
 
 # ---------------------------------------------------------------------------------- 7. main()
 
+
 def _run_main(stdin_bytes, env_extra):
     env = _env()
     env.update(env_extra)
-    return subprocess.run([sys.executable, str(HOOK)], input=stdin_bytes, capture_output=True,
-                          env=env, timeout=120)
+    return subprocess.run([sys.executable, str(HOOK)], input=stdin_bytes, capture_output=True, env=env, timeout=120)
 
 
 def test_main_files_from_utf8_stdin_and_prints_the_hook_json(tmp_path):
@@ -885,7 +949,8 @@ def test_main_files_from_utf8_stdin_and_prints_the_hook_json(tmp_path):
     h = check_contract(json.loads(r.stdout.decode("ascii")))
     assert "updatedInput" in h
     files = snip_files(root)
-    assert len(files) == 1 and split_file(files[0])[1] == SRC_BASH_SQ.encode("utf-8")
+    assert len(files) == 1
+    assert split_file(files[0])[1] == SRC_BASH_SQ.encode("utf-8")
 
 
 def test_main_prints_a_deny_for_a_refusal(tmp_path):
@@ -901,18 +966,21 @@ def test_main_prints_a_hint_and_leaves_the_command_alone(tmp_path):
     r = _run_main(data, {"AKASHIC_SNIPS_ROOT": str(tmp_path / "s")})
     assert r.returncode == 0
     h = check_contract(json.loads(r.stdout))
-    assert set(h) == {"hookEventName", "additionalContext"} and "$HOME" in h["additionalContext"]
+    assert set(h) == {"hookEventName", "additionalContext"}
+    assert "$HOME" in h["additionalContext"]
 
 
 @pytest.mark.parametrize("stdin_bytes", [b"", b"not json{", b"[1, 2]", b"\xff\xfe\x00garbage"])
 def test_main_is_silent_on_bad_stdin(tmp_path, stdin_bytes):
     r = _run_main(stdin_bytes, {"AKASHIC_SNIPS_ROOT": str(tmp_path / "s")})
-    assert r.returncode == 0 and r.stdout == b""
+    assert r.returncode == 0
+    assert r.stdout == b""
 
 
 def test_main_is_silent_when_there_is_nothing_to_do(tmp_path):
     r = _run_main(json.dumps(payload("git status")).encode(), {"AKASHIC_SNIPS_ROOT": str(tmp_path)})
-    assert r.returncode == 0 and r.stdout == b""
+    assert r.returncode == 0
+    assert r.stdout == b""
 
 
 def test_main_fails_open_and_logs_an_internal_exception(sa, tmp_path, monkeypatch, capsys):
@@ -930,13 +998,15 @@ def test_main_fails_open_and_logs_an_internal_exception(sa, tmp_path, monkeypatc
     assert sa.main() == 0
     assert capsys.readouterr().out == ""
     logs = list((tmp_path / "logroot").rglob("*.log"))
-    assert logs and any("pin-boom-7c1" in p.read_text(encoding="utf-8") for p in logs)
+    assert logs
+    assert any("pin-boom-7c1" in p.read_text(encoding="utf-8") for p in logs)
 
 
 def test_main_kill_switch(tmp_path):
     data = json.dumps(payload("py -c '" + SRC_BASH_SQ + "'")).encode("utf-8")
     r = _run_main(data, {"AKASHIC_SNIPS_ROOT": str(tmp_path / "s"), "AKASHIC_SNIPPET_AUTOFILE": "0"})
-    assert r.returncode == 0 and r.stdout == b""
+    assert r.returncode == 0
+    assert r.stdout == b""
     assert snip_files(tmp_path / "s") == []
 
 
@@ -959,20 +1029,25 @@ def test_overlapping_edits_leave_the_command_untouched_and_write_nothing(sa, sni
 
 def test_a_bash_locale_string_after_dash_c_is_left_alone(sa, snips):
     # $"..." is bash's locale-translated string; v1 does not decode it, so it must pass untouched
-    assert run_decide(sa, 'py -c $"import re; print(re.findall(r\'\\d\', \'a1\'))"', root=snips) is None
+    assert run_decide(sa, "py -c $\"import re; print(re.findall(r'\\d', 'a1'))\"", root=snips) is None
     assert snip_files(snips) == []
 
 
-@pytest.mark.parametrize("command, keep", [
-    ("py - <<'EOF' && echo done\n" + HD_BODY + "EOF\n", " && echo done\n"),
-    ("py - <<'EOF' > out.txt\n" + HD_BODY + "EOF\n", " > out.txt\n"),
-    ("py - <<'EOF'\n" + HD_BODY + "EOF\necho after | cat\n", "echo after | cat\n"),
-], ids=["and-on-the-first-line", "redirect-on-the-first-line", "a-command-after-the-delimiter"])
+@pytest.mark.parametrize(
+    ("command", "keep"),
+    [
+        ("py - <<'EOF' && echo done\n" + HD_BODY + "EOF\n", " && echo done\n"),
+        ("py - <<'EOF' > out.txt\n" + HD_BODY + "EOF\n", " > out.txt\n"),
+        ("py - <<'EOF'\n" + HD_BODY + "EOF\necho after | cat\n", "echo after | cat\n"),
+    ],
+    ids=["and-on-the-first-line", "redirect-on-the-first-line", "a-command-after-the-delimiter"],
+)
 def test_what_surrounds_a_heredoc_stays_byte_for_byte(sa, snips, command, keep):
     h = filed(run_decide(sa, command, root=snips))
     rewritten = h["updatedInput"]["command"]
     assert keep in rewritten, rewritten
-    assert "EOF" not in rewritten and "<<" not in rewritten, rewritten
+    assert "EOF" not in rewritten, rewritten
+    assert "<<" not in rewritten, rewritten
     (path,) = snip_files(snips)
     assert split_file(path)[1] == HD_BODY.encode("utf-8")
 

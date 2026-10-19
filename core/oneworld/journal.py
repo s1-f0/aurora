@@ -33,14 +33,15 @@ need one yet -- replay() is the projection read, and the journal is small); the 
 own slice, and it wants the reconciliation's ratification); the floor; the bounds-legend primitive
 (W1). Those render on top of this.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -57,22 +58,20 @@ def _journal_path() -> Path:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def fact_id(kind: str, actor: str, payload: Dict[str, Any],
-            session_id: Optional[str]) -> str:
+def fact_id(kind: str, actor: str, payload: dict[str, Any], session_id: str | None) -> str:
     """Content-hash id (routes.py's physics answer). The SAME authored content is the SAME fact,
     however many times a crash or a double-write replays it. `at` is excluded on purpose, so the
     hash depends only on what was asserted, not when."""
     blob = json.dumps(
-        {"kind": kind, "actor": actor, "payload": payload, "session_id": session_id},
-        sort_keys=True, ensure_ascii=False)
+        {"kind": kind, "actor": actor, "payload": payload, "session_id": session_id}, sort_keys=True, ensure_ascii=False
+    )
     return "wf_" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
-def append(kind: str, actor: str, payload: Dict[str, Any], *,
-           session_id: Optional[str] = None) -> str:
+def append(kind: str, actor: str, payload: dict[str, Any], *, session_id: str | None = None) -> str:
     """Record one authored world-fact: journal first (the durable truth), and nothing else -- the
     projection is replay(). Returns the content-hash id. Writing the same content twice is one
     fact (idempotency), so this is safe under crash-redelivery and double-write.
@@ -89,8 +88,14 @@ def append(kind: str, actor: str, payload: Dict[str, Any], *,
     payload = dict(payload or {})
     rid = fact_id(kind, actor, payload, session_id)
     rec = {
-        "v": 1, "id": rid, "kind": kind, "actor": actor, "payload": payload,
-        "session_id": session_id, "at": _now_iso(), "schema_version": SCHEMA_VERSION,
+        "v": 1,
+        "id": rid,
+        "kind": kind,
+        "actor": actor,
+        "payload": payload,
+        "session_id": session_id,
+        "at": _now_iso(),
+        "schema_version": SCHEMA_VERSION,
     }
 
     jp = _journal_path()
@@ -115,7 +120,7 @@ def append(kind: str, actor: str, payload: Dict[str, Any], *,
     return rid
 
 
-def replay() -> Dict[str, Any]:
+def replay() -> dict[str, Any]:
     """Rebuild the world history from the journal alone -- a cold read that holds no state. This IS
     the projection: wiping any derived surface loses nothing authored, because the journal is the
     truth and this re-derives from it (routes.py P5, the replay-don't-diff law).
@@ -128,7 +133,7 @@ def replay() -> Dict[str, Any]:
     if not jp.exists():
         return {"facts": [], "taken": 0, "unparsed": 0}
 
-    facts: List[Dict[str, Any]] = []
+    facts: list[dict[str, Any]] = []
     seen = set()
     unparsed = 0
     for line in jp.read_text(encoding="utf-8").splitlines():
@@ -147,14 +152,16 @@ def replay() -> Dict[str, Any]:
             # A duplicate id is idempotency doing its job on replay; keep the first, don't recount.
             continue
         seen.add(rid)
-        facts.append({
-            "id": rid,
-            "kind": rec.get("kind"),
-            "actor": rec.get("actor", ""),
-            "payload": rec.get("payload", {}),
-            "at": rec.get("at", ""),
-            "session_id": rec.get("session_id"),
-        })
+        facts.append(
+            {
+                "id": rid,
+                "kind": rec.get("kind"),
+                "actor": rec.get("actor", ""),
+                "payload": rec.get("payload", {}),
+                "at": rec.get("at", ""),
+                "session_id": rec.get("session_id"),
+            }
+        )
     return {"facts": facts, "taken": len(facts), "unparsed": unparsed}
 
 

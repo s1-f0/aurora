@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Codex SessionStart: event-bound identity activation plus the shared boot fold."""
+
 from __future__ import annotations
 
 import json
 import os
 import sys
+
+# Run as a bare script (by .codex/hooks.json or the scripts/hooks/ shim), so the repo root is
+# not on sys.path until we put it there.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from agent.harness.hooks.codex_common import (
     capture_payload,
@@ -26,14 +31,14 @@ def main() -> int:
         sid = str(data.get("session_id") or "")
         seat = event_seat(data)
         try:
-            from core.recall.at_action import warm_cache, prune_state
+            from core.recall.at_action import prune_state, warm_cache
 
             warm_cache()
             prune_state()
         except Exception:
             pass
         try:
-            from core.comm import wake_seat, incarnation
+            from core.comm import incarnation, wake_seat
 
             if sid:
                 wake_seat.clear_tombstone(sid)
@@ -43,16 +48,20 @@ def main() -> int:
             pass
         from agent.harness.context import build_autoboot_context
 
-        boot = build_autoboot_context(
-            str(data.get("cwd") or os.getcwd()), seat, session_id=sid
-        )
+        boot = build_autoboot_context(str(data.get("cwd") or os.getcwd()), seat, session_id=sid)
         context = subject_context(seat, sid)
         if boot:
             context += "\n\n" + boot
-        print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": context,
-        }}))
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "SessionStart",
+                        "additionalContext": context,
+                    }
+                }
+            )
+        )
     except Exception as exc:
         print(f"[codex-sessionstart] suppressed: {type(exc).__name__}: {exc}", file=sys.stderr)
     return 0

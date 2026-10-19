@@ -33,16 +33,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 _IMPORT_ERROR = None  # so the skipif reason string is safe when the import SUCCEEDS
 try:
-    from core.screenspace import refs, delta  # noqa: F401
+    from core.screenspace import (  # noqa: F401  # imported to prove the seam exists; a failure is reported by the skipif
+        delta,
+        refs,
+    )
+
     _IMPORT_OK = True
-except Exception as exc:  # noqa: BLE001
+except Exception as exc:  # noqa: BLE001  # any import failure is the RED, reported by the skipif
     _IMPORT_OK = False
     _IMPORT_ERROR = exc
 
 pytestmark = pytest.mark.skipif(
     not _IMPORT_OK,
     reason="core/screenspace not yet built — RED: engine must satisfy this contract "
-           f"(import failed: {_IMPORT_ERROR!r})",
+    f"(import failed: {_IMPORT_ERROR!r})",
 )
 
 
@@ -68,7 +72,6 @@ def test_c2_delta_is_pure_function_of_since_gen():
     plus a focus trail — and is deterministic given the same (since_gen, current)
     observation. It must not fabricate a delta from a future gen."""
     from core.screenspace import delta
-    from core.screenspace.engine import ObservationStream
 
     # Load-bearing teeth: a FUTURE since_gen must yield an EMPTY delta, not a
     # fabricated one — the engine cannot invent observations it never made.
@@ -77,6 +80,7 @@ def test_c2_delta_is_pure_function_of_since_gen():
     assert isinstance(d_future.current_gen, int)
     # The contract's purity clause: no fabrication past the observed stream.
     from core.screenspace.engine import ScreenDelta
+
     assert isinstance(d_future, ScreenDelta)
 
 

@@ -12,20 +12,22 @@ xy; scalars stay scalars where the GLSL's do.
 
 Apache-2.0, Akashic Aurora. Written fresh from the recipe's contract; no corpus code.
 """
+
 from __future__ import annotations
 
 import math
 
 import numpy as np
 
-from arsenal.shaders.twins import colour, core, draw2, hash as hashes, light, palette, parity
+from arsenal.shaders.twins import colour, core, draw2, light, palette, parity
+from arsenal.shaders.twins import hash as hashes
 
 F32 = np.float32
 TAU = 2.0 * math.pi
-REST = 0.36                                      # a hexagon's rest inradius, in cells
-SWING = 0.65                                     # the size swing at sizeAmp 1, as a share of the rest size
-CORAL = np.array([0.745, 0.168, 0.078])          # #e0724f, the house accent, linear
-COOL = dict(a=(0.35, 0.575, 0.9), b=(0.25, 0.275, 0.08), c=(0.5, 0.5, 0.5), d=(0.5, 0.0, 0.0))
+REST = 0.36  # a hexagon's rest inradius, in cells
+SWING = 0.65  # the size swing at sizeAmp 1, as a share of the rest size
+CORAL = np.array([0.745, 0.168, 0.078])  # #e0724f, the house accent, linear
+COOL = {"a": (0.35, 0.575, 0.9), "b": (0.25, 0.275, 0.08), "c": (0.5, 0.5, 0.5), "d": (0.5, 0.0, 0.0)}
 
 
 def _v(x):
@@ -72,12 +74,12 @@ def hexNeonColour(axial, dice, palette_choice, accent):
         return palette.palPitchFifths(pitch, 4.0, palette.palPitchPiano())
     second = np.mod(dice * 64.0, 1.0)
     cool = palette.palCosLinear(dice, COOL["a"], COOL["b"], COOL["c"], COOL["d"])
-    out = np.where((second < float(accent))[..., None], CORAL, cool)
-    return out
+    return np.where((second < float(accent))[..., None], CORAL, cool)
 
 
-def hexNeonCell(offset, centre, pxLat, t, originLat, lineWidth, haloPx, waveSpeed, sizeAmp, spin, palette_choice,
-                accent, combine):
+def hexNeonCell(
+    offset, centre, pxLat, t, originLat, lineWidth, haloPx, waveSpeed, sizeAmp, spin, palette_choice, accent, combine
+):
     """(light rgb, fill) of one cell seen from `offset` cells away from its centre; in XOR mode the rgb is the cell's
     colour at its energy. Its light and fill fade out between 0.8 and 1.15 cells from its centre."""
     offset, centre = _v(offset), _v(centre)
@@ -103,28 +105,43 @@ def hexNeonCell(offset, centre, pxLat, t, originLat, lineWidth, haloPx, waveSpee
     return hue * shine[..., None], fill
 
 
-def hexNeon(p, px, t, origin, cellSize, lineWidth, haloPx, waveSpeed, sizeAmp, spin, palette_choice, accent, combine,
-            view):
+def hexNeon(
+    p, px, t, origin, cellSize, lineWidth, haloPx, waveSpeed, sizeAmp, spin, palette_choice, accent, combine, view
+):
     """The hex-neon group at points p (pixel size px in p's units), time t, the wave starting at origin."""
     scale = max(float(cellSize), 1e-4)
     lat = _v(p) / scale
     pxLat = max(float(px), 1e-6) / scale
     home = _v(draw2.latHex(lat.astype(F32)))
     if view == 1:
-        cells = _v(core.dbgCells(home[..., :2], draw2.latHexAxial(home[..., 2:]), np.array([1.0, 2.0 / math.sqrt(3.0)]),
-                                 pxLat))
+        cells = _v(
+            core.dbgCells(home[..., :2], draw2.latHexAxial(home[..., 2:]), np.array([1.0, 2.0 / math.sqrt(3.0)]), pxLat)
+        )
         border = _v(draw2.aaWire(draw2.latHexEdge(home[..., :2].astype(F32)), 1.0, pxLat))[..., None]
         cells = cells + (1.0 - cells) * border
         return colour.srgbDecode(np.clip(cells, 0.0, 1.0))
     originLat = _v(origin) / scale
-    lit = np.zeros(lat.shape[:-1] + (3,))
+    lit = np.zeros((*lat.shape[:-1], 3))
     ink = np.zeros(lat.shape[:-1])
     ink_colour = np.zeros_like(lit)
     ink_weight = np.zeros_like(ink)
     for k in range(7):
         step = np.zeros(2) if k == 0 else hexNeonStep(k - 1)
-        rgb, fill = hexNeonCell(home[..., :2] - step, home[..., 2:] + step, pxLat, t, originLat, lineWidth, haloPx,
-                                waveSpeed, sizeAmp, spin, palette_choice, accent, combine)
+        rgb, fill = hexNeonCell(
+            home[..., :2] - step,
+            home[..., 2:] + step,
+            pxLat,
+            t,
+            originLat,
+            lineWidth,
+            haloPx,
+            waveSpeed,
+            sizeAmp,
+            spin,
+            palette_choice,
+            accent,
+            combine,
+        )
         if combine == 2:
             ink = parity.cmpXor(ink, fill)
             ink_colour = ink_colour + rgb * fill[..., None]
@@ -138,4 +155,4 @@ def hexNeon(p, px, t, origin, cellSize, lineWidth, haloPx, waveSpeed, sizeAmp, s
     return lit
 
 
-__all__ = ["hexNeonStep", "hexNeonSwell", "hexNeonPose", "hexNeonColour", "hexNeonCell", "hexNeon"]
+__all__ = ["hexNeon", "hexNeonCell", "hexNeonColour", "hexNeonPose", "hexNeonStep", "hexNeonSwell"]

@@ -51,10 +51,10 @@ Run::
 
     py -m pytest tests/test_agent_cli_has_no_unbound_names.py -q
 """
+
 from __future__ import annotations
 
 import ast
-
 import sys
 from pathlib import Path
 
@@ -63,8 +63,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import agent_cli as A  # noqa: E402
-
+import agent_cli as A  # noqa: E402  # after the sys.path bootstrap
 
 #: The six, with the function each one is reached from. Kept as data so a fix that resolves
 #: only some of them fails with WHICH remain rather than only that the count moved.
@@ -91,7 +90,7 @@ UNBOUND = [
 # imports to module scope to satisfy a test, which is the tail wagging the dog. The contract
 # that actually matters is NOT "the module carries the name" but "the name resolves wherever
 # it is read" -- so these pin scope resolution per site, at the granularity of the defect.
-@pytest.mark.parametrize("name,where", UNBOUND, ids=[f"{n}:{w}" for n, w in UNBOUND])
+@pytest.mark.parametrize(("name", "where"), UNBOUND, ids=[f"{n}:{w}" for n, w in UNBOUND])
 def test_the_name_resolves_in_the_function_that_reads_it(name, where):
     sys.path.insert(0, str(ROOT / "scripts" / "checkers"))
     import check_unbound_names as C
@@ -103,10 +102,10 @@ def test_the_name_resolves_in_the_function_that_reads_it(name, where):
 
     hits = [(ln, nm, w) for ln, nm, w in r.violations if nm == name and w == where]
     assert not hits, (
-        "`%s` resolves in no scope inside %s (line %d). It raises NameError when reached; "
+        f"`{name}` resolves in no scope inside {where} (line {hits[0][0]}). It raises NameError when reached; "
         "where the site sits inside a fail-soft `except Exception` it raises SILENTLY and "
         "the organ reports a false zero."
-        % (name, where, hits[0][0]))
+    )
 
 
 # --------------------------------------------------------- the class, closed by scope analysis
@@ -137,17 +136,20 @@ def test_no_function_in_agent_cli_reads_a_name_nothing_binds():
     rel = "agent_cli.py"
     src = (ROOT / rel).read_text(encoding="utf-8-sig")
     tree = ast.parse(src, filename=rel)
-    r = C._Resolver(tree, lazy_annotations=any(
-        isinstance(n, ast.ImportFrom) and n.module == "__future__"
-        and any(a.name == "annotations" for a in n.names) for n in tree.body))
+    r = C._Resolver(
+        tree,
+        lazy_annotations=any(
+            isinstance(n, ast.ImportFrom) and n.module == "__future__" and any(a.name == "annotations" for a in n.names)
+            for n in tree.body
+        ),
+    )
     for st in tree.body:
         r.visit(st)
 
-    offenders = sorted({"%s:%d `%s` in %s" % (rel, ln, nm, where)
-                        for ln, nm, where in r.violations})
-    assert not offenders, (
-        "%d bare name(s) in agent_cli.py resolve in no scope:\n  %s"
-        % (len(offenders), "\n  ".join(offenders))
+    offenders = sorted({f"{rel}:{ln} `{nm}` in {where}" for ln, nm, where in r.violations})
+    assert not offenders, "{} bare name(s) in agent_cli.py resolve in no scope:\n  {}".format(
+        len(offenders),
+        "\n  ".join(offenders),
     )
 
 
@@ -166,7 +168,6 @@ def test_the_drift_line_is_reached_through_the_shape_the_only_caller_uses(monkey
     import core.learning.agent_memory as AM
 
     reached = []
-    real = AM.get_decisions if hasattr(AM, "get_decisions") else None   # noqa: F841
 
     class _Mem:
         def get_decisions(self, days=90):
@@ -175,7 +176,7 @@ def test_the_drift_line_is_reached_through_the_shape_the_only_caller_uses(monkey
 
     monkeypatch.setattr(AM, "get_agent_memory", lambda *a, **k: _Mem())
 
-    out = A._continuity_drift()          # <- NO ARGUMENTS. The production shape, exactly.
+    out = A._continuity_drift()  # <- NO ARGUMENTS. The production shape, exactly.
 
     assert isinstance(out, str), out
     assert reached, (
@@ -183,8 +184,9 @@ def test_the_drift_line_is_reached_through_the_shape_the_only_caller_uses(monkey
         "`except Exception: return ''` swallowed a NameError on the unbound "
         "`get_agent_memory`, so the drift line has never rendered and its absence is "
         "indistinguishable from 'no drift'. The four tests in test_continuity_drift.py all "
-        "pass notes= and never take this path.")
-    assert reached == [90], "the production path asked for a different window: %r" % reached
+        "pass notes= and never take this path."
+    )
+    assert reached == [90], f"the production path asked for a different window: {reached!r}"
 
 
 def test_the_wish_door_reaches_a_real_capture_event():
@@ -196,18 +198,23 @@ def test_the_wish_door_reaches_a_real_capture_event():
     resolves to nothing callable would be the same defect wearing a successful import.
     """
     from core.events.event_log import capture_event
+
     assert callable(capture_event)
 
     src = (ROOT / "agent_cli.py").read_text(encoding="utf-8-sig")
     tree = ast.parse(src)
-    for fn in [n for n in ast.walk(tree)
-               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-               and n.name in ("_wish_write", "_wish_curate_run")]:
+    for fn in [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in ("_wish_write", "_wish_curate_run")
+    ]:
         imports_it = any(
-            isinstance(n, ast.ImportFrom) and n.module == "core.events.event_log"
+            isinstance(n, ast.ImportFrom)
+            and n.module == "core.events.event_log"
             and any(a.name == "capture_event" for a in n.names)
-            for n in ast.walk(fn))
+            for n in ast.walk(fn)
+        )
         assert imports_it, (
-            "%s calls capture_event without importing it, so the call raises NameError into "
+            f"{fn.name} calls capture_event without importing it, so the call raises NameError into "
             "its own `except Exception: pass` and the wish never reaches the events spine."
-            % fn.name)
+        )

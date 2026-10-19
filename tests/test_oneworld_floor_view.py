@@ -13,6 +13,7 @@ What this file pins, and one correction to how it started:
 The legend stays the engine's: floor_view passes it through byte for byte with its sha256. The W4 pins on what the
 SURFACE may do with it are Navi's (tests/test_oneworld_w4_found_taken.py).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -53,6 +54,7 @@ class Clock:
 
 # ------------------------------------------------------------------ the engine journals transitions only
 
+
 def test_a_repeated_fire_is_not_journaled_again_when_the_engine_knows_the_previous_status(jp):
     entries = [floor.make_entry("x", _fired(), state="shadow")]
     r1 = floor.evaluate(entries, previous={})
@@ -74,7 +76,8 @@ def test_a_fire_after_a_clear_is_a_new_episode_and_is_journaled(jp):
     floor.evaluate(entries, previous=r["statuses"], now=lambda: "2026-10-09T10:02:00+00:00")
     rows = _lines(jp)
     assert len(rows) == 2, "fire, clear, fire is two episodes"
-    assert '"since": "2026-10-09T10:00:00+00:00"' in rows[0] and '"since": "2026-10-09T10:02:00+00:00"' in rows[1]
+    assert '"since": "2026-10-09T10:00:00+00:00"' in rows[0]
+    assert '"since": "2026-10-09T10:02:00+00:00"' in rows[1]
 
 
 def test_without_previous_the_w3_behaviour_is_unchanged(jp):
@@ -93,6 +96,7 @@ def test_statuses_account_for_every_entry_including_off():
 
 
 # ------------------------------------------------------------------ the view caches, passes the legend through
+
 
 def test_floor_view_evaluates_once_within_its_max_age(jp):
     calls = []
@@ -126,7 +130,8 @@ def test_floor_view_passes_the_engine_legend_through_byte_for_byte(jp):
     entries = [floor.make_entry("x", _fired(), state="shadow"), floor.make_entry("y", _clear(), state="shadow")]
     v = surface.floor_view(entries, clock=Clock(), cache={})
     expected = floor.evaluate(entries)["legend"]
-    assert v["ok"] is True and v["legend"] == expected
+    assert v["ok"] is True
+    assert v["legend"] == expected
     assert v["legend_sha256"] == hashlib.sha256(expected.encode("utf-8")).hexdigest()
 
 
@@ -148,7 +153,8 @@ def test_the_default_floor_names_its_blind_spots_beside_its_one_real_sensor(jp, 
     rows = {r["key"]: r["status"] for r in v["entries"]}
     assert rows.pop("undeliverable_mail") == "clear"
     assert set(rows.values()) == {"unavailable"}, "three unwired sensors are three blind spots, never calm"
-    assert "1 clear" in v["legend"] and "3 unavailable" in v["legend"]
+    assert "1 clear" in v["legend"]
+    assert "3 unavailable" in v["legend"]
 
 
 def test_a_crashed_engine_is_blind_never_all_clear(jp):
@@ -156,22 +162,38 @@ def test_a_crashed_engine_is_blind_never_all_clear(jp):
         raise RuntimeError("engine down")
 
     v = surface.floor_view(evaluate=ev, clock=Clock(), cache={})
-    assert v["ok"] is False and v["entries"] == []
-    assert "cannot say what is silent" in v["legend"] and "engine down" in v["legend"]
+    assert v["ok"] is False
+    assert v["entries"] == []
+    assert "cannot say what is silent" in v["legend"]
+    assert "engine down" in v["legend"]
 
 
 # ------------------------------------------------------------------ the richer agent fields (Heimdall's reshape)
 
+
 def test_agents_view_passes_through_the_roster_churn_fields_when_present():
-    v = surface.agents_view(presence_source=lambda: [
-        {"agent": "claude", "state": "LIVE", "phase": "running", "beat_age_s": 1.0,
-         "n_total": 7, "n_dead": 5, "split_brain": True, "churning": False}])
+    v = surface.agents_view(
+        presence_source=lambda: [
+            {
+                "agent": "claude",
+                "state": "LIVE",
+                "phase": "running",
+                "beat_age_s": 1.0,
+                "n_total": 7,
+                "n_dead": 5,
+                "split_brain": True,
+                "churning": False,
+            }
+        ]
+    )
     a = v["agents"][0]
     assert (a["n_total"], a["n_dead"], a["split_brain"], a["churning"]) == (7, 5, True, False)
 
 
 def test_agents_view_leaves_the_churn_fields_none_when_the_source_has_none():
-    v = surface.agents_view(presence_source=lambda: [
-        {"agent": "kimi", "state": "LIVE", "phase": "idle", "beat_age_s": 2.0}])
+    v = surface.agents_view(
+        presence_source=lambda: [{"agent": "kimi", "state": "LIVE", "phase": "idle", "beat_age_s": 2.0}]
+    )
     a = v["agents"][0]
-    assert a["split_brain"] is None and a["n_total"] is None, "unknown is None, never a guessed False or 0"
+    assert a["split_brain"] is None, "unknown is None, never a guessed False or 0"
+    assert a["n_total"] is None, "unknown is None, never a guessed False or 0"

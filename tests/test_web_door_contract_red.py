@@ -25,7 +25,6 @@ import importlib
 
 import pytest
 
-
 # The engine seam we test against. The engine half (Vandor) wires its implementation such
 # that `core.web.door` exposes `fetch()` and `search()` with these exact names. If the seam
 # differs, the fence reconciles HERE, not by me weakening the pins.
@@ -57,11 +56,27 @@ def _search(query, **kw):
 # Envelope shape (the contract's core)
 # ---------------------------------------------------------------------------
 
+
 def test_fetch_returns_the_full_contract_envelope():
     e = _fetch("https://example.com")
-    required = {"ok", "verb", "request", "final_url", "title", "content_type",
-                "etag", "last_modified", "fetched_at", "from_cache",
-                "raw", "clean", "truncated", "section_map", "receipt", "error"}
+    required = {
+        "ok",
+        "verb",
+        "request",
+        "final_url",
+        "title",
+        "content_type",
+        "etag",
+        "last_modified",
+        "fetched_at",
+        "from_cache",
+        "raw",
+        "clean",
+        "truncated",
+        "section_map",
+        "receipt",
+        "error",
+    }
     missing = required - set(e.keys())
     assert not missing, f"envelope missing required fields: {missing}"
     assert e["verb"] == "web.fetch"
@@ -79,20 +94,24 @@ def test_search_returns_the_search_envelope():
 # Law 1 -- raw next to cleaned, always
 # ---------------------------------------------------------------------------
 
+
 def test_raw_next_to_cleaned_is_the_default_not_an_opt_in():
     """A fetch with no --raw flag must STILL return raw.text. Opt-out is the violation."""
     e = _fetch("https://example.com")
     assert e["raw"]["present"] is True, (
-        "clean without raw is the cardinal sin: the cleaner's edit becomes the only witness")
-    assert isinstance(e["raw"]["text"], str) and len(e["raw"]["text"]) > 0
+        "clean without raw is the cardinal sin: the cleaner's edit becomes the only witness"
+    )
+    assert isinstance(e["raw"]["text"], str)
+    assert len(e["raw"]["text"]) > 0
 
 
 def test_raw_sha256_covers_the_fetched_bytes():
     """raw.sha256 is the only trusted identity of the source; it must be present and hex."""
     e = _fetch("https://example.com")
     sha = e["raw"]["sha256"]
-    assert sha and isinstance(sha, str) and len(sha) == 64, (
-        f"raw.sha256 must be a 64-char hex hash, got {sha!r}")
+    assert sha, f"raw.sha256 must be a 64-char hex hash, got {sha!r}"
+    assert isinstance(sha, str), f"raw.sha256 must be a 64-char hex hash, got {sha!r}"
+    assert len(sha) == 64, f"raw.sha256 must be a 64-char hex hash, got {sha!r}"
     assert all(c in "0123456789abcdef" for c in sha)
 
 
@@ -101,12 +120,14 @@ def test_raw_and_clean_are_different_representations():
     e = _fetch("https://example.com")
     if e["clean"]["present"]:
         assert e["raw"]["text"] != e["clean"]["text"], (
-            "raw==clean means the 'cleaner' did nothing OR raw is a disguised clean")
+            "raw==clean means the 'cleaner' did nothing OR raw is a disguised clean"
+        )
 
 
 # ---------------------------------------------------------------------------
 # Law 2 -- no silent truncation
 # ---------------------------------------------------------------------------
+
 
 def test_budget_truncation_is_never_silent():
     """A tiny budget must return truncated:true AND a non-empty section_map."""
@@ -114,7 +135,8 @@ def test_budget_truncation_is_never_silent():
     if e["truncated"]:
         assert e["section_map"], (
             "truncated:true with an empty section_map is a spec violation; "
-            "give --range an address or do not claim a clip")
+            "give --range an address or do not claim a clip"
+        )
 
 
 def test_truncated_flag_is_honest():
@@ -128,18 +150,21 @@ def test_truncated_flag_is_honest():
 # Law 3 -- byte-verbatim raw, or honest absence
 # ---------------------------------------------------------------------------
 
+
 def test_raw_is_lossless_or_absent_never_reencoded():
     """If the engine cannot decode losslessly, raw.present must go FALSE, never silently
     substitute a re-encoded clean. A dishonestly-present raw is a lie the diff can't see."""
     e = _fetch("https://example.com")
     if not e["raw"]["present"]:
         assert e["clean"]["present"] is not None, (
-            "if raw is honestly absent, clean must still be present (raw-or-clean, never neither)")
+            "if raw is honestly absent, clean must still be present (raw-or-clean, never neither)"
+        )
 
 
 # ---------------------------------------------------------------------------
 # Law 4 -- attribution is data, not prose
 # ---------------------------------------------------------------------------
+
 
 def test_final_url_reflects_redirect_not_the_typed_url():
     """A fetch that follows a redirect must report the RESOLVED url in final_url."""
@@ -147,7 +172,8 @@ def test_final_url_reflects_redirect_not_the_typed_url():
     if e["ok"]:
         assert e["final_url"] != "https://httpbin.org/redirect-to?url=https://example.com", (
             "final_url must be post-redirect; ok:true with final_url==typed-url on a real "
-            "redirect is an attribution lie")
+            "redirect is an attribution lie"
+        )
 
 
 def test_fetched_at_is_a_populated_timestamp():
@@ -159,6 +185,7 @@ def test_fetched_at_is_a_populated_timestamp():
 # Law 5 -- PDF structural pass cheap and separate
 # ---------------------------------------------------------------------------
 
+
 def test_pdf_structural_pass_is_a_low_cost_alternative_to_full_text():
     """--structural must return structure fields WITHOUT requiring the full text pull."""
     e = _fetch("https://example.com", structural=True)
@@ -166,12 +193,14 @@ def test_pdf_structural_pass_is_a_low_cost_alternative_to_full_text():
         assert "structure" in e, "structural fetch must surface the structure block"
         # The structural pass is how a citation lands/dies cheaply; it must not silently
         # degrade to a full-text read with structure absent.
-        assert "structure" in e and isinstance(e.get("structure"), dict)
+        assert "structure" in e
+        assert isinstance(e.get("structure"), dict)
 
 
 # ---------------------------------------------------------------------------
 # Laws 6 & 7 -- receipts + error-as-data
 # ---------------------------------------------------------------------------
+
 
 def test_every_terminal_fetch_logs_a_receipt():
     """ok:true OR ok:false, every terminal fetch must carry receipt.logged==True."""
@@ -185,7 +214,14 @@ def test_error_is_data_not_a_bare_failed():
     if not e["ok"]:
         assert e["error"], "ok:false with null error = the 'failed' word wearing a suit"
         assert e["error"].get("class") in {
-            "timeout", "http", "encoding", "untrusted", "denied", "not_pdf", "rot", "unknown"
+            "timeout",
+            "http",
+            "encoding",
+            "untrusted",
+            "denied",
+            "not_pdf",
+            "rot",
+            "unknown",
         }
 
 
@@ -203,16 +239,22 @@ def test_rot_carries_an_archive_suggestion():
     e = _fetch("https://www.anandtech.com/dead-link-2024")
     if not e["ok"] and e["error"] and e["error"].get("class") == "rot":
         assert e["error"].get("suggestion"), (
-            "rot with no archive.org suggestion drops the citation-standard rule into my memory")
+            "rot with no archive.org suggestion drops the citation-standard rule into my memory"
+        )
 
 
 # ---------------------------------------------------------------------------
 # Law 8 -- separable grants
 # ---------------------------------------------------------------------------
 
+
 def test_fetch_and_search_are_separable_verbs():
     """The contract names two verbs with independent envelopes. The engine must not fuse them;
     the suite asserts both exist as separate callable seams."""
     mod = _mod()
-    assert callable(getattr(mod, "fetch", None)) and callable(getattr(mod, "search", None)), (
-        "web.fetch and web.search must be separable seams, not one fused 'web' verb")
+    assert callable(getattr(mod, "fetch", None)), (
+        "web.fetch and web.search must be separable seams, not one fused 'web' verb"
+    )
+    assert callable(getattr(mod, "search", None)), (
+        "web.fetch and web.search must be separable seams, not one fused 'web' verb"
+    )

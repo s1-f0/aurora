@@ -14,6 +14,7 @@ Hermetic: the hook runs as the REAL subprocess with TEMP/TMP pointed at tmp_path
 pid is a live sleeping python child, Redis is not required (every Redis touch in the hook is
 fail-open and AKASHIC_DAEMON_WAKE=0 takes the legacy path). No daemon, no listener spawned.
 """
+
 import json
 import os
 import re
@@ -33,10 +34,11 @@ TWIN = os.path.join(REPO, "scripts", "hooks", "claude_stop.py")
 AGENT = "torigin"
 
 
-@pytest.fixture()
+@pytest.fixture
 def sleeper():
-    p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    p = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(120)"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
     yield p.pid
     p.kill()
 
@@ -48,14 +50,22 @@ def _seat(tmp, sid, pid, origin=None):
         ws.write_origin(AGENT, sid, origin, pid, str(tmp))
 
 
-def _run_hook(tmp, sid):
-    env = {**os.environ, "AKASHIC_AGENT_ID": AGENT, "AKASHIC_DAEMON_WAKE": "0",
-           "AKASHIC_STOP_PROMISE": "0", "AKASHIC_SEAT_HEARTBEAT": "0",
-           "AKASHIC_DRAFT_KEEPALIVE": "0",
-           "TEMP": str(tmp), "TMP": str(tmp), "TMPDIR": str(tmp)}
+def _run_hook(tmp, sid, hook=HOOK):
+    env = {
+        **os.environ,
+        "AKASHIC_AGENT_ID": AGENT,
+        "AKASHIC_DAEMON_WAKE": "0",
+        "AKASHIC_STOP_PROMISE": "0",
+        "AKASHIC_SEAT_HEARTBEAT": "0",
+        "AKASHIC_DRAFT_KEEPALIVE": "0",
+        "TEMP": str(tmp),
+        "TMP": str(tmp),
+        "TMPDIR": str(tmp),
+    }
     payload = json.dumps({"session_id": sid, "hook_event_name": "Stop"})
-    return subprocess.run([sys.executable, HOOK], input=payload, capture_output=True,
-                          text=True, timeout=90, cwd=REPO, env=env)
+    return subprocess.run(
+        [sys.executable, hook], input=payload, capture_output=True, text=True, timeout=90, cwd=REPO, env=env
+    )
 
 
 def _sid():
@@ -66,7 +76,7 @@ def _sid():
 def test_origin_roundtrip_and_states(tmp_path, sleeper):
     sid = _sid()
     assert ws.read_origin(AGENT, sid, str(tmp_path)) == ("none", None)
-    _seat(tmp_path, sid, sleeper)                      # seat, no sidecar
+    _seat(tmp_path, sid, sleeper)  # seat, no sidecar
     assert ws.wake_origin_state(AGENT, sid, str(tmp_path)) == ("armed-unknown", sleeper)
     assert ws.harness_armed(AGENT, sid, str(tmp_path)) is False
     ws.write_origin(AGENT, sid, ws.ORIGIN_DAEMON, sleeper, str(tmp_path))
@@ -90,9 +100,9 @@ def test_stale_sidecar_for_another_pid_is_unknown(tmp_path, sleeper):
 def test_remove_origin_never_deletes_a_successors_stamp(tmp_path, sleeper):
     sid = _sid()
     ws.write_origin(AGENT, sid, ws.ORIGIN_HARNESS, sleeper, str(tmp_path))
-    ws.remove_origin(AGENT, sid, pid=sleeper + 1, tmp=str(tmp_path))     # not mine
+    ws.remove_origin(AGENT, sid, pid=sleeper + 1, tmp=str(tmp_path))  # not mine
     assert ws.read_origin(AGENT, sid, str(tmp_path)) == ("harness", sleeper)
-    ws.remove_origin(AGENT, sid, pid=sleeper, tmp=str(tmp_path))         # mine
+    ws.remove_origin(AGENT, sid, pid=sleeper, tmp=str(tmp_path))  # mine
     assert ws.read_origin(AGENT, sid, str(tmp_path)) == ("none", None)
 
 
@@ -119,12 +129,13 @@ def test_hook_blocks_on_daemon_origin_and_names_it(tmp_path, sleeper):
     assert '"decision": "block"' in (r.stdout or ""), r.stdout + r.stderr
     reason = json.loads(r.stdout.strip().splitlines()[-1])["reason"]
     assert "presence" in reason
-    assert "bifrost-standby" in reason and f"--session {sid}" in reason
+    assert "bifrost-standby" in reason
+    assert f"--session {sid}" in reason
 
 
 def test_hook_blocks_on_missing_origin(tmp_path, sleeper):
     sid = _sid()
-    _seat(tmp_path, sid, sleeper)                      # a pre-stamp listener
+    _seat(tmp_path, sid, sleeper)  # a pre-stamp listener
     r = _run_hook(tmp_path, sid)
     assert '"decision": "block"' in (r.stdout or ""), r.stdout + r.stderr
     assert "no origin record" in json.loads(r.stdout.strip().splitlines()[-1])["reason"]
@@ -147,21 +158,46 @@ def test_hook_arm_line_is_absolute_and_lane_pinned(tmp_path, sleeper):
     # moved to the property that actually matters: the command the hook prints is the one
     # canonical command, byte for byte.
     from core.comm import wake_seat as _ws
+
     assert cmd == _ws.arm_command(AGENT, sid), (
         "the hook prints an arm command that is not wake_seat.arm_command's -- "
-        "hook=%r canon=%r" % (cmd, _ws.arm_command(AGENT, sid)))
-    assert "/agent_cli.py bifrost-standby" in cmd and "scripts/bifrost_wake.py" not in cmd
-    assert ":/" in cmd or cmd.split(" py ")[1].startswith("/")   # absolute, never cwd-relative
+        f"hook={cmd!r} canon={_ws.arm_command(AGENT, sid)!r}"
+    )
+    assert "/agent_cli.py bifrost-standby" in cmd
+    assert "scripts/bifrost_wake.py" not in cmd
+    # ABSOLUTE, NEVER CWD-RELATIVE. This split on " py " and looked for a drive colon, which only
+    # holds for the Windows `py` launcher. The launcher is core.paths.python_launcher() now (`uv run
+    # --project <root>` where uv exists, `py` or `python3` without it), so pin the property itself:
+    # the CLI is named by its absolute path in this checkout, and a `uv run` carries --project
+    # pointing at the same root (from a drifted cwd uv would not find the locked environment).
+    root = REPO.replace("\\", "/")  # absolute: REPO comes from os.path.abspath
+    assert f" {root}/agent_cli.py bifrost-standby" in cmd, cmd
+    if cmd.startswith("uv run"):
+        assert f"--project {root} " in cmd, cmd
 
 
 # ---------------------------------------------------------------- twin parity
-def test_stop_hook_twins_in_parity_modulo_syspath_depth():
-    """scripts/hooks/claude_stop.py is the copy user-level settings execute (home-rooted
-    sessions); it must equal the canonical hook modulo the sys.path dirname chain."""
-    chain = re.compile(r"os\.path\.dirname\((?:os\.path\.dirname\()+os\.path\.abspath\(__file__\)\)+")
-    a = chain.sub("<REPO>", open(HOOK, encoding="utf-8").read())
-    b = chain.sub("<REPO>", open(TWIN, encoding="utf-8").read())
-    assert a == b, "hook twins drifted -- regenerate scripts/hooks/claude_stop.py from the canonical copy"
+def test_stop_hook_twin_decides_what_the_canonical_hook_decides(tmp_path, sleeper):
+    """scripts/hooks/claude_stop.py is the path older user-level settings execute (home-rooted
+    sessions); it must decide exactly what the canonical hook decides.
+
+    Rewritten on the Linux line: scripts/hooks/claude_*.py are runpy shims onto
+    agent/harness/hooks/ there, not full copies (tests/test_hook_shims.py pins that shape), so the
+    old source comparison modulo the sys.path dirname chain could only fail. Parity is pinned on
+    behaviour instead: both paths, the same blocking seat, the same exit code and stdout."""
+    sid = _sid()
+    runs = []
+    for i, hook in enumerate((HOOK, TWIN)):
+        tmp = tmp_path / f"run{i}"  # one tempdir each: the hook dedups an identical replayed payload
+        tmp.mkdir()
+        _seat(tmp, sid, sleeper, origin=ws.ORIGIN_DAEMON)
+        runs.append(_run_hook(tmp, sid, hook=hook))
+    canon, twin = runs
+    assert '"decision": "block"' in (canon.stdout or ""), canon.stdout + canon.stderr
+    assert (twin.returncode, twin.stdout) == (canon.returncode, canon.stdout), (
+        f"the scripts/hooks twin decided differently from the canonical hook: twin={twin.stdout!r} "
+        f"canon={canon.stdout!r} stderr={twin.stderr[-400:]!r}"
+    )
 
 
 # ---------------------------------------------------------------- D6(c), Heimdall's objection
@@ -171,16 +207,38 @@ def test_unstamped_listener_launch_is_unknown_and_blocks(tmp_path):
     running the REAL listener briefly against an offline bus (it exits 2 before watching, but
     the seat and sidecar are written first by design)."""
     sid = _sid()
-    env = {**os.environ, "TEMP": str(tmp_path), "TMP": str(tmp_path), "TMPDIR": str(tmp_path),
-           "AKASHIC_REDIS_URL": "redis://127.0.0.1:1/0", "REDIS_URL": "redis://127.0.0.1:1/0"}
+    env = {
+        **os.environ,
+        "TEMP": str(tmp_path),
+        "TMP": str(tmp_path),
+        "TMPDIR": str(tmp_path),
+        "AKASHIC_REDIS_URL": "redis://127.0.0.1:1/0",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+    }
     env.pop("BIFROST_WAKE_ORIGIN", None)
-    subprocess.run([sys.executable, os.path.join(REPO, "scripts", "bifrost_wake.py"),
-                    "--agent", AGENT, "--session", sid, "--deadline", "1", "--block", "100"],
-                   capture_output=True, text=True, encoding="utf-8", errors="replace",
-                   timeout=120, cwd=REPO, env=env)
+    subprocess.run(
+        [
+            sys.executable,
+            os.path.join(REPO, "scripts", "bifrost_wake.py"),
+            "--agent",
+            AGENT,
+            "--session",
+            sid,
+            "--deadline",
+            "1",
+            "--block",
+            "100",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+        cwd=REPO,
+        env=env,
+    )
     # the listener has exited; its own cleanup removed the files only if it still held them,
     # so re-create the seat with a live pid and ONLY the stamp the launch produced
     origin, _ = ws.read_origin(AGENT, sid, str(tmp_path))
-    assert origin in ("unknown", "none"), origin        # never a wakeable default
+    assert origin in ("unknown", "none"), origin  # never a wakeable default
     assert origin != ws.ORIGIN_DIRECT
-

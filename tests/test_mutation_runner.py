@@ -51,6 +51,7 @@ Run::
 
     py -m pytest tests/test_mutation_runner.py -q
 """
+
 from __future__ import annotations
 
 import json
@@ -62,8 +63,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scripts.mutate import run_spec  # noqa: E402
-
+from scripts.mutate import run_spec  # noqa: E402  # after the sys.path bootstrap
 
 # --------------------------------------------------------------------------- a toy subject
 SUBJECT = '''\
@@ -81,7 +81,7 @@ def unguarded(n):
     return n * 2
 '''
 
-TESTS = '''\
+TESTS = """\
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -94,7 +94,7 @@ def test_negative_is_negative():
 
 def test_zero_is_nonnegative():
     assert classify(0) == "nonnegative"
-'''
+"""
 
 
 @pytest.fixture
@@ -118,16 +118,26 @@ def _one(bench, **mut):
 
 # --------------------------------------------------------------------------- the happy path
 def test_a_mutation_a_pin_guards_is_CAUGHT(bench):
-    r = _one(bench, file="subject.py", anchor='return "negative"',
-             replacement='return "nonnegative"', expect="test_negative_is_negative")
+    r = _one(
+        bench,
+        file="subject.py",
+        anchor='return "negative"',
+        replacement='return "nonnegative"',
+        expect="test_negative_is_negative",
+    )
     assert r["verdict"] == "CAUGHT", r
 
 
 def test_the_wrong_pin_firing_is_not_quietly_counted_as_CAUGHT(bench):
     """A mutation that reddens the suite via a DIFFERENT pin than expected means either the
     expectation or the mutation is wrong. Folding it into CAUGHT hides both."""
-    r = _one(bench, file="subject.py", anchor='return "negative"',
-             replacement='return "nonnegative"', expect="test_zero_is_nonnegative")
+    r = _one(
+        bench,
+        file="subject.py",
+        anchor='return "negative"',
+        replacement='return "nonnegative"',
+        expect="test_zero_is_nonnegative",
+    )
     assert r["verdict"] == "CAUGHT-BY-OTHER", r
 
 
@@ -141,8 +151,7 @@ def test_a_missing_anchor_is_NULL_APPLY_not_SURVIVED(bench):
     """W236's core ask. sed eating an escape, or an anchor carrying a comment, produces a
     mutation that never ran -- which says NOTHING about the pins and must never be scored
     as though the pins were blind."""
-    r = _one(bench, file="subject.py", anchor="this text appears nowhere",
-             replacement="irrelevant")
+    r = _one(bench, file="subject.py", anchor="this text appears nowhere", replacement="irrelevant")
     assert r["verdict"] == "NULL-APPLY", r
     assert "anchor" in r["detail"].lower(), r["detail"]
 
@@ -158,15 +167,14 @@ def test_an_ambiguous_anchor_is_NULL_APPLY(bench):
     r = _one(bench, file="subject.py", anchor="return", replacement="return  ")
     assert r["verdict"] == "NULL-APPLY", r
     assert "ambiguous" in r["detail"].lower(), (
-        "refused for some reason other than ambiguity, so this does not pin the count "
-        "check: %r" % r["detail"])
+        "refused for some reason other than ambiguity, so this does not pin the count check: {!r}".format(r["detail"])
+    )
 
 
 def test_a_mutant_that_does_not_parse_is_NULL_APPLY_not_SURVIVED(bench):
     """W236 names this one specifically: a SyntaxError yields a pytest COLLECTION error, not
     FAILED lines, so a FAILED-line parser scores it as survived."""
-    r = _one(bench, file="subject.py", anchor='return "negative"',
-             replacement='return "negative" ((((')
+    r = _one(bench, file="subject.py", anchor='return "negative"', replacement='return "negative" ((((')
     assert r["verdict"] == "NULL-APPLY", r
     assert "parse" in r["detail"].lower() or "syntax" in r["detail"].lower(), r["detail"]
 
@@ -182,8 +190,13 @@ def test_a_declared_probe_that_does_not_move_is_NULL_SEMANTIC(bench):
     """W128's species: the mutant LANDED and changed nothing observable. The runner cannot
     infer semantic nullity -- that is undecidable -- so the spec DECLARES a probe whose value
     must move if the mutation is live, and the runner checks it."""
-    r = _one(bench, file="subject.py", anchor="return n * 2", replacement="return n*2",
-             probe="__import__('subject').unguarded(21)")
+    r = _one(
+        bench,
+        file="subject.py",
+        anchor="return n * 2",
+        replacement="return n*2",
+        probe="__import__('subject').unguarded(21)",
+    )
     assert r["verdict"] == "NULL-SEMANTIC", r
 
 
@@ -198,8 +211,13 @@ def test_SURVIVED_always_declares_that_semantic_nullity_was_not_ruled_out(bench)
 
 
 def test_a_probe_that_moves_leaves_the_verdict_alone(bench):
-    r = _one(bench, file="subject.py", anchor="return n * 2", replacement="return n * 3",
-             probe="__import__('subject').unguarded(21)")
+    r = _one(
+        bench,
+        file="subject.py",
+        anchor="return n * 2",
+        replacement="return n * 3",
+        probe="__import__('subject').unguarded(21)",
+    )
     assert r["verdict"] == "SURVIVED", r
     assert r.get("semantic_null_ruled_out") is True, r
 
@@ -220,26 +238,29 @@ def test_the_verdict_comes_from_the_exit_code_not_from_matching_output(bench, mo
     calls this green.
     """
     import scripts.mutate as M
+
     calls = {"n": 0}
     real = M._run_tests
 
     def fake(tests, repo, timeout=600):
         calls["n"] += 1
         if "canary" in str(tests):
-            return 1, "canary went red"          # calibration must still pass
+            return 1, "canary went red"  # calibration must still pass
         if calls["n"] <= 3:
-            return 0, "..... [100%]"             # baseline + null control: genuinely green
+            return 0, "..... [100%]"  # baseline + null control: genuinely green
         # the mutation run: RED, with innocuous output and no counts line
         return 1, "..F.. [100%]"
 
     monkeypatch.setattr(M, "_run_tests", fake)
-    res = M.run_spec(_spec(file="subject.py", anchor="return n * 2", replacement="return n * 3"),
-                     tests="test_subject.py", repo=bench)
+    res = M.run_spec(
+        _spec(file="subject.py", anchor="return n * 2", replacement="return n * 3"), tests="test_subject.py", repo=bench
+    )
     assert res["calibration"]["ok"] is True, res["calibration"]
     r = res["results"][0]
     assert r["verdict"] == "CAUGHT", (
         "a nonzero exit code was scored green -- the runner is matching output text instead "
-        "of reading the exit code: %r" % (r,))
+        f"of reading the exit code: {r!r}"
+    )
     assert r["returncode"] == 1, r
     assert real is not M._run_tests  # sanity: the substitution was live
 
@@ -249,9 +270,11 @@ def test_the_runner_refuses_when_its_canary_is_not_caught(bench, monkeypatch):
     RED, the detector is blind and every SURVIVED this run would be a lie. Refuse, loudly,
     rather than emit verdicts nobody should trust."""
     import scripts.mutate as M
+
     monkeypatch.setattr(M, "_run_tests", lambda *a, **k: (0, "everything is fine"))
-    res = M.run_spec(_spec(file="subject.py", anchor="return n * 2", replacement="return n * 3"),
-                     tests="test_subject.py", repo=bench)
+    res = M.run_spec(
+        _spec(file="subject.py", anchor="return n * 2", replacement="return n * 3"), tests="test_subject.py", repo=bench
+    )
     assert res["calibration"]["ok"] is False, res["calibration"]
     assert not res["results"], "verdicts were reported despite a blind detector"
     assert "canary" in json.dumps(res["calibration"]).lower()
@@ -261,9 +284,11 @@ def test_the_runner_refuses_when_the_null_control_reads_as_red(bench, monkeypatc
     """Side two. If a provable no-op reddens the suite, the suite is non-deterministic and
     every CAUGHT this run is a coin flip."""
     import scripts.mutate as M
+
     monkeypatch.setattr(M, "_run_tests", lambda *a, **k: (1, "FAILED something"))
-    res = M.run_spec(_spec(file="subject.py", anchor="return n * 2", replacement="return n * 3"),
-                     tests="test_subject.py", repo=bench)
+    res = M.run_spec(
+        _spec(file="subject.py", anchor="return n * 2", replacement="return n * 3"), tests="test_subject.py", repo=bench
+    )
     assert res["calibration"]["ok"] is False, res["calibration"]
     assert not res["results"]
 
@@ -278,30 +303,45 @@ def test_a_red_baseline_refuses_before_anything_is_mutated(bench):
     the pin still passed. The runner's own self-mutation caught it.
     """
     (bench / "test_subject.py").write_text(
-        TESTS + "\n\ndef test_already_broken():\n    assert False\n", encoding="utf-8")
-    res = run_spec(_spec(file="subject.py", anchor="return n * 2", replacement="return n * 3"),
-                   tests="test_subject.py", repo=bench)
+        TESTS + "\n\ndef test_already_broken():\n    assert False\n", encoding="utf-8"
+    )
+    res = run_spec(
+        _spec(file="subject.py", anchor="return n * 2", replacement="return n * 3"), tests="test_subject.py", repo=bench
+    )
     cal = res["calibration"]
     assert cal["ok"] is False, cal
     assert cal["baseline"]["green"] is False, cal
     assert "baseline" in (cal.get("why") or "").lower(), (
-        "refused, but not FOR the baseline -- the baseline check is not what is pinned "
-        "here: %r" % cal.get("why"))
-    assert cal["canary"] is None and cal["null_control"] is None, (
-        "calibration continued past a red baseline instead of refusing immediately: %r" % cal)
+        "refused, but not FOR the baseline -- the baseline check is not what is pinned here: {!r}".format(
+            cal.get("why")
+        )
+    )
+    assert cal["canary"] is None, f"calibration continued past a red baseline instead of refusing immediately: {cal!r}"
+    assert cal["null_control"] is None, (
+        f"calibration continued past a red baseline instead of refusing immediately: {cal!r}"
+    )
 
 
 # --------------------------------------------------------------------------- hygiene
 def test_every_file_is_restored_byte_for_byte(bench):
     """A mutation harness that leaks is worse than none: the next run measures the mutant."""
     before = (bench / "subject.py").read_bytes()
-    run_spec({"mutations": [
-        {"label": "a", "file": "subject.py", "anchor": 'return "negative"',
-         "replacement": 'return "nonnegative"'},
-        {"label": "b", "file": "subject.py", "anchor": "nope", "replacement": "x"},
-        {"label": "c", "file": "subject.py", "anchor": "return n * 2",
-         "replacement": "return n * 3 ((("},
-    ]}, tests="test_subject.py", repo=bench)
+    run_spec(
+        {
+            "mutations": [
+                {
+                    "label": "a",
+                    "file": "subject.py",
+                    "anchor": 'return "negative"',
+                    "replacement": 'return "nonnegative"',
+                },
+                {"label": "b", "file": "subject.py", "anchor": "nope", "replacement": "x"},
+                {"label": "c", "file": "subject.py", "anchor": "return n * 2", "replacement": "return n * 3 ((("},
+            ]
+        },
+        tests="test_subject.py",
+        repo=bench,
+    )
     assert (bench / "subject.py").read_bytes() == before, "the subject was left mutated"
 
 

@@ -56,10 +56,10 @@ from core.screenspace import capture
 from core.screenspace.capture import _load_mss
 
 # --------------------------------------------------------------------------- pre-registered bars (§5 verbatim)
-BAR_TARGETED_CAPTURE_MS = 100.0    # p95 — but this is the L4 region-crop bar (see #1)
-BAR_TREE_FIND_MS = 200.0           # p95 — cached-walk, not built (registered only)
-BAR_L0_L3_SERVER_MS = 5.0          # v1 shadow-model CACHE claim (see #2, F2-open)
-BAR_INPUT_DISPATCH_MS = 100.0      # p95 — act, step 3+, not built
+BAR_TARGETED_CAPTURE_MS = 100.0  # p95 — but this is the L4 region-crop bar (see #1)
+BAR_TREE_FIND_MS = 200.0  # p95 — cached-walk, not built (registered only)
+BAR_L0_L3_SERVER_MS = 5.0  # v1 shadow-model CACHE claim (see #2, F2-open)
+BAR_INPUT_DISPATCH_MS = 100.0  # p95 — act, step 3+, not built
 BAR_OBSERVE_LOCATE_ACT_MS = 350.0  # act, step 3+, not built
 
 # Sampling: enough for a rough p95 without making a pytest take minutes.
@@ -94,7 +94,7 @@ _BENCHABLE = _SUBSTRATE == "real-display"
 pytestmark = pytest.mark.skipif(
     not _BENCHABLE,
     reason=f"substrate='{_SUBSTRATE}': the latency bench needs a real display; "
-           "this seat verifies contract-shape + degradation, not numbers",
+    "this seat verifies contract-shape + degradation, not numbers",
 )
 
 
@@ -108,7 +108,7 @@ def _measure_capture_l5() -> tuple:
     """Warm-path L5 full-screen capture p95, plus the cost breakdown."""
     for _ in range(WARMUP):
         capture.screen()
-    grabs, encodes = [], []
+    grabs = []
     for _ in range(SAMPLES):
         t0 = time.perf_counter_ns()
         frame = capture.screen()
@@ -126,7 +126,7 @@ def frames_ms(times_ms):
 
 def _measure_l0_l3_v2() -> tuple:
     """v2 (poll-per-call) L0 pulse + L3 delta p95. F2 evidence, not a v1 check."""
-    from core.screenspace import peek, delta
+    from core.screenspace import delta, peek
 
     for _ in range(WARMUP):
         peek(level="L0")
@@ -144,10 +144,11 @@ def _measure_l0_l3_v2() -> tuple:
 
 # --------------------------------------------------------------------------- smoke (default) vs bench
 
+
 def test_bench_capture_l5_reports_p95():
     """--smoke (default): the capture bar is EXPRESSED and the bench is wired.
     Under --bench: measures L5 full-screen p95 (REPORTED vs L4's <100ms, see #1)."""
-    mn, p95, n = _measure_capture_l5()
+    _mn, p95, n = _measure_capture_l5()
     # Even under smoke, if a display is present we take samples; the bar shape is
     # the assertion-target only in --bench mode (see conftest/skipping for CI).
     assert n == SAMPLES or n == 0
@@ -157,6 +158,8 @@ def test_bench_capture_l5_reports_p95():
 def test_bench_reports_l0_l3_v2_with_f2_caveat():
     """Measures the v2 L0/L3 numbers as F2 evidence. Does NOT assert v2 against
     v1's <5ms (that is the F2 decision point, re-baselined with F2)."""
-    (l0_mn, l0_p95, l0_n), (l3_mn, l3_p95, l3_n) = _measure_l0_l3_v2()
-    assert l0_n == SAMPLES and l3_n == SAMPLES
-    assert l0_p95 >= 0.0 and l3_p95 >= 0.0
+    (_l0_mn, l0_p95, l0_n), (_l3_mn, l3_p95, l3_n) = _measure_l0_l3_v2()
+    assert l0_n == SAMPLES
+    assert l3_n == SAMPLES
+    assert l0_p95 >= 0.0
+    assert l3_p95 >= 0.0

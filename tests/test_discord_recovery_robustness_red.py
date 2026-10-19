@@ -39,6 +39,7 @@ file, watch it fail, then implement -- not the other way round.
 
 Run: py -m pytest tests/test_discord_recovery_robustness_red.py -q
 """
+
 import os
 import sys
 
@@ -46,8 +47,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.comm import discord_inbound
 import scripts.revive as revive
+from core.comm import discord_inbound
 
 ROOT_ID = "111222333444555666"
 PLAIN_OP = "999888777666555444"
@@ -58,10 +59,14 @@ GATEWAY = "python E:/AI-Setup/scripts/bifrost_runner_discord.py"
 
 
 def _cfg():
-    return {"operator_id": ROOT_ID,
-            "roots": {ROOT_ID: {"agent": "daniil"}},
-            "people": {ROOT_ID: {"agent": "daniil", "tier": "operator"},
-                       PLAIN_OP: {"agent": "guestop", "tier": "operator"}}}
+    return {
+        "operator_id": ROOT_ID,
+        "roots": {ROOT_ID: {"agent": "daniil"}},
+        "people": {
+            ROOT_ID: {"agent": "daniil", "tier": "operator"},
+            PLAIN_OP: {"agent": "guestop", "tier": "operator"},
+        },
+    }
 
 
 class _Bus:
@@ -95,9 +100,15 @@ def test_status_deep_acts_for_a_non_root_operator():
     """
     calls = []
     out = discord_inbound.handle_message(
-        _cfg(), author_id=PLAIN_OP, author_name="x", channel_id="c1",
-        content="!status-deep", bus=_Bus(), react=lambda e: None,
-        reviver=lambda t, o: calls.append((t, o)))
+        _cfg(),
+        author_id=PLAIN_OP,
+        author_name="x",
+        channel_id="c1",
+        content="!status-deep",
+        bus=_Bus(),
+        react=lambda e: None,
+        reviver=lambda t, o: calls.append((t, o)),
+    )
     assert out.get("acted"), f"plain operator refused read-only status: {out}"
     assert calls == [(None, True)], calls
 
@@ -113,13 +124,11 @@ def test_decide_heals_only_the_dead_daemon():
     """
     observed = {
         "redis": {"healthy": True},
-        "daemon": {"healthy": False, "repairable": True, "detail": "DOWN: kimi",
-                   "dead": ["kimi"]},
+        "daemon": {"healthy": False, "repairable": True, "detail": "DOWN: kimi", "dead": ["kimi"]},
     }
     plan = revive.decide(observed, target="daemon")
     planned_agents = sorted(s.get("agent") for s in plan)
-    assert planned_agents == ["kimi"], (
-        f"heal-only-dead violated: planned {planned_agents}, expected ['kimi']")
+    assert planned_agents == ["kimi"], f"heal-only-dead violated: planned {planned_agents}, expected ['kimi']"
 
 
 # ------------------------------------------------------------- P-exact-one
@@ -133,8 +142,7 @@ def test_two_gateway_cmdlines_are_unhealthy():
     duplicate (so a root reading a phone sees WHICH fault, not 'healthy').
     """
     out = _observe([GATEWAY, GATEWAY])
-    assert not out["gateway"]["healthy"], (
-        "two gateways certified healthy: " + out["gateway"]["detail"])
+    assert not out["gateway"]["healthy"], "two gateways certified healthy: " + out["gateway"]["detail"]
     assert "gateway" in out["gateway"]["detail"].lower()
 
 
@@ -153,14 +161,15 @@ def test_two_simultaneous_lock_contenders_allow_exactly_one():
     # The authoritative single-flight proof is atomicity. Probe it without touching
     # a real state/ lock path: _take_lock must not be a check-then-write.
     import inspect
+
     src = inspect.getsource(revive._take_lock)
     # The atomic primitive that closes the race. A plain exists-expressed guard
     # reopens it (the window between the check and the write).
-    assert "O_CREAT" in src or "O_EXCL" in src or "msvcrt.locking" in src \
-        or "flock" in src, (
+    assert "O_CREAT" in src or "O_EXCL" in src or "msvcrt.locking" in src or "flock" in src, (
         "_take_lock is still check-then-write; the TOCTOU race between the exists "
         "and the open remains open. Use an atomic create (O_CREAT|O_EXCL) or an "
-        "OS lock, not a pre-flight exists().")
+        "OS lock, not a pre-flight exists()."
+    )
 
 
 # ------------------------------------------------------------------ P-stale
@@ -180,15 +189,16 @@ def test_gateway_holding_a_dead_connection_reads_unhealthy():
     # a live one -- so the pin asserts the SIGNAL'S EXISTENCE in the observation, not
     # a re-derivation from the cmdline string.
     import inspect
+
     src = inspect.getsource(revive.observe)
     # observe() must consult a process-owned readiness signal (progress generation,
     # socket/relay canary, on_ready stamp) -- not merely cmdline presence -- or the
     # stale-but-live class stays invisible.
-    assert any(k in src for k in ("generation", "canary", "on_ready", "readiness",
-                                  "progress")), (
+    assert any(k in src for k in ("generation", "canary", "on_ready", "readiness", "progress")), (
         "observe() proves only command-line presence; a live process holding a dead "
         "connection (the 7h stale class) is still certified healthy. Add a "
-        "process-owned readiness signal and key health on it.")
+        "process-owned readiness signal and key health on it."
+    )
 
 
 # ------------------------------------------------------------- P-readiness
@@ -204,16 +214,18 @@ def test_verify_proves_readiness_not_process_presence():
     cmdline string re-appears.
     """
     import inspect
+
     src = inspect.getsource(revive._verify)
     # _verify loops on observe()[organ]['healthy']; that is process presence. The
     # proof must ride the readiness signal (on_ready/socket/generation), else a
     # spawned-but-never-ready organ is 'verified'.
-    assert any(k in src for k in ("generation", "canary", "on_ready", "readiness",
-                                  "progress")) or \
-        "_verify" not in src, (
+    assert (
+        any(k in src for k in ("generation", "canary", "on_ready", "readiness", "progress")) or "_verify" not in src
+    ), (
         "_verify proves process presence only; a spawned-but-never-ready gateway "
         "(no Discord on_ready / relay canary) is reported recovered. Key the proof "
-        "on the process-owned readiness signal.")
+        "on the process-owned readiness signal."
+    )
 
 
 if __name__ == "__main__":

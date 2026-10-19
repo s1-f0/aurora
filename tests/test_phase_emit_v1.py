@@ -29,6 +29,7 @@ and honouring the predicate does not require holding their lock while we do I/O.
 
 Hermetic: the emit function is injected, so nothing here touches Redis.
 """
+
 import os
 import sys
 import threading
@@ -38,7 +39,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.comm import liveness as L  # noqa: E402
+from core.comm import liveness as L
 
 
 @pytest.fixture
@@ -46,7 +47,7 @@ def spy(monkeypatch):
     """Capture every phase emit, and neuter the Redis flush so these run with no store."""
     seen = []
     monkeypatch.setattr(L, "_emit_phase", lambda **kw: seen.append(kw))
-    monkeypatch.setattr(L, "_client", lambda: None)      # _flush becomes a no-op
+    monkeypatch.setattr(L, "_client", lambda: None)  # _flush becomes a no-op
     return seen
 
 
@@ -62,10 +63,10 @@ def test_the_record_names_what_it_came_from(spy):
     w.set("thinking")
     e = spy[0]
     assert e["agent"] == "t-agent"
-    assert e["prev"] == "online"                  # the phase it LEFT, or a transition is half a fact
+    assert e["prev"] == "online"  # the phase it LEFT, or a transition is half a fact
     assert isinstance(e["since_ts"], float)
     assert e["turn"] == 0
-    assert "code_sha" in e                        # T114: WHAT is alive, not merely that something is
+    assert "code_sha" in e  # T114: WHAT is alive, not merely that something is
 
 
 def test_a_same_phase_set_emits_nothing(spy):
@@ -95,7 +96,9 @@ def test_a_fast_transition_pair_is_not_collapsed(spy):
     # idle -> thinking -> idle inside one heartbeat window. A reader polling the worklive record
     # would see only `idle` and conclude nothing happened.
     w = L.WorkLive("t-agent")
-    w.set("idle"); w.set("thinking"); w.set("idle")
+    w.set("idle")
+    w.set("thinking")
+    w.set("idle")
     assert [e["phase"] for e in spy] == ["idle", "thinking", "idle"]
 
 
@@ -111,7 +114,8 @@ def test_the_environment_is_the_fallback_not_the_source(spy, monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "env-sid")
     w = L.WorkLive("t-agent")
     w.set("thinking")
-    assert spy[0]["session_id"] == "env-sid" and spy[0]["session_source"] == "env"
+    assert spy[0]["session_id"] == "env-sid"
+    assert spy[0]["session_source"] == "env"
 
 
 def test_a_runner_with_no_env_session_derives_the_one_it_already_beats_under(spy, monkeypatch):
@@ -135,8 +139,10 @@ def test_a_runner_with_no_env_session_derives_the_one_it_already_beats_under(spy
     assert spy[0]["session_id"], "a runner's transition must not be unattributable"
     assert spy[0]["session_source"] == "derived"
     from core.comm.runner_lib import seat_session_id
-    assert spy[0]["session_id"] == seat_session_id("t-agent"), \
+
+    assert spy[0]["session_id"] == seat_session_id("t-agent"), (
         "it must be the SAME derivation the heartbeat uses, or the two records cannot join"
+    )
 
 
 def test_a_transition_with_no_identity_at_all_still_emits_and_says_unknown(spy, monkeypatch):
@@ -145,10 +151,12 @@ def test_a_transition_with_no_identity_at_all_still_emits_and_says_unknown(spy, 
     for v in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"):
         monkeypatch.delenv(v, raising=False)
     import core.comm.runner_lib as _rl
+
     monkeypatch.setattr(_rl, "seat_session_id", lambda *_a, **_k: "")
     w = L.WorkLive("t-agent")
     w.set("thinking")
-    assert spy[0]["session_id"] == "" and spy[0]["session_source"] == "unknown"
+    assert spy[0]["session_id"] == ""
+    assert spy[0]["session_source"] == "unknown"
 
 
 # ---------------------------------------------------------------- it must not wedge the beater
@@ -173,11 +181,12 @@ def test_the_emit_happens_after_the_lock_is_released(monkeypatch):
 def test_a_failing_emit_never_breaks_a_phase_change(monkeypatch):
     def boom(**kw):
         raise RuntimeError("the store is down, which is when this matters most")
+
     monkeypatch.setattr(L, "_emit_phase", boom)
     monkeypatch.setattr(L, "_client", lambda: None)
     w = L.WorkLive("t-agent")
-    w.set("thinking")                              # must not raise
-    assert w._phase == "thinking"                  # and must still have done its real job
+    w.set("thinking")  # must not raise
+    assert w._phase == "thinking"  # and must still have done its real job
 
 
 def test_the_emit_is_not_called_on_the_refresh_thread_under_concurrency(spy):
@@ -192,6 +201,9 @@ def test_the_emit_is_not_called_on_the_refresh_thread_under_concurrency(spy):
 
     threads = [threading.Thread(target=beat, daemon=True) for _ in range(20)]
     [t.start() for t in threads]
-    w.set("thinking"); time.sleep(0.05); w.set("idle")
-    stop.set(); [t.join(timeout=2) for t in threads]
+    w.set("thinking")
+    time.sleep(0.05)
+    w.set("idle")
+    stop.set()
+    [t.join(timeout=2) for t in threads]
     assert [e["phase"] for e in spy] == ["thinking", "idle"]

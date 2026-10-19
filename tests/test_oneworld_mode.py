@@ -8,6 +8,7 @@ a mode may not issue a verdict about a region it never declared it would draw.
 The severity and edge-class VOCABULARIES are provisional house grammar chosen here (one place,
 Daniel to bless or redraw); these pins fix the SHAPE and the validation, not the particular words.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -28,17 +29,17 @@ def test_make_mode_builds_the_three_fields():
 
 def test_verbosity_for_undeclared_region_is_refused():
     """You cannot set how loudly to draw a region you never declared you'd draw."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="not declared in regions"):
         mode.make_mode(regions=("fleet",), verbosity={"floor": "loud"})
 
 
 def test_unknown_severity_level_is_refused():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="not in SEVERITY"):
         mode.make_mode(regions=("fleet",), verbosity={"fleet": "DEAFENING"})
 
 
 def test_unknown_edge_class_is_refused_but_confessed_is_accepted():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="not in EDGE_CLASSES"):
         mode.make_mode(regions=(), reach={"edges": ("teleport",)})
     m = mode.make_mode(regions=(), reach={"edges": ("confessed",)})
     assert "confessed" in m["reach"]["edges"]
@@ -54,13 +55,14 @@ def test_verdict_guard_refuses_an_undeclared_region():
     """The anti-drift law: a verdict about the whole requires the region be declared first."""
     m = mode.make_mode(regions=("fleet",))
     mode.verdict_guard(m, "fleet")  # no raise
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="may not issue a verdict"):
         mode.verdict_guard(m, "floor")
 
 
 def test_empty_mode_is_valid_draws_nothing():
     m = mode.make_mode(regions=())
-    assert m["regions"] == () and mode.permits(m, "anything") is False
+    assert m["regions"] == ()
+    assert mode.permits(m, "anything") is False
 
 
 def test_severity_vocabulary_is_ordered_and_single_sourced():

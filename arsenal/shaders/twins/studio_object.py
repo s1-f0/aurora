@@ -14,6 +14,7 @@ materialAt(p, n, id) -> rgb. One pixel per call (the march is a loop), in float6
 
 Apache-2.0, Akashic Aurora. Written fresh from the recipe's contract; no corpus code.
 """
+
 from __future__ import annotations
 
 import math
@@ -40,14 +41,24 @@ def studioObjectRig(keyTurn, keyElevation, boxSize, poolRadius, floorDrop) -> li
     key = np.array([math.cos(pitch) * math.sin(yaw), math.sin(pitch), math.cos(pitch) * math.cos(yaw)])
     fill_yaw = yaw + 0.51 * 2.0 * math.pi
     fill_pitch = math.radians(33.4)
-    fill = np.array([math.cos(fill_pitch) * math.sin(fill_yaw), math.sin(fill_pitch),
-                     math.cos(fill_pitch) * math.cos(fill_yaw)])
+    fill = np.array(
+        [math.cos(fill_pitch) * math.sin(fill_yaw), math.sin(fill_pitch), math.cos(fill_pitch) * math.cos(fill_yaw)]
+    )
     size = min(max(float(boxSize), 0.05), 1.2)
-    return light.StudioParams(keyDir=key, keyCol=_v([3.6, 3.3, 2.9]), fillDir=fill, fillCol=_v([0.55, 0.7, 1.0]),
-                              boxSize=_v([size, 0.66 * size]), rimBright=0.8, skyCol=_v([0.008, 0.01, 0.016]),
-                              horizonCol=_v([0.07, 0.075, 0.09]), floorCol=_v([0.32, 0.27, 0.22]),
-                              floorDrop=max(float(floorDrop), 0.0), poolRadius=max(float(poolRadius), 1e-3),
-                              keyWrap=0.3)
+    return light.StudioParams(
+        keyDir=key,
+        keyCol=_v([3.6, 3.3, 2.9]),
+        fillDir=fill,
+        fillCol=_v([0.55, 0.7, 1.0]),
+        boxSize=_v([size, 0.66 * size]),
+        rimBright=0.8,
+        skyCol=_v([0.008, 0.01, 0.016]),
+        horizonCol=_v([0.07, 0.075, 0.09]),
+        floorCol=_v([0.32, 0.27, 0.22]),
+        floorDrop=max(float(floorDrop), 0.0),
+        poolRadius=max(float(poolRadius), 1e-3),
+        keyWrap=0.3,
+    )
 
 
 def studioObjectBare(sp: light.StudioParams) -> light.StudioParams:
@@ -78,8 +89,30 @@ def studioObjectFloor(pf, toEye, target, sp, shadow, ao, materialAt):
     return shade + base * _v(light.litFloorPool(pf, target, sp.poolRadius, sp.floorCol)) * min(max(float(ao), 0.0), 1.0)
 
 
-def studioObject(ro, target, pixel, res, lens, keyTurn, keyElevation, boxSize, backdrop, fresnelFloor, metal, roughness,
-                 shadowAngle, aoReach, poolRadius, floorDrop, bound, steps, omega, view, mapScene, materialAt):
+def studioObject(
+    ro,
+    target,
+    pixel,
+    res,
+    lens,
+    keyTurn,
+    keyElevation,
+    boxSize,
+    backdrop,
+    fresnelFloor,
+    metal,
+    roughness,
+    shadowAngle,
+    aoReach,
+    poolRadius,
+    floorDrop,
+    bound,
+    steps,
+    omega,
+    view,
+    mapScene,
+    materialAt,
+):
     """Linear radiance for one pixel of a camera at ro looking at target, in the studio the knobs set."""
     ro, target = _v(ro), _v(target)
     basis = ray.camLookAt(ro, target, 0.0)
@@ -127,8 +160,11 @@ def studioObject(ro, target, pixel, res, lens, keyTurn, keyElevation, boxSize, b
         n = _v(ray.nrmTetra(p, ray.nrmEps(trace[0], pixel_angle, 1.0), mapScene))
         lifted = p + n * (4.0 * float(ray.rmEpsilon(trace[0], pixel_angle, 1e-4)))
         to_key = ray.rmClipToBox(lifted, sp.keyDir, target, box_half, (1e-3, 1e3))
-        obj_shadow = light.visSoftShadow(mapScene, lifted, sp.keyDir, to_key, light_angle, SHADOW_STEPS) \
-            if to_key[0] <= to_key[1] else 1.0
+        obj_shadow = (
+            light.visSoftShadow(mapScene, lifted, sp.keyDir, to_key, light_angle, SHADOW_STEPS)
+            if to_key[0] <= to_key[1]
+            else 1.0
+        )
         obj_ao = light.visAO(mapScene, p, n, aoReach, AO_FALLOFF)
         surface = studioObjectSurface(p, n, -rd, sp, fresnelFloor, metal, roughness, obj_shadow, obj_ao, materialAt)
         picture = behind + (surface - behind) * cover
@@ -145,4 +181,4 @@ def studioObject(ro, target, pixel, res, lens, keyTurn, keyElevation, boxSize, b
     return picture
 
 
-__all__ = ["studioObjectRig", "studioObjectBare", "studioObjectSurface", "studioObjectFloor", "studioObject"]
+__all__ = ["studioObject", "studioObjectBare", "studioObjectFloor", "studioObjectRig", "studioObjectSurface"]

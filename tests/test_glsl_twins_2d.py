@@ -24,6 +24,7 @@ render is the device under test. All three must agree.
 
 Apache-2.0, Akashic Aurora. Written fresh for the house; no corpus code.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -87,7 +88,8 @@ def _inside(points, outline):
     b = np.roll(a, -1, axis=0)
     x, y = pts[:, 0:1], pts[:, 1:2]
     crosses = ((a[:, 1] > y) != (b[:, 1] > y)) & (
-        x < (b[:, 0] - a[:, 0]) * (y - a[:, 1]) / np.where(b[:, 1] == a[:, 1], 1e-300, b[:, 1] - a[:, 1]) + a[:, 0])
+        x < (b[:, 0] - a[:, 0]) * (y - a[:, 1]) / np.where(b[:, 1] == a[:, 1], 1e-300, b[:, 1] - a[:, 1]) + a[:, 0]
+    )
     return (np.count_nonzero(crosses, axis=1) % 2) == 1
 
 
@@ -101,7 +103,7 @@ def _rounded_rectangle(half, r, n=4096):
     pts = []
     corners = [(1, 1), (-1, 1), (-1, -1), (1, -1)]
     start = [0.0, 0.5 * math.pi, math.pi, 1.5 * math.pi]
-    for (sx, sy), a0 in zip(corners, start):
+    for (sx, sy), a0 in zip(corners, start, strict=False):
         cx, cy = sx * (half[0] - r), sy * (half[1] - r)
         for k in range(n // 4):
             a = a0 + 0.5 * math.pi * k / (n // 4 - 1)
@@ -137,29 +139,33 @@ def test_box_is_exact_inside_and_out_against_brute_force():
     ref = _signed_reference(pts, _rounded_rectangle(half, 0.0, n=8192))
     got = d.sd2Box(pts.astype(F32), np.array(half, F32))
     assert np.max(np.abs(got - ref)) < 2e-3
-    assert close(d.sd2Box([0.0, 0.0], [0.7, 0.35]), -0.35)               # the centre: the nearer edge
-    assert close(d.sd2Box([1.7, 1.35], [0.7, 0.35]), math.sqrt(2.0))     # outside a corner: distance to the corner
+    assert close(d.sd2Box([0.0, 0.0], [0.7, 0.35]), -0.35)  # the centre: the nearer edge
+    assert close(d.sd2Box([1.7, 1.35], [0.7, 0.35]), math.sqrt(2.0))  # outside a corner: distance to the corner
 
 
 def test_round_box_keeps_its_outer_extent_and_is_exact():
     d = twin("draw2")
     half, r = (0.8, 0.4), 0.25
-    assert close(d.sd2RoundBox([0.8, 0.0], half, r), 0.0) and close(d.sd2RoundBox([0.0, 0.4], half, r), 0.0)
+    assert close(d.sd2RoundBox([0.8, 0.0], half, r), 0.0)
+    assert close(d.sd2RoundBox([0.0, 0.4], half, r), 0.0)
     pts = RNG.uniform(-1.4, 1.4, (600, 2))
     ref = _signed_reference(pts, _rounded_rectangle(half, r, n=8192))
     got = d.sd2RoundBox(pts.astype(F32), np.array(half, F32), F32(r))
     assert np.max(np.abs(got - ref)) < 2e-3
     # a radius of zero is the box; a radius past the shorter half-size is held at it (a stadium, never inverted)
     assert close(d.sd2RoundBox(pts.astype(F32), np.array(half, F32), F32(0.0)), d.sd2Box(pts.astype(F32), half), 1e-6)
-    assert close(d.sd2RoundBox(pts.astype(F32), np.array(half, F32), F32(9.0)),
-                 d.sd2RoundBox(pts.astype(F32), np.array(half, F32), F32(0.4)), 1e-6)
+    assert close(
+        d.sd2RoundBox(pts.astype(F32), np.array(half, F32), F32(9.0)),
+        d.sd2RoundBox(pts.astype(F32), np.array(half, F32), F32(0.4)),
+        1e-6,
+    )
 
 
 def test_segment_gives_the_distance_and_the_parameter_along_it():
     d = twin("draw2")
     a, b = np.array([-1.0, 0.0], F32), np.array([1.0, 0.0], F32)
     assert close(d.sd2Segment([0.0, 0.5], a, b), [0.5, 0.5])
-    assert close(d.sd2Segment([-3.0, 0.0], a, b), [2.0, 0.0])            # past a: the end cap, parameter held at 0
+    assert close(d.sd2Segment([-3.0, 0.0], a, b), [2.0, 0.0])  # past a: the end cap, parameter held at 0
     assert close(d.sd2Segment([1.0, -2.0], a, b), [2.0, 1.0])
     pts = RNG.uniform(-2, 2, (500, 2)).astype(F32)
     a2, b2 = np.array([-0.3, 0.8], F32), np.array([0.9, -0.4], F32)
@@ -175,7 +181,7 @@ def test_segment_gives_the_distance_and_the_parameter_along_it():
 def test_hexagon_is_exact_pointy_top_with_the_given_inradius():
     d = twin("draw2")
     a = 0.6
-    assert close(d.sd2Hexagon([a, 0.0], a), 0.0, 1e-6)                    # flat sides left and right
+    assert close(d.sd2Hexagon([a, 0.0], a), 0.0, 1e-6)  # flat sides left and right
     assert close(d.sd2Hexagon([0.0, 2 * a / math.sqrt(3)], a), 0.0, 1e-6)  # a vertex straight up
     assert close(d.sd2Hexagon([0.0, 0.0], a), -a)
     pts = RNG.uniform(-1.3, 1.3, (800, 2))
@@ -192,16 +198,21 @@ def test_every_exact_distance_has_unit_slope_away_from_its_skeleton():
     d = twin("draw2")
     pts = RNG.uniform(-1.5, 1.5, (400, 2)).astype(np.float64)
     h = 1e-3
-    shapes = [lambda p: d.sd2Circle(p, 0.5), lambda p: d.sd2Box(p, [0.6, 0.3]),
-              lambda p: d.sd2RoundBox(p, [0.6, 0.3], 0.2), lambda p: d.sd2Segment(p, [-0.5, 0.2], [0.4, -0.3])[..., 0],
-              lambda p: d.sd2Hexagon(p, 0.5)]
+    shapes = [
+        lambda p: d.sd2Circle(p, 0.5),
+        lambda p: d.sd2Box(p, [0.6, 0.3]),
+        lambda p: d.sd2RoundBox(p, [0.6, 0.3], 0.2),
+        lambda p: d.sd2Segment(p, [-0.5, 0.2], [0.4, -0.3])[..., 0],
+        lambda p: d.sd2Hexagon(p, 0.5),
+    ]
     for f in shapes:
-        gx = (f((pts + [h, 0]).astype(F32)) - f((pts - [h, 0]).astype(F32))) / (2 * h)
-        gy = (f((pts + [0, h]).astype(F32)) - f((pts - [0, h]).astype(F32))) / (2 * h)
+        gx = (f((pts + [h, 0]).astype(F32)) - f((pts - [h, 0]).astype(F32))) / (2 * h)  # noqa: RUF005  # pts is an ndarray: + adds elementwise, it does not concatenate
+        gy = (f((pts + [0, h]).astype(F32)) - f((pts - [0, h]).astype(F32))) / (2 * h)  # noqa: RUF005  # pts is an ndarray: + adds elementwise, it does not concatenate
         slope = np.sqrt(gx * gx + gy * gy)
         # a distance never climbs faster than 1 (it would be an overestimate a marcher oversteps); off the skeleton
         # (where two nearest points tie, the slope drops) an exact one climbs at exactly 1
-        assert np.all(slope < 1.01) and np.mean(np.abs(slope - 1) < 0.01) > 0.9
+        assert np.all(slope < 1.01)
+        assert np.mean(np.abs(slope - 1) < 0.01) > 0.9
 
 
 # ================================================================================================ draw2/aa.glsl
@@ -216,8 +227,11 @@ def test_fill_is_the_box_filtered_coverage_of_a_straight_edge():
     px = 0.01
     for dc in (-0.02, -0.004, 0.0, 0.0025, 0.006, 0.03):
         assert close(a.aaFill(dc, px), _box_filtered(dc, px, lambda d: d < 0), 1e-3), dc
-    assert a.aaFill(0.0, px) == 0.5 and a.aaFill(-0.005, px) == 1.0 and a.aaFill(0.005, px) == 0.0
-    assert a.aaFill(0.3, 0.0) == 0.0 and a.aaFill(-0.3, 0.0) == 1.0          # no pixel size: a hard edge, finite
+    assert a.aaFill(0.0, px) == 0.5
+    assert a.aaFill(-0.005, px) == 1.0
+    assert a.aaFill(0.005, px) == 0.0
+    assert a.aaFill(0.3, 0.0) == 0.0
+    assert a.aaFill(-0.3, 0.0) == 1.0
 
 
 def test_stroke_is_the_box_filtered_band_and_its_ink_is_the_true_width():
@@ -225,27 +239,28 @@ def test_stroke_is_the_box_filtered_band_and_its_ink_is_the_true_width():
     px = 0.01
     for hw in (0.0, 0.0012, 0.004, 0.005, 0.013):
         for dc in (-0.02, -0.006, -0.001, 0.0, 0.0031, 0.011):
-            ref = _box_filtered(dc, px, lambda d: np.abs(d) <= hw)
+            ref = _box_filtered(dc, px, lambda d, hw=hw: np.abs(d) <= hw)
             assert close(a.aaStroke(dc, hw, px), ref, 2e-3), (hw, dc)
         ds = np.linspace(-0.1, 0.1, 200001)
         ink = np.sum(a.aaStroke(ds.astype(F32), F32(hw), F32(px))) * (ds[1] - ds[0])
-        assert close(ink, 2 * hw, 2e-5), hw                                  # energy: a thin line fades, never vanishes
+        assert close(ink, 2 * hw, 2e-5), hw  # energy: a thin line fades, never vanishes
     assert a.aaStroke(0.0, 0.0, px) == 0.0
-    assert a.aaStroke(0.0, 0.02, px) == 1.0 and close(a.aaStroke(0.02, 0.02, px), 0.5)
-    assert a.aaStroke(0.0, -0.1, px) == 0.0                                  # a negative width is no line, not ink
+    assert a.aaStroke(0.0, 0.02, px) == 1.0
+    assert close(a.aaStroke(0.02, 0.02, px), 0.5)
+    assert a.aaStroke(0.0, -0.1, px) == 0.0  # a negative width is no line, not ink
 
 
 def test_wire_is_never_thinner_than_a_pixel_and_fades_by_true_over_drawn_width():
     a = twin("draw2")
     px = 0.01
     ds = np.linspace(-0.1, 0.1, 200001).astype(F32)
-    step = 0.2 / 200000                                                      # in float64: the float32 grid's step
+    step = 0.2 / 200000  # in float64: the float32 grid's step
     one = np.asarray(a.aaWire(ds, F32(1.0), F32(px)))
     for w in (0.05, 0.25, 0.6, 1.0, 2.5):
         cov = np.asarray(a.aaWire(ds, F32(w), F32(px)))
         assert close(np.sum(cov, dtype=np.float64) * step, w * px, 2e-5), w  # the ink is the true width
         if w < 1:
-            assert close(cov, w * one, 1e-6)                                 # the one-pixel wire, dimmed: connected
+            assert close(cov, w * one, 1e-6)  # the one-pixel wire, dimmed: connected
             assert close(cov.max(), w, 1e-6)
         else:
             assert close(cov, a.aaStroke(ds, F32(0.5 * w * px), F32(px)), 1e-6)
@@ -254,14 +269,18 @@ def test_wire_is_never_thinner_than_a_pixel_and_fades_by_true_over_drawn_width()
 
 def test_step_thresholds_a_field_over_its_own_footprint():
     a = twin("draw2")
-    fp = 0.02                                                                # the field changes 0.02 per pixel
+    fp = 0.02  # the field changes 0.02 per pixel
     assert a.aaStep(0.5, 0.5, fp) == 0.5
-    assert a.aaStep(0.5 - fp, 0.5, fp) == 0.0 and a.aaStep(0.5 + fp, 0.5, fp) == 1.0
+    assert a.aaStep(0.5 - fp, 0.5, fp) == 0.0
+    assert a.aaStep(0.5 + fp, 0.5, fp) == 1.0
     xs = np.linspace(0.4, 0.6, 2001)
     ys = np.asarray(a.aaStep(xs.astype(F32), F32(0.5), F32(fp)), dtype=np.float64)
-    assert np.all(np.diff(ys) >= 0) and close(ys + ys[::-1], 1.0, 1e-6)       # monotone, point-symmetric
+    assert np.all(np.diff(ys) >= 0)
+    assert close(ys + ys[::-1], 1.0, 1e-6)
     # a field with no slope at all is a clean hard step, never undefined
-    assert a.aaStep(0.7, 0.5, 0.0) == 1.0 and a.aaStep(0.3, 0.5, 0.0) == 0.0 and a.aaStep(0.5, 0.5, 0.0) == 0.5
+    assert a.aaStep(0.7, 0.5, 0.0) == 1.0
+    assert a.aaStep(0.3, 0.5, 0.0) == 0.0
+    assert a.aaStep(0.5, 0.5, 0.0) == 0.5
 
 
 # ================================================================================================ draw2/domain2.glsl
@@ -269,11 +288,13 @@ def test_polar_round_trips_and_the_angle_lies_in_minus_pi_to_pi():
     d = twin("draw2")
     pts = RNG.uniform(-3, 3, (2000, 2)).astype(F32)
     ra = d.domToPolar(pts)
-    assert np.all(ra[:, 1] > -math.pi) and np.all(ra[:, 1] <= np.float32(math.pi))
+    assert np.all(ra[:, 1] > -math.pi)
+    assert np.all(ra[:, 1] <= np.float32(math.pi))
     assert close(d.domFromPolar(ra), pts, 2e-5)
     assert close(d.domToPolar([0.0, 2.0]), [2.0, math.pi / 2])
-    assert close(d.domToPolar([-1.0, 0.0]), [1.0, math.pi]) and close(d.domToPolar([-1.0, -0.0]), [1.0, math.pi])
-    assert close(d.domToPolar([0.0, 0.0]), [0.0, 0.0])                        # the origin: angle 0, never undefined
+    assert close(d.domToPolar([-1.0, 0.0]), [1.0, math.pi])
+    assert close(d.domToPolar([-1.0, -0.0]), [1.0, math.pi])
+    assert close(d.domToPolar([0.0, 0.0]), [0.0, 0.0])  # the origin: angle 0, never undefined
 
 
 def test_repeat_centres_every_cell_and_returns_its_integer_id():
@@ -282,10 +303,12 @@ def test_repeat_centres_every_cell_and_returns_its_integer_id():
     pts = RNG.uniform(-5, 5, (3000, 2)).astype(F32)
     cid, local = d.domRepeat2(pts, period)
     assert np.all(cid == np.round(cid))
-    assert np.all(local >= -0.5 * period - 1e-6) and np.all(local < 0.5 * period + 1e-6)
+    assert np.all(local >= -0.5 * period - 1e-6)
+    assert np.all(local < 0.5 * period + 1e-6)
     assert close(local + cid * period, pts, 1e-5)
     cid0, local0 = d.domRepeat2(np.array([0.21, -0.13], F32), period)
-    assert close(cid0, [1.0, -1.0]) and close(local0, [0.21 - 0.4, -0.13 + 0.25], 1e-6)
+    assert close(cid0, [1.0, -1.0])
+    assert close(local0, [0.21 - 0.4, -0.13 + 0.25], 1e-6)
 
 
 def test_kaleido_folds_into_one_mirrored_half_sector_and_numbers_the_sectors():
@@ -295,7 +318,8 @@ def test_kaleido_folds_into_one_mirrored_half_sector_and_numbers_the_sectors():
     pts = RNG.uniform(-2, 2, (3000, 2)).astype(F32)
     idx, folded = d.domKaleido(pts, F32(n))
     ang = np.arctan2(folded[:, 1], folded[:, 0])
-    assert np.all(ang >= -1e-5) and np.all(ang <= width / 2 + 1e-5)
+    assert np.all(ang >= -1e-5)
+    assert np.all(ang <= width / 2 + 1e-5)
     assert close(np.hypot(folded[:, 0], folded[:, 1]), np.hypot(pts[:, 0], pts[:, 1]), 1e-5)
     assert np.all((idx >= 0) & (idx < n) & (idx == np.round(idx)))
     # turning the input by a whole sector moves it to the next sector and leaves the folded point where it was
@@ -315,8 +339,7 @@ def test_kaleido_folds_into_one_mirrored_half_sector_and_numbers_the_sectors():
 def _nearest_hex_centre(pts):
     cands = []
     for j in range(-12, 13):
-        for i in range(-12, 13):
-            cands.append((i + 0.5 * j, j * math.sqrt(3) / 2))
+        cands.extend((i + 0.5 * j, j * math.sqrt(3) / 2) for i in range(-12, 13))
     cands = np.array(cands)
     gap = pts[:, None, :] - cands[None]
     dist = np.sum(gap * gap, -1)
@@ -329,21 +352,23 @@ def test_lat_hex_finds_the_nearest_centre_of_the_pointy_top_lattice():
     pts = RNG.uniform(-6, 6, (3000, 2))
     h = lat.latHex(pts.astype(F32))
     ref, margin = _nearest_hex_centre(pts)
-    clear = margin > 1e-4                                                   # away from exact ties on a border
+    clear = margin > 1e-4  # away from exact ties on a border
     assert close(h[clear, 2:], ref[clear], 1e-5)
-    assert close(h[:, :2] + h[:, 2:], pts, 1e-5)                            # offset + centre = the point
-    assert np.all(np.hypot(h[:, 0], h[:, 1]) <= 1 / math.sqrt(3) + 1e-5)    # never farther than a vertex
+    assert close(h[:, :2] + h[:, 2:], pts, 1e-5)  # offset + centre = the point
+    assert np.all(np.hypot(h[:, 0], h[:, 1]) <= 1 / math.sqrt(3) + 1e-5)  # never farther than a vertex
 
 
 def test_hex_edge_is_half_at_the_centre_zero_on_the_border_and_matches_the_hexagon():
     lat = twin("draw2")
     assert close(lat.latHexEdge([0.0, 0.0]), 0.5)
-    assert close(lat.latHexEdge([0.5, 0.0]), 0.0, 1e-6) and close(lat.latHexEdge([0.0, 1 / math.sqrt(3)]), 0.0, 1e-6)
+    assert close(lat.latHexEdge([0.5, 0.0]), 0.0, 1e-6)
+    assert close(lat.latHexEdge([0.0, 1 / math.sqrt(3)]), 0.0, 1e-6)
     pts = RNG.uniform(-6, 6, (3000, 2)).astype(F32)
     off = lat.latHex(pts)[:, :2]
     edge = lat.latHexEdge(off)
-    assert np.all(edge >= -1e-5) and np.all(edge <= 0.5 + 1e-6)
-    assert close(edge, -lat.sd2Hexagon(off, F32(0.5)), 1e-5)                # one hexagon, two doors
+    assert np.all(edge >= -1e-5)
+    assert np.all(edge <= 0.5 + 1e-6)
+    assert close(edge, -lat.sd2Hexagon(off, F32(0.5)), 1e-5)  # one hexagon, two doors
 
 
 def test_hex_axial_coordinates_are_unique_integers_and_count_steps():
@@ -353,9 +378,11 @@ def test_hex_axial_coordinates_are_unique_integers_and_count_steps():
     ax = lat.latHexAxial(centres)
     assert np.all(ax == np.round(ax))
     back = np.stack([ax[:, 0] + 0.5 * ax[:, 1], ax[:, 1] * math.sqrt(3) / 2], -1)
-    assert close(back, centres, 1e-5)                                      # the axial pair names exactly one centre
-    assert lat.latHexSteps([0.0, 0.0], [1.0, 0.0]) == 1 and lat.latHexSteps([0.0, 0.0], [1.0, -1.0]) == 1
-    assert lat.latHexSteps([0.0, 0.0], [1.0, 1.0]) == 2 and lat.latHexSteps([2.0, -1.0], [-1.0, 3.0]) == 4
+    assert close(back, centres, 1e-5)  # the axial pair names exactly one centre
+    assert lat.latHexSteps([0.0, 0.0], [1.0, 0.0]) == 1
+    assert lat.latHexSteps([0.0, 0.0], [1.0, -1.0]) == 1
+    assert lat.latHexSteps([0.0, 0.0], [1.0, 1.0]) == 2
+    assert lat.latHexSteps([2.0, -1.0], [-1.0, 3.0]) == 4
     # the six neighbours are one step away and sit one unit from the centre
     for dq, dr in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)):
         assert lat.latHexSteps([0.0, 0.0], [dq, dr]) == 1
@@ -374,7 +401,7 @@ def test_cell_delay_is_the_cell_centres_distance_over_the_speed():
     for key in {tuple(c) for c in np.round(h[:, 2:], 4)[:50]}:
         same = np.all(np.isclose(np.round(h[:, 2:], 4), key), axis=1)
         assert np.ptp(delay[same]) == 0.0
-    assert np.isfinite(pat.patCellDelay([1.0, 0.0], [0.0, 0.0], 0.0))       # a speed of zero: very late, never Inf
+    assert np.isfinite(pat.patCellDelay([1.0, 0.0], [0.0, 0.0], 0.0))  # a speed of zero: very late, never Inf
 
 
 # ================================================================================================ noise/triangle.glsl
@@ -428,9 +455,10 @@ def test_triangle_noise_stays_in_zero_one_centred_on_a_half():
     pts = RNG.uniform(-40, 40, (100000, 2)).astype(F32)
     for octaves in (1, 4, 8):
         n = tn.noiseTriangle2(pts, F32(0.7), octaves)
-        assert n.min() >= 0.0 and n.max() <= 1.0
+        assert n.min() >= 0.0
+        assert n.max() <= 1.0
         assert abs(float(n.mean()) - 0.5) < 0.01
-    assert tn.noiseTriangle2(np.array([0.3, 0.2], F32), F32(1.0), 0) == 0.5   # no octaves: the mean, flat
+    assert tn.noiseTriangle2(np.array([0.3, 0.2], F32), F32(1.0), 0) == 0.5  # no octaves: the mean, flat
     assert close(tn.noiseTriangle2(pts[:200], F32(0.4), 12), tn.noiseTriangle2(pts[:200], F32(0.4), 8))
 
 
@@ -439,10 +467,10 @@ def test_triangle_noise_filaments_are_thin_and_sit_on_no_lattice():
     pts = RNG.uniform(-40, 40, (100000, 2)).astype(F32)
     n = tn.noiseTriangle2(pts, F32(0.7), 4)
     low = float(np.mean(n < 0.12))
-    assert 0.001 < low < 0.03, low                                       # the bright creases are a thin set
+    assert 0.001 < low < 0.03, low  # the bright creases are a thin set
     for lag in ((1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 0.0)):
         m = tn.noiseTriangle2(pts + np.array(lag, F32), F32(0.7), 4)
-        assert abs(np.corrcoef(n, m)[0, 1]) < 0.2, lag                    # the triangle waves' period never shows
+        assert abs(np.corrcoef(n, m)[0, 1]) < 0.2, lag  # the triangle waves' period never shows
 
 
 def test_triangle_noise_is_continuous_with_creases_not_jumps():
@@ -453,8 +481,8 @@ def test_triangle_noise_is_continuous_with_creases_not_jumps():
             xs = np.arange(-5, 5, h)
             line = np.stack([xs, 0.37 + 0.2 * xs], -1).astype(F32)
             widest.append(float(np.max(np.abs(np.diff(tn.noiseTriangle2(line, F32(0.3), octaves))))))
-        assert widest[1] < 0.35 * widest[0], (octaves, widest)          # a quarter of the step, a quarter the change
-        assert widest[0] / 1e-3 < 40                                     # a bounded slope: honest for derivatives
+        assert widest[1] < 0.35 * widest[0], (octaves, widest)  # a quarter of the step, a quarter the change
+        assert widest[0] / 1e-3 < 40  # a bounded slope: honest for derivatives
 
 
 def test_triangle_noise_churns_in_place_one_octave_turning_every_four_pi():
@@ -463,8 +491,9 @@ def test_triangle_noise_churns_in_place_one_octave_turning_every_four_pi():
     one = tn.noiseTriangle2(pts, F32(0.3), 1)
     assert close(tn.noiseTriangle2(pts, F32(0.3 + 4 * math.pi), 1), one, 2e-5)
     a, b = tn.noiseTriangle2(pts, F32(0.0), 4), tn.noiseTriangle2(pts, F32(2.0), 4)
-    assert float(np.mean(np.abs(a - b))) > 0.1                            # it moves
-    assert abs(float(a.std()) - float(b.std())) < 0.02 and abs(float(a.mean()) - float(b.mean())) < 0.03
+    assert float(np.mean(np.abs(a - b))) > 0.1  # it moves
+    assert abs(float(a.std()) - float(b.std())) < 0.02
+    assert abs(float(a.mean()) - float(b.mean())) < 0.03
 
 
 # ================================================================================================ the modules
@@ -504,8 +533,10 @@ def library():
 
 def _module(lib, file):
     name = FAMILY[file]
-    assert name in lib.modules, f"no module named {name} (expected in arsenal/web/glsl/{file}); " \
-                                f"quarantined: {[p for p in lib.problems if file in p['path'].replace(chr(92), '/')]}"
+    assert name in lib.modules, (
+        f"no module named {name} (expected in arsenal/web/glsl/{file}); "
+        f"quarantined: {[p for p in lib.problems if file in p['path'].replace(chr(92), '/')]}"
+    )
     m = lib.modules[name]
     assert Path(m.path).resolve() == (LIB / file).resolve(), f"{name} lives in {m.path}, not {file}"
     return m
@@ -548,26 +579,37 @@ def test_headers_carry_every_library_field(library, file):
     m = _module(library, file)
     h = m.header
     parts = [p for p in _atlas()["parts"] if p.get("module") == file]
-    assert h["name"] == FAMILY[file] and h["kind"] == "helper"
-    assert h["cat"] in {p["category"] for p in parts} and h["family"] == h["cat"][0]
-    assert re.fullmatch(r"\d+\.\d+\.\d+", h["version"]) and 10 <= h["order"] <= 30
+    assert h["name"] == FAMILY[file]
+    assert h["kind"] == "helper"
+    assert h["cat"] in {p["category"] for p in parts}
+    assert h["family"] == h["cat"][0]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", h["version"])
+    assert 10 <= h["order"] <= 30
     assert h["license"] == "Apache-2.0"
-    assert isinstance(h["credits"], list) and h["credits"] and all("http" in c for c in h["credits"]), \
-        "credits name who taught the technique, each with a link"
-    assert h["cost"]["class"] in ("C0", "C1") and h["cost"]["tex"] == 0 and h["cost"].get("loop")
+    assert isinstance(h["credits"], list), "credits name who taught the technique, each with a link"
+    assert h["credits"], "credits name who taught the technique, each with a link"
+    assert all("http" in c for c in h["credits"]), "credits name who taught the technique, each with a link"
+    assert h["cost"]["class"] in ("C0", "C1")
+    assert h["cost"]["tex"] == 0
+    assert h["cost"].get("loop")
     for key in ("contract", "note"):
-        assert isinstance(h[key], str) and len(h[key]) > 80, key
-    assert h["status"] == "P0" and h["targets"]["glsl"] == "300es"
+        assert isinstance(h[key], str), key
+        assert len(h[key]) > 80, key
+    assert h["status"] == "P0"
+    assert h["targets"]["glsl"] == "300es"
     assert set(h["targets"]["needs"]) <= set(M.KNOWN_NEEDS)
     code = M.strip_comments(m.body)
     uses_derivatives = any(re.search(rf"\b{d}\b", code) for d in M.DERIVATIVES)
     assert uses_derivatives == ("derivatives" in h["targets"]["needs"]), "declare derivatives exactly when used"
-    assert h["card"] == f"{m.name}.card" and (LIB / "cards" / h["card"]).is_file()
+    assert h["card"] == f"{m.name}.card"
+    assert (LIB / "cards" / h["card"]).is_file()
     twin_path = h["twin"].split(":")[0]
-    assert twin_path.startswith("arsenal/shaders/twins/") and (REPO / twin_path).is_file()
+    assert twin_path.startswith("arsenal/shaders/twins/")
+    assert (REPO / twin_path).is_file()
     p0 = [p for p in parts if p["status"] == "P0"]
     assert sorted(h["exemplars"]) == sorted({e for p in p0 for e in p["exemplars"]})
-    assert h["learn"] and set(h["learn"]) <= {x for p in parts for x in p["learn"]}
+    assert h["learn"]
+    assert set(h["learn"]) <= {x for p in parts for x in p["learn"]}
 
 
 @pytest.mark.parametrize("file", sorted(FAMILY))
@@ -592,7 +634,8 @@ def test_each_module_composes_and_lints_clean(library, file):
 def test_each_module_has_a_card_that_builds(library, file):
     m = _module(library, file)
     card = K.load_card(m.name)
-    assert m.name in card.uses and card.note
+    assert m.name in card.uses
+    assert card.note
     built = K.build_card(card, library=library)
     assert m.name in built["card"]["modules"]
 
@@ -603,9 +646,11 @@ def test_no_module_reaches_for_the_old_sine_hash_or_redefines_a_batch_a_function
     for file in FAMILY:
         m = _module(library, file)
         code = M.strip_comments(m.body)
-        assert "hashSine" not in code and not re.search(r"\bsin\s*\(\s*dot", code)
+        assert "hashSine" not in code
+        assert not re.search(r"\bsin\s*\(\s*dot", code)
         assert not re.search(r"\bconst\s+float\s+(PI|TAU|PHI|SQRT3)\b", code)
-    assert "core-shaping" in library.resolve(["noise-triangle"]) and "core-rotate" in library.resolve(["noise-triangle"])
+    assert "core-shaping" in library.resolve(["noise-triangle"])
+    assert "core-rotate" in library.resolve(["noise-triangle"])
     assert "core-const" in library.resolve(["draw2-lattice"])
 
 
@@ -662,52 +707,77 @@ def _twin_parity_image():
     local = np.stack([xs + 0.5, ys + 0.5], -1).astype(F32)
     p = local / F32(32.0) - F32(1.0)
     out = np.zeros((64, 448, 3))
-    out[:, 0:64] = np.stack([tn.noiseTriangle2(p * F32(3.0), F32(1.3), 4), tn.noiseTriangle2(p * F32(2.0), F32(0.0), 1),
-                             tn.noiseTriangle2(p * np.array([5.0, 0.5], F32), F32(2.0), 3)], -1)
-    out[:, 64:128] = 0.5 + 0.5 * np.stack([d.sd2Circle(p, F32(0.6)), d.sd2RoundBox(p, np.array([0.7, 0.4], F32), F32(0.2)),
-                                           d.sd2Hexagon(p, F32(0.55))], -1)
+    out[:, 0:64] = np.stack(
+        [
+            tn.noiseTriangle2(p * F32(3.0), F32(1.3), 4),
+            tn.noiseTriangle2(p * F32(2.0), F32(0.0), 1),
+            tn.noiseTriangle2(p * np.array([5.0, 0.5], F32), F32(2.0), 3),
+        ],
+        -1,
+    )
+    out[:, 64:128] = 0.5 + 0.5 * np.stack(
+        [d.sd2Circle(p, F32(0.6)), d.sd2RoundBox(p, np.array([0.7, 0.4], F32), F32(0.2)), d.sd2Hexagon(p, F32(0.55))],
+        -1,
+    )
     seg = d.sd2Segment(p, np.array([-0.6, 0.3], F32), np.array([0.5, -0.4], F32))
-    out[:, 128:192] = np.stack([0.5 + 0.5 * seg[..., 0], seg[..., 1], 0.5 + 0.5 * d.sd2Box(p, np.array([0.5, 0.3], F32))], -1)
+    out[:, 128:192] = np.stack(
+        [0.5 + 0.5 * seg[..., 0], seg[..., 1], 0.5 + 0.5 * d.sd2Box(p, np.array([0.5, 0.3], F32))], -1
+    )
     hex_ = d.latHex(p * F32(2.5))
     out[:, 192:256] = np.concatenate([hex_[..., :2] + 0.5, 2.0 * d.latHexEdge(hex_[..., :2])[..., None]], -1)
     sector, q = d.domKaleido(p, F32(5.0))
     ra = d.domToPolar(p)
-    out[:, 256:320] = np.concatenate([0.5 + 0.5 * q, (0.5 * (sector + 0.5) / 5.0 + 0.5 * (ra[..., 1] / 6.2831853 + 0.5))[..., None]], -1)
+    out[:, 256:320] = np.concatenate(
+        [0.5 + 0.5 * q, (0.5 * (sector + 0.5) / 5.0 + 0.5 * (ra[..., 1] / 6.2831853 + 0.5))[..., None]], -1
+    )
     dd = (local[..., 0] - F32(32.0)) * F32(0.01)
     x = F32(0.013) * local[..., 0] + F32(0.007) * local[..., 1]
     fp = math.hypot(0.013, 0.007)
-    out[:, 320:384] = np.stack([0.5 * d.aaFill(dd, F32(0.08)) + 0.5 * d.aaStep(x, F32(0.6), F32(fp)),
-                                d.aaStroke(dd, F32(0.05) * local[..., 1] / F32(64.0), F32(0.08)),
-                                d.aaWire(dd, F32(2.0) * local[..., 1] / F32(64.0), F32(0.08))], -1)
+    out[:, 320:384] = np.stack(
+        [
+            0.5 * d.aaFill(dd, F32(0.08)) + 0.5 * d.aaStep(x, F32(0.6), F32(fp)),
+            d.aaStroke(dd, F32(0.05) * local[..., 1] / F32(64.0), F32(0.08)),
+            d.aaWire(dd, F32(2.0) * local[..., 1] / F32(64.0), F32(0.08)),
+        ],
+        -1,
+    )
     cell, q = d.domRepeat2(p * F32(2.0), np.array([0.5, 0.4], F32))
     hexc = d.latHex(p * F32(3.0))
     ax = d.latHexAxial(hexc[..., 2:])
     tag = (ax[..., 0] + 3.0 * ax[..., 1]) / 7.0 + 0.01
-    out[:, 384:448] = np.concatenate([q / np.array([0.5, 0.4], F32) + 0.5,
-                                      (0.5 * d.patCellDelay(cell, np.zeros(2, F32), F32(8.0))
-                                       + 0.5 * (tag - np.floor(tag)))[..., None]], -1)
-    return np.round(np.clip(out, 0, 1) * 255.0)[::-1]           # PNG rows run top down
+    out[:, 384:448] = np.concatenate(
+        [
+            q / np.array([0.5, 0.4], F32) + 0.5,
+            (0.5 * d.patCellDelay(cell, np.zeros(2, F32), F32(8.0)) + 0.5 * (tag - np.floor(tag)))[..., None],
+        ],
+        -1,
+    )
+    return np.round(np.clip(out, 0, 1) * 255.0)[::-1]  # PNG rows run top down
 
 
 @pytest.mark.slow
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH (the headless driver)")
 def test_the_glsl_matches_its_twin_on_swiftshader(tmp_path):
     from PIL import Image
+
     cards_dir = tmp_path / "cards"
     cards_dir.mkdir()
     (cards_dir / "parity-2d.card").write_text(PARITY_CARD, encoding="utf-8", newline="\n")
-    report = K.render_cards(["parity-2d"], cards_dir=cards_dir, out_root=tmp_path / "out",
-                            allow_tracked=True, lock_wait_min=5, quiet=True)
+    report = K.render_cards(
+        ["parity-2d"], cards_dir=cards_dir, out_root=tmp_path / "out", allow_tracked=True, lock_wait_min=5, quiet=True
+    )
     if report["driver"].get("error") and "lock" in str(report["driver"]["error"]).lower():
         pytest.skip(f"the GPU lock stayed busy: {report['driver']['error']}")
     row = report["cards"][0]
-    assert row["compile_ok"] is True and row["nan_pixels"] == 0, row
+    assert row["compile_ok"] is True, row
+    assert row["nan_pixels"] == 0, row
     png = sorted((tmp_path / "out" / "parity-2d").glob("t0*.png"))[0]
     gpu = np.asarray(Image.open(png).convert("RGB")).astype(np.float64)
     cpu = _twin_parity_image()
     miss = np.abs(gpu - cpu)
-    smooth = miss[:, 0:192]                                       # noise and distances: continuous everywhere
-    assert smooth.max() <= 3 and np.mean(smooth > 1) < 0.002, f"noise/distance drift: max {smooth.max()}"
+    smooth = miss[:, 0:192]  # noise and distances: continuous everywhere
+    assert smooth.max() <= 3, f"noise/distance drift: max {smooth.max()}"
+    assert np.mean(smooth > 1) < 0.002, f"noise/distance drift: max {smooth.max()}"
     # the lattice, the fold, the coverage and the repetition jump at borders: a pixel on an exact tie may land in the
     # other cell on the GPU, so a few such pixels may differ; everywhere else they agree
     jumpy = miss[:, 192:448]

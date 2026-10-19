@@ -51,10 +51,10 @@ Run::
 
     py -m pytest tests/test_the_sha_verifier_actually_hashes_something.py -q
 """
+
 from __future__ import annotations
 
 import hashlib
-import inspect
 import subprocess
 import sys
 from pathlib import Path
@@ -74,6 +74,7 @@ def _src() -> str:
 def _atoms():
     from core.foundation.store import create_store
     from core.library.atoms import AtomFamily
+
     return AtomFamily(create_store(), repo_root=str(ROOT)).find()
 
 
@@ -90,11 +91,12 @@ def test_verify_recomputes_a_sha_from_a_body():
     were both written by the same code path.
     """
     src = _src()
-    verify = src[src.index("def _verify_projections"):]
-    assert ("_sha12(" in verify or "sha256(" in verify or "hashlib" in verify), (
+    verify = src[src.index("def _verify_projections") :]
+    assert "_sha12(" in verify or "sha256(" in verify or "hashlib" in verify, (
         "_verify_projections() never computes a hash. It compares the projection's recorded "
         "akashic_sha to the atom's recorded body_sha -- belief against belief -- so a body edited "
-        "outside the atom door passes, which is the only failure a content hash exists to catch.")
+        "outside the atom door passes, which is the only failure a content hash exists to catch."
+    )
 
 
 def test_the_store_integrity_check_exists_and_has_a_denominator():
@@ -102,15 +104,18 @@ def test_the_store_integrity_check_exists_and_has_a_denominator():
     every atom. The check must exist AND must report how many bodies it hashed, or a clean result
     is indistinguishable from a check that ran over nothing."""
     src = _src()
-    verify = src[src.index("def _verify_projections"):]
-    assert "body" in verify and "body_sha" in verify, "the verifier never reads the atom body"
+    verify = src[src.index("def _verify_projections") :]
+    assert "body" in verify, "the verifier never reads the atom body"
+    assert "body_sha" in verify, "the verifier never reads the atom body"
     for token in ("rehash", "recomput", "hashed", "verified_bodies", "body_checked"):
         if token in verify.lower():
             break
     else:
-        pytest.fail("the verifier reports no count of bodies actually hashed -- without that "
-                    "denominator, CLEAN means 'nothing was checked' just as easily as 'nothing "
-                    "is wrong'")
+        pytest.fail(
+            "the verifier reports no count of bodies actually hashed -- without that "
+            "denominator, CLEAN means 'nothing was checked' just as easily as 'nothing "
+            "is wrong'"
+        )
 
 
 def test_the_summary_does_not_call_MISSING_rows_drift():
@@ -119,9 +124,10 @@ def test_the_summary_does_not_call_MISSING_rows_drift():
     regeneration, a drifted body is a corruption -- and collapsing them into one word sends the
     reader at the wrong one."""
     src = _src()
-    verify = src[src.index("def _verify_projections"):]
+    verify = src[src.index("def _verify_projections") :]
     assert "drift row(s)" not in verify or "missing" in verify.lower(), (
-        "the summary line labels every row 'drift' regardless of kind")
+        "the summary line labels every row 'drift' regardless of kind"
+    )
 
 
 # ------------------------------------------------------------------ ratchets: keep what works
@@ -135,28 +141,36 @@ def test_the_store_is_and_stays_internally_consistent():
         # not visible here. Skipping on the measured precondition rather than on a guess -- the
         # same correction `test_defer_refuses_an_unknown_seat` needed this morning, where a proxy
         # precondition never fired and left the pin permanently red in the baseline.
-        pytest.skip("no atoms visible: conftest isolates to db 15 and flushes it. Run with "
-                    "AKASHIC_TEST_USE_CANONICAL=1 to exercise this against the real store.")
-    bad = [a["id"] for a in atoms
-           if a.get("body") is not None and _sha12(a["body"]) != a.get("body_sha")]
+        pytest.skip(
+            "no atoms visible: conftest isolates to db 15 and flushes it. Run with "
+            "AKASHIC_TEST_USE_CANONICAL=1 to exercise this against the real store."
+        )
+    bad = [a["id"] for a in atoms if a.get("body") is not None and _sha12(a["body"]) != a.get("body_sha")]
     assert not bad, (
-        "%d of %d atom bodies in the STORE no longer hash to their recorded body_sha: %r"
-        % (len(bad), len(atoms), bad[:5]))
+        f"{len(bad)} of {len(atoms)} atom bodies in the STORE no longer hash to their recorded body_sha: {bad[:5]!r}"
+    )
 
 
 def test_verify_still_reports_missing_and_orphan_rows():
     """RATCHET. The existing MISSING/ORPHAN detection is real and must survive the fix -- 8 and 14
     rows respectively when this was written."""
     src = _src()
-    verify = src[src.index("def _verify_projections"):]
-    assert "MISSING" in verify and "ORPHAN" in verify
+    verify = src[src.index("def _verify_projections") :]
+    assert "MISSING" in verify
+    assert "ORPHAN" in verify
 
 
 def test_verify_still_exits_nonzero_on_findings():
     """RATCHET. It is ship-gateable today (exit 1 with rows present) and must stay so."""
-    r = subprocess.run([sys.executable, "-X", "utf8", str(GEN), "--verify"],
-                       capture_output=True, text=True, encoding="utf-8", errors="replace",
-                       cwd=str(ROOT), timeout=300)
+    r = subprocess.run(
+        [sys.executable, "-X", "utf8", str(GEN), "--verify"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(ROOT),
+        timeout=300,
+    )
     out = r.stdout + r.stderr
     has_rows = ("MISSING" in out) or ("ORPHAN" in out) or ("DRIFT " in out)
     if has_rows:

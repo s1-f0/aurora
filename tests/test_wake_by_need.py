@@ -10,6 +10,7 @@ Every wake is a full model turn. Before S3 the harness listener admitted everyth
   - every listener exit writes a receipt (woke / quiet / cycled) that the summary counts.
 Hermetic: the fake bus from test_t073_wake_longlived.py, receipts in tmp_path.
 """
+
 import json
 import os
 import sys
@@ -35,11 +36,12 @@ class FakeClock:
 
 class FakeApi:
     """wake_block advances the fake clock one chunk and serves scripted mail by time."""
+
     online_now = True
 
     def __init__(self, clock, chunk_s, schedule=None):
         self.clock, self.chunk_s = clock, chunk_s
-        self.schedule = sorted(schedule or [], key=lambda x: x[0])   # [(at, [msgs])]
+        self.schedule = sorted(schedule or [], key=lambda x: x[0])  # [(at, [msgs])]
 
     def online(self):
         pass
@@ -56,7 +58,7 @@ def _msg(kind="chat", frm="kimi", to="claude", text="hi"):
     return SimpleNamespace(kind=kind, frm=frm, to=to, content=text, meta={})
 
 
-@pytest.fixture()
+@pytest.fixture
 def seat(tmp_path, monkeypatch):
     monkeypatch.setattr(bw.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setenv("AKASHIC_WAKE_RECEIPTS_DIR", str(tmp_path / "receipts"))
@@ -71,13 +73,12 @@ def seat(tmp_path, monkeypatch):
 def _run(seat, clock, api, min_tier, deadline=600, monkeypatch=None):
     monkeypatch.setattr(bw.time, "time", clock.time)
     monkeypatch.setattr(bw, "say_seen_at_fire", lambda *a, **k: 0, raising=False)
-    return bw.watch("claude", deadline, 10_000, api=api, hb_path=seat, my_pid=4242,
-                    session_id="s1", min_tier=min_tier)
+    return bw.watch("claude", deadline, 10_000, api=api, hb_path=seat, my_pid=4242, session_id="s1", min_tier=min_tier)
 
 
 def _receipts(tmp_path):
     p = ws.wake_receipts_path("claude", str(tmp_path / "receipts"))
-    return [json.loads(l) for l in open(p, encoding="utf-8")] if os.path.exists(p) else []
+    return [json.loads(ln) for ln in open(p, encoding="utf-8")] if os.path.exists(p) else []
 
 
 # ---------------------------------------------------------------- the floor reaches the child
@@ -86,17 +87,19 @@ def test_standby_floor_resolves_flag_env_default(monkeypatch):
     assert agent_cli.standby_min_tier() == 2
     monkeypatch.setenv("BIFROST_WAKE_MIN_TIER", "3")
     assert agent_cli.standby_min_tier() == 3
-    assert agent_cli.standby_min_tier(0) == 0                 # flag beats env
+    assert agent_cli.standby_min_tier(0) == 0  # flag beats env
     monkeypatch.setenv("BIFROST_WAKE_MIN_TIER", "garbage")
-    assert agent_cli.standby_min_tier() == 2                 # unreadable -> default, never 3
-    assert agent_cli.standby_min_tier(9) == 3                # clamped to the ladder
+    assert agent_cli.standby_min_tier() == 2  # unreadable -> default, never 3
+    assert agent_cli.standby_min_tier(9) == 3  # clamped to the ladder
 
 
 def test_standby_listener_argv_carries_the_floor_and_session():
     argv = agent_cli.standby_listener_argv("claude", "sid-1", 2)
     assert argv[1].endswith("bifrost_wake.py")
-    assert "--min-tier" in argv and argv[argv.index("--min-tier") + 1] == "2"
-    assert "--session" in argv and argv[argv.index("--session") + 1] == "sid-1"
+    assert "--min-tier" in argv
+    assert argv[argv.index("--min-tier") + 1] == "2"
+    assert "--session" in argv
+    assert argv[argv.index("--session") + 1] == "sid-1"
 
 
 # ---------------------------------------------------------------- floor 2 semantics
@@ -107,10 +110,13 @@ def test_floor_two_holds_ambient_peer_broadcast_and_confesses(seat, tmp_path, mo
     api = FakeApi(clock, 10, schedule=[(clock.now + 20, [_msg("completion", "kimi", "*")])])
     rc = _run(seat, clock, api, min_tier=2, deadline=120, monkeypatch=monkeypatch)
     out = capsys.readouterr().out
-    assert rc == 0 and "BIFROST WAKE -- messages" not in out
+    assert rc == 0
+    assert "BIFROST WAKE -- messages" not in out
     assert "held below tier floor 2" in out
     r = _receipts(tmp_path)
-    assert r and r[-1]["outcome"] in ("quiet", "cycled") and r[-1]["below_floor"] == 1
+    assert r
+    assert r[-1]["outcome"] in ("quiet", "cycled")
+    assert r[-1]["below_floor"] == 1
 
 
 def test_floor_two_wakes_on_operator_and_on_directed_ask(seat, tmp_path, monkeypatch, capsys):
@@ -124,31 +130,45 @@ def test_floor_two_wakes_on_operator_and_on_directed_ask(seat, tmp_path, monkeyp
     assert "BIFROST WAKE -- messages" in capsys.readouterr().out
     r = _receipts(tmp_path)
     assert [x["outcome"] for x in r[-2:]] == ["woke", "woke"]
-    assert r[-2]["tiers"] == [0] and r[-1]["tiers"] == [1]
+    assert r[-2]["tiers"] == [0]
+    assert r[-1]["tiers"] == [1]
 
 
 # ---------------------------------------------------------------- settle window
 def test_operator_mail_never_waits_for_the_settle_window(seat, tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("BIFROST_WAKE_SETTLE_S", "30")
     clock = FakeClock()
-    api = FakeApi(clock, 10, schedule=[(clock.now + 10, [_msg("chat", "daniil", "claude")]),
-                                       (clock.now + 25, [_msg("handoff", "kimi", "claude")])])
+    api = FakeApi(
+        clock,
+        10,
+        schedule=[
+            (clock.now + 10, [_msg("chat", "daniil", "claude")]),
+            (clock.now + 25, [_msg("handoff", "kimi", "claude")]),
+        ],
+    )
     t0 = clock.now
     _run(seat, clock, api, min_tier=2, deadline=600, monkeypatch=monkeypatch)
-    assert clock.now - t0 <= 10 + 1e-6            # exited on the operator, no settle
+    assert clock.now - t0 <= 10 + 1e-6  # exited on the operator, no settle
     assert _receipts(tmp_path)[-1]["mail"] == 1
 
 
 def test_peer_burst_within_settle_window_is_one_wake(seat, tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("BIFROST_WAKE_SETTLE_S", "30")
     clock = FakeClock()
-    api = FakeApi(clock, 10, schedule=[(clock.now + 10, [_msg("handoff", "kimi", "claude", "a")]),
-                                       (clock.now + 18, [_msg("handoff", "sol", "claude", "b")]),
-                                       (clock.now + 26, [_msg("request", "deepseek", "claude", "c")])])
+    api = FakeApi(
+        clock,
+        10,
+        schedule=[
+            (clock.now + 10, [_msg("handoff", "kimi", "claude", "a")]),
+            (clock.now + 18, [_msg("handoff", "sol", "claude", "b")]),
+            (clock.now + 26, [_msg("request", "deepseek", "claude", "c")]),
+        ],
+    )
     _run(seat, clock, api, min_tier=2, deadline=600, monkeypatch=monkeypatch)
     out = capsys.readouterr().out
     r = _receipts(tmp_path)[-1]
-    assert r["outcome"] == "woke" and r["mail"] == 3, r
+    assert r["outcome"] == "woke", r
+    assert r["mail"] == 3, r
     assert out.count('"frm"') == 3
 
 

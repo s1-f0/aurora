@@ -28,6 +28,7 @@ pins below measure the independence with the twins and check that no two tags me
 
 Apache-2.0, Akashic Aurora. Written fresh for the house; no corpus code.
 """
+
 from __future__ import annotations
 
 import json
@@ -94,6 +95,7 @@ MASK = 0xFFFFFFFF
 # ------------------------------------------------------------------------------------------- the oracle (second writing)
 # Plain Python integers and floats, one value at a time: slow, obvious, and written apart from the numpy twin.
 
+
 def o_hash_u1(x: int) -> int:
     lcg = (x * 747796405 + 2891336453) & MASK
     mixed = (((lcg >> ((lcg >> 28) + 4)) ^ lcg) * 277803737) & MASK
@@ -136,12 +138,12 @@ def o_cell(c: float) -> int:
 
 # Every kind of dice its own lane tag: pi's fraction in 32-bit words, continuing after the warps' three (0x243F6A88,
 # 0x85A308D3, 0x13198A2E). The 2D hash wrappers already hold 0x9E3779B9 as their whole third lane.
-O_TAG_VALUE2 = 0x03707344        # noiseValue2: pcg3d(cell, seed ^ tag)
-O_TAG_VALUE3 = 0xA4093822        # noiseValue3: pcg4d(cell, seed ^ tag)
-O_TAG_GRAD2 = 0x299F31D0         # noiseGrad2:  pcg3d(cell + corner, seed ^ tag)
-O_TAG_GRAD3 = 0x082EFA98         # noiseGrad3:  pcg4d(cell + corner, seed ^ tag)
-O_TAG_HASH3 = 0xEC4E6C89         # hash31 / hash33: pcg3d(cell.x, cell.y, cell.z ^ tag)
-O_LANE_2D = 0x9E3779B9           # hash21 / hash22: pcg3d(cell.x, cell.y, this)
+O_TAG_VALUE2 = 0x03707344  # noiseValue2: pcg3d(cell, seed ^ tag)
+O_TAG_VALUE3 = 0xA4093822  # noiseValue3: pcg4d(cell, seed ^ tag)
+O_TAG_GRAD2 = 0x299F31D0  # noiseGrad2:  pcg3d(cell + corner, seed ^ tag)
+O_TAG_GRAD3 = 0x082EFA98  # noiseGrad3:  pcg4d(cell + corner, seed ^ tag)
+O_TAG_HASH3 = 0xEC4E6C89  # hash31 / hash33: pcg3d(cell.x, cell.y, cell.z ^ tag)
+O_LANE_2D = 0x9E3779B9  # hash21 / hash22: pcg3d(cell.x, cell.y, this)
 
 
 def o_hash33(x, y, z):
@@ -149,7 +151,7 @@ def o_hash33(x, y, z):
 
 
 def o_fade(t: float) -> float:
-    return (10.0 - 15.0 * t + 6.0 * t ** 2) * t ** 3     # Perlin's quintic, expanded
+    return (10.0 - 15.0 * t + 6.0 * t**2) * t**3  # Perlin's quintic, expanded
 
 
 def o_value2(x, y, seed):
@@ -159,6 +161,7 @@ def o_value2(x, y, seed):
 
     def corner(dx, dy):
         return 2.0 * o_u01(o_pcg3d(((ix + dx) & MASK, (iy + dy) & MASK, lane))[0]) - 1.0
+
     u, v = o_fade(fx), o_fade(fy)
     bottom = corner(0, 0) + (corner(1, 0) - corner(0, 0)) * u
     top = corner(0, 1) + (corner(1, 1) - corner(0, 1)) * u
@@ -167,7 +170,7 @@ def o_value2(x, y, seed):
 
 def o_value3(x, y, z, seed):
     i = [math.floor(c) for c in (x, y, z)]
-    f = [c - k for c, k in zip((x, y, z), i)]
+    f = [c - k for c, k in zip((x, y, z), i, strict=False)]
     w = [o_fade(t) for t in f]
     lane = (seed & MASK) ^ O_TAG_VALUE3
     total = 0.0
@@ -175,7 +178,7 @@ def o_value3(x, y, z, seed):
         for dy in (0, 1):
             for dx in (0, 1):
                 h = o_pcg4d(((i[0] + dx) & MASK, (i[1] + dy) & MASK, (i[2] + dz) & MASK, lane))[0]
-                weight = ((w[0] if dx else 1 - w[0]) * (w[1] if dy else 1 - w[1]) * (w[2] if dz else 1 - w[2]))
+                weight = (w[0] if dx else 1 - w[0]) * (w[1] if dy else 1 - w[1]) * (w[2] if dz else 1 - w[2])
                 total += weight * (2.0 * o_u01(h) - 1.0)
     return total
 
@@ -217,15 +220,18 @@ def o_grad_ramp3(c, lane, d):
 
 def o_grad3(x, y, z, seed):
     i = [math.floor(c) for c in (x, y, z)]
-    f = [c - k for c, k in zip((x, y, z), i)]
+    f = [c - k for c, k in zip((x, y, z), i, strict=False)]
     w = [o_fade(t) for t in f]
     lane = (seed & MASK) ^ O_TAG_GRAD3
     total = 0.0
     for dz in (0, 1):
         for dy in (0, 1):
             for dx in (0, 1):
-                ramp = o_grad_ramp3(((i[0] + dx) & MASK, (i[1] + dy) & MASK, (i[2] + dz) & MASK), lane,
-                                    (f[0] - dx, f[1] - dy, f[2] - dz))
+                ramp = o_grad_ramp3(
+                    ((i[0] + dx) & MASK, (i[1] + dy) & MASK, (i[2] + dz) & MASK),
+                    lane,
+                    (f[0] - dx, f[1] - dy, f[2] - dz),
+                )
                 total += ((w[0] if dx else 1 - w[0]) * (w[1] if dy else 1 - w[1]) * (w[2] if dz else 1 - w[2])) * ramp
     return O_SCALE3 * total
 
@@ -248,13 +254,16 @@ def o_fbm2(x, y, octaves, lacunarity, gain, seed):
         amps += amp
         amp *= gain
         step = lacunarity * o_detune(i)
-        x, y = ((O_TURN_C * x - O_TURN_S * y) * step + O_OFFSET2[0], (O_TURN_S * x + O_TURN_C * y) * step + O_OFFSET2[1])
+        x, y = (
+            (O_TURN_C * x - O_TURN_S * y) * step + O_OFFSET2[0],
+            (O_TURN_S * x + O_TURN_C * y) * step + O_OFFSET2[1],
+        )
     return total / amps if amps > 0 else 0.0
 
 
 # Roberts' R2: the plastic number rho (the real root of x^3 = x + 1) strides 1/rho along x and 1/rho^2 along y.
 O_RHO = 1.324717957244746
-O_R2 = (1.0 / O_RHO, 1.0 / O_RHO ** 2)
+O_R2 = (1.0 / O_RHO, 1.0 / O_RHO**2)
 
 
 def o_r2(px, py):
@@ -273,6 +282,7 @@ def wrap_miss(a, b):
 
 # --------------------------------------------------------------------------------------------- the modules themselves
 
+
 def _atlas():
     return json.loads(ATLAS.read_text(encoding="utf-8"))
 
@@ -284,8 +294,10 @@ def library():
 
 def _module(lib, file):
     name = FAMILY[file]
-    assert name in lib.modules, f"no module named {name} (expected in arsenal/web/glsl/{file}); " \
-                                f"quarantined: {[p for p in lib.problems if file in p['path'].replace(chr(92), '/')]}"
+    assert name in lib.modules, (
+        f"no module named {name} (expected in arsenal/web/glsl/{file}); "
+        f"quarantined: {[p for p in lib.problems if file in p['path'].replace(chr(92), '/')]}"
+    )
     m = lib.modules[name]
     assert Path(m.path).resolve() == (LIB / file).resolve(), f"{name} lives in {m.path}, not {file}"
     return m
@@ -307,7 +319,7 @@ def _definitions(m):
         for raw in d.group(3).split(","):
             words = [w for w in raw.split() if w not in ("in", "const", "highp")]
             if words:
-                params.append(" ".join(words[:-1]))      # drop the parameter's name, keep out/inout and the type
+                params.append(" ".join(words[:-1]))  # drop the parameter's name, keep out/inout and the type
         out.setdefault(d.group(2), []).append((d.group(1), params))
     return out
 
@@ -328,20 +340,28 @@ def test_headers_carry_every_library_field(library, file):
     atlas = _atlas()
     parts = [p for p in atlas["parts"] if p.get("module") == file]
     cat = {p["category"] for p in parts}
-    assert h["cat"] in cat and h["family"] == h["cat"][0]
-    assert h["kind"] in ("helper", "legacy") and re.fullmatch(r"\d+\.\d+\.\d+", h["version"])
+    assert h["cat"] in cat
+    assert h["family"] == h["cat"][0]
+    assert h["kind"] in ("helper", "legacy")
+    assert re.fullmatch(r"\d+\.\d+\.\d+", h["version"])
     assert h["license"] == "Apache-2.0"
-    assert isinstance(h["credits"], list) and h["credits"] and all("http" in c for c in h["credits"]), \
-        "credits name who taught the technique, each with a link"
-    assert h["cost"]["class"] in ("C0", "C1", "C2", "C3", "C4") and h["cost"]["tex"] == 0
-    assert h["contract"] and h["note"] and h["status"] == "P0"
+    assert isinstance(h["credits"], list), "credits name who taught the technique, each with a link"
+    assert h["credits"], "credits name who taught the technique, each with a link"
+    assert all("http" in c for c in h["credits"]), "credits name who taught the technique, each with a link"
+    assert h["cost"]["class"] in ("C0", "C1", "C2", "C3", "C4")
+    assert h["cost"]["tex"] == 0
+    assert h["contract"]
+    assert h["note"]
+    assert h["status"] == "P0"
     assert h["targets"]["glsl"] in ("300es", "100")
-    assert (LIB / "cards" / h["card"]).is_file() and h["card"] == f"{m.name}.card"
+    assert (LIB / "cards" / h["card"]).is_file()
+    assert h["card"] == f"{m.name}.card"
     twin = h["twin"].split(":")[0]
     assert (REPO / twin).is_file(), f"the twin {twin} does not exist"
     p0 = [p for p in parts if p["status"] == "P0"]
     assert sorted(h["exemplars"]) == sorted({e for p in p0 for e in p["exemplars"]})
-    assert h["learn"] and set(h["learn"]) <= {x for p in parts for x in p["learn"]}
+    assert h["learn"]
+    assert set(h["learn"]) <= {x for p in parts for x in p["learn"]}
     assert 10 <= h["order"] <= 30
 
 
@@ -355,8 +375,9 @@ def test_the_dither_masks_and_the_sine_hash_run_on_webgl1(library):
 
 def test_the_sine_hash_is_a_private_legacy_twin(library):
     m = _module(library, "legacy/hash-sine.glsl")
-    assert m.header["public"] is False and m.header.get("legacy") is True
-    assert m.header["targets"] == {"glsl": "100", "needs": []}     # the old surfaces include WebGL1 pages
+    assert m.header["public"] is False
+    assert m.header.get("legacy") is True
+    assert m.header["targets"] == {"glsl": "100", "needs": []}  # the old surfaces include WebGL1 pages
 
 
 @pytest.mark.parametrize("file", sorted(FAMILY))
@@ -375,9 +396,11 @@ def test_each_module_composes_and_lints_clean(library, file):
 def test_each_module_has_a_card_that_builds(library, file):
     m = _module(library, file)
     card = K.load_card(m.name)
-    assert m.name in card.uses and card.note
+    assert m.name in card.uses
+    assert card.note
     built = K.build_card(card, library=library)
-    assert built["card"]["modules"] and m.name in built["card"]["modules"]
+    assert built["card"]["modules"]
+    assert m.name in built["card"]["modules"]
 
 
 # ------------------------------------------------------------------------------------------------- the integer hashes
@@ -410,11 +433,11 @@ def test_the_twin_hashes_match_the_pinned_vectors_bit_for_bit():
 
 def test_the_twin_hashes_match_the_oracle_on_random_inputs():
     rng = np.random.default_rng(20261013)
-    x = rng.integers(0, 2 ** 32, 2000, dtype=np.uint64).astype(np.uint32)
+    x = rng.integers(0, 2**32, 2000, dtype=np.uint64).astype(np.uint32)
     assert H.hashU1(x).tolist() == [o_hash_u1(int(v)) for v in x]
-    v3 = rng.integers(0, 2 ** 32, (500, 3), dtype=np.uint64).astype(np.uint32)
+    v3 = rng.integers(0, 2**32, (500, 3), dtype=np.uint64).astype(np.uint32)
     assert H.pcg3d(v3).tolist() == [list(o_pcg3d(tuple(int(c) for c in row))) for row in v3]
-    v4 = rng.integers(0, 2 ** 32, (500, 4), dtype=np.uint64).astype(np.uint32)
+    v4 = rng.integers(0, 2**32, (500, 4), dtype=np.uint64).astype(np.uint32)
     assert H.pcg4d(v4).tolist() == [list(o_pcg4d(tuple(int(c) for c in row))) for row in v4]
 
 
@@ -426,23 +449,24 @@ def _popcount(a):
 def test_one_flipped_input_bit_flips_about_half_the_output_bits():
     """The contract's "full avalanche on 32 bits": every input bit reaches every output bit about half the time."""
     rng = np.random.default_rng(1)
-    x = rng.integers(0, 2 ** 32, 4096, dtype=np.uint64).astype(np.uint32)
+    x = rng.integers(0, 2**32, 4096, dtype=np.uint64).astype(np.uint32)
     base = H.hashU1(x)
     for bit in range(32):
         diff = base ^ H.hashU1(x ^ np.uint32(1 << bit))
         assert 15.0 <= _popcount(diff).mean() <= 17.0, f"input bit {bit}"
         per_out = ((diff[:, None] >> np.arange(32, dtype=np.uint32)) & 1).mean(axis=0)
-        assert per_out.min() >= 0.38 and per_out.max() <= 0.62, f"input bit {bit}: a stuck or copied output bit"
+        assert per_out.min() >= 0.38, f"input bit {bit}: a stuck or copied output bit"
+        assert per_out.max() <= 0.62, f"input bit {bit}: a stuck or copied output bit"
 
 
-@pytest.mark.parametrize("fn,lanes", [(H.pcg3d, 3), (H.pcg4d, 4)])
+@pytest.mark.parametrize(("fn", "lanes"), [(H.pcg3d, 3), (H.pcg4d, 4)])
 def test_the_multi_lane_hashes_avalanche_on_the_bits_that_lattices_use(fn, lanes):
     """pcg3d and pcg4d: each of the low 17 bits of every input lane flips about half of ALL the output bits. The high
     input bits mix less (measured: bit 31 reaches about a quarter), a property of the design, not of this twin; lattice
     ids and seeds vary in their low bits, and a caller whose seed varies only in its high bits pre-hashes it with
     hashU1 (the warps do)."""
     rng = np.random.default_rng(4)
-    v = rng.integers(0, 2 ** 32, (2048, lanes), dtype=np.uint64).astype(np.uint32)
+    v = rng.integers(0, 2**32, (2048, lanes), dtype=np.uint64).astype(np.uint32)
     base = fn(v)
     total = 32 * lanes
     for lane in range(lanes):
@@ -461,9 +485,12 @@ def test_u01_keeps_the_top_24_bits_exactly_and_never_reaches_one():
     x = np.array([0, 255, 256, 0x80000000, 0xFFFFFFFF], dtype=np.uint32)
     got = H.u01(x)
     assert got.tolist() == [o_u01(int(v)) for v in x]
-    assert got[0] == 0.0 and got[1] == 0.0 and got[2] == 2.0 ** -24 and got[3] == 0.5
-    assert got[-1] == 1.0 - 2.0 ** -24 < 1.0
-    assert np.all(got.astype(np.float32).astype(np.float64) == got)     # exact in a 32-bit float
+    assert got[0] == 0.0
+    assert got[1] == 0.0
+    assert got[2] == 2.0**-24
+    assert got[3] == 0.5
+    assert got[-1] == 1.0 - 2.0**-24 < 1.0
+    assert np.all(got.astype(np.float32).astype(np.float64) == got)  # exact in a 32-bit float
     assert H.u01(np.array([[1 << 8, 2 << 8, 3 << 8]], dtype=np.uint32)).shape == (1, 3)
 
 
@@ -479,9 +506,10 @@ def test_the_float_wrappers_hash_the_cell_into_zero_to_one():
     p3 = rng.uniform(-1000, 1000, (5000, 3))
     for f, p in ((H.hash21, p2), (H.hash22, p2), (H.hash31, p3), (H.hash33, p3)):
         v = f(p)
-        assert v.min() >= 0.0 and v.max() < 1.0
+        assert v.min() >= 0.0
+        assert v.max() < 1.0
         assert np.array_equal(f(np.floor(p) + 0.25), v), f"{f.__name__} is not constant over a cell"
-    assert np.array_equal(H.hash31(p3), H.hash33(p3)[:, 0])           # one hash, three dice: .x is hash31
+    assert np.array_equal(H.hash31(p3), H.hash33(p3)[:, 0])  # one hash, three dice: .x is hash31
     assert np.array_equal(H.hash21(p2), H.hash22(p2)[:, 0])
     flat = np.concatenate([p2, np.zeros((len(p2), 1))], axis=1)
     assert not np.array_equal(H.hash21(p2), H.hash31(flat)), "the 2D family must not repeat the z = 0 slice of 3D"
@@ -509,18 +537,20 @@ def test_hash21_is_white_noise_by_spectral_flatness():
 
 def test_the_sine_hash_twin_is_the_house_expression_and_shows_why_it_is_legacy():
     p = np.array([[0.5, 0.25], [12.0, -3.0]])
-    for row, got in zip(p, H.hashSine21(p)):
+    for row, got in zip(p, H.hashSine21(p), strict=False):
         phase = np.float32(np.float32(127.1) * np.float32(row[0]) + np.float32(311.7) * np.float32(row[1]))
         expect = np.float32(np.float32(np.sin(np.float64(phase))) * np.float32(43758.5453))
         assert abs(got - (expect - np.floor(expect))) < 1e-6
     ys, xs = np.mgrid[0:256, 0:256].astype(np.float64)
     near = H.hashSine21(np.stack([xs, ys], axis=-1))
     far = H.hashSine21(np.stack([xs + 1.0e6, ys + 1.0e6], axis=-1))
-    assert near.min() >= 0 and near.max() < 1
+    assert near.min() >= 0
+    assert near.max() < 1
     # far from the origin the float32 dot product steps coarsely: the "randomness" collapses into few values and the
     # spectrum is no longer flat (pcg at the same distance stays white: test_hash21_is_white_noise_by_spectral_flatness)
     assert 0.54 <= _spectral_flatness(near) <= 0.58
-    assert len(np.unique(far)) < 0.5 * len(np.unique(near)) and _spectral_flatness(far) < 0.4
+    assert len(np.unique(far)) < 0.5 * len(np.unique(near))
+    assert _spectral_flatness(far) < 0.4
     v3 = H.hashSine31(np.array([[1.0, 2.0, 3.0]]))
     assert 0.0 <= v3[0] < 1.0
 
@@ -540,7 +570,7 @@ def test_value_noise_matches_the_oracle():
 def test_value_noise_equals_its_corner_value_on_the_lattice():
     ks = np.floor(_points(400, 2, -1e4, 1e4))
     seed = 77
-    lane = np.full((len(ks), 1), seed ^ O_TAG_VALUE2, np.uint32)        # the seed lane carries value noise's own tag
+    lane = np.full((len(ks), 1), seed ^ O_TAG_VALUE2, np.uint32)  # the seed lane carries value noise's own tag
     expect = 2.0 * H.u01(H.pcg3d(np.concatenate([H.cellU2(ks), lane], 1))[:, 0]) - 1
     assert np.array_equal(N.noiseValue2(ks, seed), expect)
 
@@ -548,16 +578,22 @@ def test_value_noise_equals_its_corner_value_on_the_lattice():
 def test_value_noise_stays_in_range_and_has_no_second_derivative_jump_at_cell_edges():
     v2 = N.noiseValue2(_points(200000, 2), 0)
     v3 = N.noiseValue3(_points(100000, 3), 0)
-    assert v2.min() >= -1.0 and v2.max() < 1.0 and v3.min() >= -1.0 and v3.max() < 1.0
-    assert abs(v2.mean()) < 0.02 and 0.2 < v2.std() < 0.5
+    assert v2.min() >= -1.0
+    assert v2.max() < 1.0
+    assert v3.min() >= -1.0
+    assert v3.max() < 1.0
+    assert abs(v2.mean()) < 0.02
+    assert 0.2 < v2.std() < 0.5
     # the quintic fade: the second difference just left and just right of every integer x matches (a cubic would jump)
     h = 1e-4
     for x0 in range(-5, 6):
         for y in (0.3, 0.71):
-            def f(x):
+
+            def f(x, y=y):
                 return float(N.noiseValue2(np.array([x, y]), 1))
-            left = (f(x0 - 2 * h) - 2 * f(x0 - h) + f(x0)) / h ** 2
-            right = (f(x0) - 2 * f(x0 + h) + f(x0 + 2 * h)) / h ** 2
+
+            left = (f(x0 - 2 * h) - 2 * f(x0 - h) + f(x0)) / h**2
+            right = (f(x0) - 2 * f(x0 + h) + f(x0 + 2 * h)) / h**2
             assert abs(left - right) < 0.1, f"curvature jumps at x = {x0}: {left} vs {right}"
 
 
@@ -571,21 +607,27 @@ def test_gradient_noise_matches_the_oracle():
 def test_gradient_noise_is_zero_on_every_lattice_point():
     k2 = np.floor(_points(1000, 2, -1e5, 1e5))
     k3 = np.floor(_points(1000, 3, -1e5, 1e5))
-    assert np.all(N.noiseGrad2(k2, 11) == 0.0) and np.all(N.noiseGrad3(k3, 11) == 0.0)
+    assert np.all(N.noiseGrad2(k2, 11) == 0.0)
+    assert np.all(N.noiseGrad3(k3, 11) == 0.0)
 
 
 def test_gradient_noise_never_leaves_minus_one_to_one_and_is_centred():
     """The scales are set from the exact supremum (2D: 0.6608 before scaling; 3D, Perlin's edge set: 1.0363), so the
     extreme is about 0.9999 and the bulk sits near zero."""
     rng = np.random.default_rng(5)
-    p2 = np.concatenate([_points(300000, 2), np.floor(_points(100000, 2, -1e4, 1e4)) + 0.5
-                         + rng.normal(0, 0.06, (100000, 2))])
-    p3 = np.concatenate([_points(200000, 3), np.floor(_points(100000, 3, -1e4, 1e4)) + 0.5
-                         + rng.normal(0, 0.06, (100000, 3))])
+    p2 = np.concatenate(
+        [_points(300000, 2), np.floor(_points(100000, 2, -1e4, 1e4)) + 0.5 + rng.normal(0, 0.06, (100000, 2))]
+    )
+    p3 = np.concatenate(
+        [_points(200000, 3), np.floor(_points(100000, 3, -1e4, 1e4)) + 0.5 + rng.normal(0, 0.06, (100000, 3))]
+    )
     n2, n3 = N.noiseGrad2(p2, 0), N.noiseGrad3(p3, 0)
-    assert np.abs(n2).max() <= 1.0 and np.abs(n3).max() <= 1.0
-    assert np.abs(n2).max() > 0.95 and np.abs(n3).max() > 0.85  # the scale is not wasted headroom either
-    assert abs(n2.mean()) < 0.01 and abs(n3.mean()) < 0.01
+    assert np.abs(n2).max() <= 1.0
+    assert np.abs(n3).max() <= 1.0
+    assert np.abs(n2).max() > 0.95
+    assert np.abs(n3).max() > 0.85
+    assert abs(n2.mean()) < 0.01
+    assert abs(n3.mean()) < 0.01
 
 
 def test_seeds_give_independent_fields():
@@ -598,18 +640,31 @@ def test_seeds_give_independent_fields():
 # ------------------------------------------------------------------------------- one seed, one field per kind (tags)
 # Who feeds which lane of which hash, and with what tag. Two users read the same die when their lanes are equal.
 LANE_USERS = {
-    "pcg3d": {"noiseValue2 (seed lane)": O_TAG_VALUE2, "noiseGrad2 (seed lane)": O_TAG_GRAD2,
-              "hash31/hash33 (z lane)": O_TAG_HASH3, "hash21/hash22 (third lane)": O_LANE_2D,
-              "a direct caller of pcg3d": 0},
-    "pcg4d": {"noiseValue3 (seed lane)": O_TAG_VALUE3, "noiseGrad3 (seed lane)": O_TAG_GRAD3,
-              "a direct caller of pcg4d": 0},
+    "pcg3d": {
+        "noiseValue2 (seed lane)": O_TAG_VALUE2,
+        "noiseGrad2 (seed lane)": O_TAG_GRAD2,
+        "hash31/hash33 (z lane)": O_TAG_HASH3,
+        "hash21/hash22 (third lane)": O_LANE_2D,
+        "a direct caller of pcg3d": 0,
+    },
+    "pcg4d": {
+        "noiseValue3 (seed lane)": O_TAG_VALUE3,
+        "noiseGrad3 (seed lane)": O_TAG_GRAD3,
+        "a direct caller of pcg4d": 0,
+    },
 }
 
 # The tags as the GLSL writes them: each must appear, as a uint literal, in the function that feeds it into a lane.
-GLSL_TAGS = [("noise/value.glsl", "noiseValue2", O_TAG_VALUE2), ("noise/value.glsl", "noiseValue3", O_TAG_VALUE3),
-             ("noise/gradient.glsl", "noiseGrad2", O_TAG_GRAD2), ("noise/gradient.glsl", "noiseGrad3", O_TAG_GRAD3),
-             ("hash/pcg.glsl", "hash31", O_TAG_HASH3), ("hash/pcg.glsl", "hash33", O_TAG_HASH3),
-             ("hash/pcg.glsl", "hash21", O_LANE_2D), ("hash/pcg.glsl", "hash22", O_LANE_2D)]
+GLSL_TAGS = [
+    ("noise/value.glsl", "noiseValue2", O_TAG_VALUE2),
+    ("noise/value.glsl", "noiseValue3", O_TAG_VALUE3),
+    ("noise/gradient.glsl", "noiseGrad2", O_TAG_GRAD2),
+    ("noise/gradient.glsl", "noiseGrad3", O_TAG_GRAD3),
+    ("hash/pcg.glsl", "hash31", O_TAG_HASH3),
+    ("hash/pcg.glsl", "hash33", O_TAG_HASH3),
+    ("hash/pcg.glsl", "hash21", O_LANE_2D),
+    ("hash/pcg.glsl", "hash22", O_LANE_2D),
+]
 
 # Reference vectors, from the oracle above (re-pinned 2026-10-13 when the tags went in). The dice as 24-bit integers
 # (the top 24 bits of a hash word, what u01 keeps): hash33 at a cell, and value noise ON the lattice, where it equals its
@@ -621,14 +676,24 @@ PINNED_HASH33 = {
     (100000, 7, -250000): (7539036, 3524453, 13085874),
 }
 PINNED_VALUE2 = {
-    (0, (0, 0)): 7894635, (0, (3, -4)): 15838947, (0, (-1, 2)): 12089985, (0, (65536, -65536)): 6436615,
-    (7, (0, 0)): 13018752, (7, (3, -4)): 16134488, (7, (-1, 2)): 4827530, (7, (65536, -65536)): 2285787,
+    (0, (0, 0)): 7894635,
+    (0, (3, -4)): 15838947,
+    (0, (-1, 2)): 12089985,
+    (0, (65536, -65536)): 6436615,
+    (7, (0, 0)): 13018752,
+    (7, (3, -4)): 16134488,
+    (7, (-1, 2)): 4827530,
+    (7, (65536, -65536)): 2285787,
 }
 PINNED_VALUE3 = {
-    (0, (0, 0, 0)): 1158462, (0, (3, -4, 5)): 14070479, (0, (-1, 2, -3)): 8465068,
-    (7, (0, 0, 0)): 6125288, (7, (3, -4, 5)): 4080668, (7, (-1, 2, -3)): 441932,
+    (0, (0, 0, 0)): 1158462,
+    (0, (3, -4, 5)): 14070479,
+    (0, (-1, 2, -3)): 8465068,
+    (7, (0, 0, 0)): 6125288,
+    (7, (3, -4, 5)): 4080668,
+    (7, (-1, 2, -3)): 441932,
 }
-PINNED_FIELDS = [   # (point, seed, gradient noise, value noise)
+PINNED_FIELDS = [  # (point, seed, gradient noise, value noise)
     ((0.25, 0.75), 0, 0.26286053010240945, 0.4794919829355422),
     ((-3.6, 12.1), 0, 0.04665905203491453, -0.1887122966906038),
     ((1000.5, -0.3), 0, 0.08600640172437259, 0.46669585340738284),
@@ -649,11 +714,15 @@ def test_every_kind_has_its_own_tag_and_no_two_kinds_meet_on_a_small_lane():
     for fn, users in LANE_USERS.items():
         names = list(users)
         for i, a in enumerate(names):
-            for b in names[i + 1:]:
+            for b in names[i + 1 :]:
                 high = ((users[a] ^ users[b]) >> 16) & 0xFFFF
                 assert high not in (0, 0xFFFF), f"{fn}: {a} and {b} meet on small lanes (0x{users[a] ^ users[b]:08X})"
-    assert (N.NOISE_TAG_VALUE2, N.NOISE_TAG_VALUE3, N.NOISE_TAG_GRAD2, N.NOISE_TAG_GRAD3) == \
-        (O_TAG_VALUE2, O_TAG_VALUE3, O_TAG_GRAD2, O_TAG_GRAD3)
+    assert (N.NOISE_TAG_VALUE2, N.NOISE_TAG_VALUE3, N.NOISE_TAG_GRAD2, N.NOISE_TAG_GRAD3) == (
+        O_TAG_VALUE2,
+        O_TAG_VALUE3,
+        O_TAG_GRAD2,
+        O_TAG_GRAD3,
+    )
     assert (H.TAG_3D, H.TAG_2D) == (O_TAG_HASH3, O_LANE_2D)
 
 
@@ -663,16 +732,16 @@ def _glsl_body(code: str, fn: str) -> str:
     return m.group(1)
 
 
-@pytest.mark.parametrize("file,fn,tag", GLSL_TAGS)
+@pytest.mark.parametrize(("file", "fn", "tag"), GLSL_TAGS)
 def test_the_glsl_feeds_the_twins_tag_into_its_lane(library, file, fn, tag):
     body = _glsl_body(M.strip_comments(_module(library, file).body), fn)
     assert re.search(rf"\b0x{tag:08X}u\b", body, re.I), f"{fn} ({file}) does not write its tag 0x{tag:08X}u"
 
 
 def test_the_tag_pins_are_the_oracles_own():
-    assert {c: tuple(int(v * 2 ** 24) for v in o_hash33(*c)) for c in PINNED_HASH33} == PINNED_HASH33
-    assert {k: round((o_value2(*map(float, k[1]), k[0]) + 1) * 2 ** 23) for k in PINNED_VALUE2} == PINNED_VALUE2
-    assert {k: round((o_value3(*map(float, k[1]), k[0]) + 1) * 2 ** 23) for k in PINNED_VALUE3} == PINNED_VALUE3
+    assert {c: tuple(int(v * 2**24) for v in o_hash33(*c)) for c in PINNED_HASH33} == PINNED_HASH33
+    assert {k: round((o_value2(*map(float, k[1]), k[0]) + 1) * 2**23) for k in PINNED_VALUE2} == PINNED_VALUE2
+    assert {k: round((o_value3(*map(float, k[1]), k[0]) + 1) * 2**23) for k in PINNED_VALUE3} == PINNED_VALUE3
     for point, seed, grad, value in PINNED_FIELDS:
         if len(point) == 2:
             assert (o_grad2(*point, seed), o_value2(*point, seed)) == (grad, value)
@@ -682,17 +751,19 @@ def test_the_tag_pins_are_the_oracles_own():
 
 def test_the_twins_match_the_tag_pins():
     cells = np.array(list(PINNED_HASH33), dtype=np.float64) + 0.5
-    dice = H.hash33(cells) * 2 ** 24
-    assert dice.astype(np.int64).tolist() == [list(v) for v in PINNED_HASH33.values()] and np.all(dice % 1 == 0)
+    dice = H.hash33(cells) * 2**24
+    assert dice.astype(np.int64).tolist() == [list(v) for v in PINNED_HASH33.values()]
+    assert np.all(dice % 1 == 0)
     assert np.array_equal(H.hash31(cells), H.hash33(cells)[:, 0])
     for (seed, cell), word in PINNED_VALUE2.items():
-        assert (N.noiseValue2(np.array(cell, dtype=np.float64), seed) + 1) * 2 ** 23 == word, (seed, cell)
+        assert (N.noiseValue2(np.array(cell, dtype=np.float64), seed) + 1) * 2**23 == word, (seed, cell)
     for (seed, cell), word in PINNED_VALUE3.items():
-        assert (N.noiseValue3(np.array(cell, dtype=np.float64), seed) + 1) * 2 ** 23 == word, (seed, cell)
+        assert (N.noiseValue3(np.array(cell, dtype=np.float64), seed) + 1) * 2**23 == word, (seed, cell)
     for point, seed, grad, value in PINNED_FIELDS:
         p = np.array(point)
         g, v = (N.noiseGrad2, N.noiseValue2) if len(point) == 2 else (N.noiseGrad3, N.noiseValue3)
-        assert abs(g(p, seed) - grad) < 1e-12 and abs(v(p, seed) - value) < 1e-12, (point, seed)
+        assert abs(g(p, seed) - grad) < 1e-12, (point, seed)
+        assert abs(v(p, seed) - value) < 1e-12, (point, seed)
 
 
 def _slope(f, p, axis, seed, h=1e-4):
@@ -711,7 +782,7 @@ def test_noise_kinds_and_hash_wrappers_are_uncorrelated_at_the_same_seed(seed):
     rng = np.random.default_rng(1013 + seed)
     p2, p3 = rng.uniform(-300, 300, (60000, 2)), rng.uniform(-300, 300, (60000, 3))
     k2, k3 = np.floor(p2), np.floor(p3)
-    at_seed = np.concatenate([k2, np.full((len(k2), 1), float(seed))], 1)   # hash31's cell (x, y, z = seed)
+    at_seed = np.concatenate([k2, np.full((len(k2), 1), float(seed))], 1)  # hash31's cell (x, y, z = seed)
     v2, lv2 = N.noiseValue2(p2, seed), N.noiseValue2(k2, seed)
     v3, lv3 = N.noiseValue3(p3, seed), N.noiseValue3(k3, seed)
     lgy2 = _slope(N.noiseGrad2, k2, 1, seed)
@@ -758,7 +829,8 @@ def test_fbm_is_normalised_so_adding_octaves_does_not_brighten_it():
     std3 = [N.fbmGrad3(p3, n, 2.0, 0.5, 0).std() for n in (1, 2, 4, 8)]
     # independent octaves partly cancel, so the spread narrows by about 1/sqrt(3) at gain 0.5; it never grows
     for stds in (std2, std3):
-        assert stds == sorted(stds, reverse=True) and stds[0] / stds[-1] < 2.0, stds
+        assert stds == sorted(stds, reverse=True), stds
+        assert stds[0] / stds[-1] < 2.0, stds
     for f, p in ((N.fbmGrad2, p2), (N.fbmGrad3, p3)):
         v = f(p, 8, 2.0, 0.707, 0)
         assert np.abs(v).max() <= 1.0
@@ -768,7 +840,7 @@ def test_fbm_octave_bounds_and_the_origin_pinch():
     p = _points(100, 2)
     assert np.array_equal(N.fbmGrad2(p, 0, 2.0, 0.5, 0), np.zeros(100))
     assert np.array_equal(N.fbmGrad2(p, -3, 2.0, 0.5, 0), np.zeros(100))
-    assert np.array_equal(N.fbmGrad2(p, 12, 2.0, 0.5, 0), N.fbmGrad2(p, 8, 2.0, 0.5, 0))   # the loop's ceiling
+    assert np.array_equal(N.fbmGrad2(p, 12, 2.0, 0.5, 0), N.fbmGrad2(p, 8, 2.0, 0.5, 0))  # the loop's ceiling
     # gradient noise is zero at the origin for every octave unless each octave steps off the lattice
     assert abs(float(N.fbmGrad2(np.zeros(2), 4, 2.0, 0.5, 0))) > 1e-4
     assert abs(float(N.fbmGrad3(np.zeros(3), 4, 2.0, 0.5, 0))) > 1e-4
@@ -779,10 +851,12 @@ def test_fbm_octave_bounds_and_the_origin_pinch():
 def test_warp_vector_components_are_decorrelated_and_amount_zero_is_plain_fbm():
     p = _points(20000, 2, -20, 20)
     w = N.warpVec2(p, 4, 3)
-    assert w.shape == (20000, 2) and abs(np.corrcoef(w[:, 0], w[:, 1])[0, 1]) < 0.05
+    assert w.shape == (20000, 2)
+    assert abs(np.corrcoef(w[:, 0], w[:, 1])[0, 1]) < 0.05
     assert np.allclose(N.warpFbm2(p, 0.0, 4, 3), N.fbmGrad2(p, 4, 2.0, 0.5, N.warpFinalSeed(3)), atol=1e-15)
     value, q, r = N.warpNested2(p, 0.0, 4, 3)
-    assert np.allclose(q, N.warpVec2(p, 4, 3)) and np.allclose(r, N.warpVec2(p, 4, 4))
+    assert np.allclose(q, N.warpVec2(p, 4, 3))
+    assert np.allclose(r, N.warpVec2(p, 4, 4))
     assert np.allclose(value, N.fbmGrad2(p, 4, 2.0, 0.5, N.warpFinalSeed(3)))
 
 
@@ -791,8 +865,10 @@ def test_warping_bends_the_field_and_stays_in_range():
     plain = N.fbmGrad2(p, 4, 2.0, 0.5, N.warpFinalSeed(3))
     bent = N.warpFbm2(p, 2.0, 4, 3)
     nested, q, r = N.warpNested2(p, 2.0, 4, 3)
-    assert np.abs(bent).max() <= 1.0 and np.abs(nested).max() <= 1.0
-    assert np.corrcoef(plain, bent)[0, 1] < 0.9 and np.corrcoef(bent, nested)[0, 1] < 0.9
+    assert np.abs(bent).max() <= 1.0
+    assert np.abs(nested).max() <= 1.0
+    assert np.corrcoef(plain, bent)[0, 1] < 0.9
+    assert np.corrcoef(bent, nested)[0, 1] < 0.9
     assert np.allclose(nested, N.fbmGrad2(p + 2.0 * r, 4, 2.0, 0.5, N.warpFinalSeed(3)))
     assert np.allclose(r, N.warpVec2(p + 2.0 * q, 4, 4))
 
@@ -802,13 +878,16 @@ def test_r2_is_roberts_mask_and_evenly_spread():
     ys, xs = np.mgrid[0:64, 0:64]
     pix = np.stack([xs, ys], axis=-1).astype(np.float64) + 0.5
     got = N.dthR2(pix)
-    assert got.min() >= 0.0 and got.max() < 1.0
-    assert wrap_miss(got[5, 9], o_r2(9.5, 5.5)) < 1e-5 and wrap_miss(got[63, 0], o_r2(0.5, 63.5)) < 1e-5
+    assert got.min() >= 0.0
+    assert got.max() < 1.0
+    assert wrap_miss(got[5, 9], o_r2(9.5, 5.5)) < 1e-5
+    assert wrap_miss(got[63, 0], o_r2(0.5, 63.5)) < 1e-5
     # 32-bit floats keep it honest out to an 8K canvas: the products round by at most a few ten-thousandths
     far = _points(2000, 2, 0, 8192)
     assert wrap_miss(N.dthR2(far), [o_r2(x, y) for x, y in far]).max() < 1e-3
     counts = np.histogram(got, bins=16, range=(0, 1))[0]
-    assert counts.min() >= 240 and counts.max() <= 272        # 256 per bin; a low-discrepancy mask stays close
+    assert counts.min() >= 240
+    assert counts.max() <= 272
 
 
 def test_ign_is_jimenez_and_every_3x3_block_holds_nearly_all_ninths():
@@ -816,20 +895,23 @@ def test_ign_is_jimenez_and_every_3x3_block_holds_nearly_all_ninths():
     pix = np.stack([xs, ys], axis=-1).astype(np.float64)
     got = N.dthIgn(pix)
     ref = [o_ign(x, y) for x, y in pix.reshape(-1, 2)]
-    assert wrap_miss(got.reshape(-1), ref).max() < 2e-3      # the twin rounds like the GPU's 32-bit floats
-    assert got.min() >= 0.0 and got.max() < 1.0
+    assert wrap_miss(got.reshape(-1), ref).max() < 2e-3  # the twin rounds like the GPU's 32-bit floats
+    assert got.min() >= 0.0
+    assert got.max() < 1.0
     ninths = np.floor(got * 9).astype(int)
-    blocks = [len(set(ninths[y:y + 3, x:x + 3].ravel())) for y in range(0, 93, 3) for x in range(0, 93, 3)]
+    blocks = [len(set(ninths[y : y + 3, x : x + 3].ravel())) for y in range(0, 93, 3) for x in range(0, 93, 3)]
     assert np.mean(blocks) >= 7.0, np.mean(blocks)
 
 
 def test_triangular_remap_keeps_rank_and_makes_a_triangle():
     u = (np.arange(200000) + 0.5) / 200000
     t = N.dthTriFromUniform(u)
-    assert np.all(np.diff(t) > 0)                              # monotone: the mask's spatial spectrum is kept
-    assert N.dthTriFromUniform(np.array(0.0)) == -1.0 and N.dthTriFromUniform(np.array(0.5)) == 0.0
+    assert np.all(np.diff(t) > 0)  # monotone: the mask's spatial spectrum is kept
+    assert N.dthTriFromUniform(np.array(0.0)) == -1.0
+    assert N.dthTriFromUniform(np.array(0.5)) == 0.0
     assert abs(N.dthTriFromUniform(np.array(1.0 - 1e-12)) - 1.0) < 1e-5
-    assert abs(t.mean()) < 1e-6 and abs(t.var() - 1.0 / 6.0) < 1e-4   # triangular on [-1, 1]: variance 1/6
+    assert abs(t.mean()) < 1e-6
+    assert abs(t.var() - 1.0 / 6.0) < 1e-4
 
 
 # ------------------------------------------------------------------------------------------- GPU parity (SwiftShader)
@@ -877,7 +959,7 @@ void mainImage(out vec4 color, in vec2 pixel) {
 
 def _twin_parity_image():
     ys, xs = np.mgrid[0:64, 0:64]
-    centre = np.stack([xs + 0.5, ys + 0.5], axis=-1)            # gl_FragCoord: pixel centres, y up
+    centre = np.stack([xs + 0.5, ys + 0.5], axis=-1)  # gl_FragCoord: pixel centres, y up
     at = np.stack([xs, ys], axis=-1).astype(np.uint32)
     out = np.zeros((64, 320, 3))
     a = H.pcg3d(np.concatenate([at, np.full((64, 64, 1), 0xC0FFEE, np.uint32)], -1))
@@ -891,19 +973,26 @@ def _twin_parity_image():
     out[:, 64:128] = 0.5 + 0.5 * np.stack([N.noiseValue2(p, 3), N.noiseGrad2(p, 3), N.noiseGrad3(p3, 3)], -1)
     p = centre / 16.0 - 2.0
     p3 = np.concatenate([p, np.full((64, 64, 1), 1.3)], -1)
-    out[:, 128:192] = 0.5 + 0.5 * np.stack([N.fbmGrad2(p, 5, 2.0, 0.5, 9), N.fbmGrad3(p3, 4, 2.0, 0.55, 9),
-                                            N.warpFbm2(p, 1.5, 3, 9)], -1)
+    out[:, 128:192] = 0.5 + 0.5 * np.stack(
+        [N.fbmGrad2(p, 5, 2.0, 0.5, 9), N.fbmGrad3(p3, 4, 2.0, 0.55, 9), N.warpFbm2(p, 1.5, 3, 9)], -1
+    )
     pix = np.floor(centre)
     r2 = N.dthR2(pix)
     out[:, 192:256] = np.stack([N.dthIgn(pix), r2, 0.5 + 0.5 * N.dthTriFromUniform(r2)], -1)
     p = centre / 8.0 - 4.0
     cell = pix - 32.0
     noise = 0.5 + 0.5 * N.noiseValue3(np.concatenate([p, np.full((64, 64, 1), -0.61)], -1), 3)
-    low = np.stack([noise, _byte(H.hash31(np.concatenate([cell, np.full((64, 64, 1), 5.0)], -1))),
-                    _byte(H.hash33(np.concatenate([cell, np.full((64, 64, 1), -3.0)], -1))[..., 2])], -1)
+    low = np.stack(
+        [
+            noise,
+            _byte(H.hash31(np.concatenate([cell, np.full((64, 64, 1), 5.0)], -1))),
+            _byte(H.hash33(np.concatenate([cell, np.full((64, 64, 1), -3.0)], -1))[..., 2]),
+        ],
+        -1,
+    )
     high = np.stack([noise, _byte(H.hash21(cell)), _byte(H.hash22(cell + 0.5)[..., 1])], -1)
     out[:, 256:320] = np.where((at[..., 1] < 32)[..., None], low, high)
-    return np.round(np.clip(out, 0, 1) * 255.0)[::-1]           # PNG rows run top down
+    return np.round(np.clip(out, 0, 1) * 255.0)[::-1]  # PNG rows run top down
 
 
 def _byte(die):
@@ -914,27 +1003,38 @@ def _byte(die):
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not on PATH (the headless driver)")
 def test_the_glsl_matches_its_twin_on_swiftshader(tmp_path):
     from PIL import Image
+
     cards_dir = tmp_path / "cards"
     cards_dir.mkdir()
     (cards_dir / "parity-hash-noise.card").write_text(PARITY_CARD, encoding="utf-8", newline="\n")
-    report = K.render_cards(["parity-hash-noise"], cards_dir=cards_dir, out_root=tmp_path / "out",
-                            allow_tracked=True, lock_wait_min=5, quiet=True)
+    report = K.render_cards(
+        ["parity-hash-noise"],
+        cards_dir=cards_dir,
+        out_root=tmp_path / "out",
+        allow_tracked=True,
+        lock_wait_min=5,
+        quiet=True,
+    )
     if report["driver"].get("error") and "lock" in str(report["driver"]["error"]).lower():
         pytest.skip(f"the GPU lock stayed busy: {report['driver']['error']}")
     row = report["cards"][0]
-    assert row["compile_ok"] is True and row["nan_pixels"] == 0, row
+    assert row["compile_ok"] is True, row
+    assert row["nan_pixels"] == 0, row
     png = sorted((tmp_path / "out" / "parity-hash-noise").glob("t0*.png"))[0]
     gpu = np.asarray(Image.open(png).convert("RGB")).astype(np.float64)
     cpu = _twin_parity_image()
     hashes = gpu[:, 0:64] - cpu[:, 0:64]
     assert np.count_nonzero(hashes) == 0, "the integer hashes are not bit-exact on the GPU"
     smooth = np.abs(gpu[:, 64:192] - cpu[:, 64:192])
-    assert smooth.max() <= 2 and np.mean(smooth > 1) < 0.001, f"noise/fbm/warp drift: max {smooth.max()}"
+    assert smooth.max() <= 2, f"noise/fbm/warp drift: max {smooth.max()}"
+    assert np.mean(smooth > 1) < 0.001, f"noise/fbm/warp drift: max {smooth.max()}"
     masks = np.abs(gpu[:, 192:256] - cpu[:, 192:256])
-    masks = np.minimum(masks, 255 - masks)                         # a mask wraps at 1.0: 254/255 vs 0 is a near miss
-    assert masks.max() <= 2 and np.mean(masks > 1) < 0.002
+    masks = np.minimum(masks, 255 - masks)  # a mask wraps at 1.0: 254/255 vs 0 is a near miss
+    assert masks.max() <= 2
+    assert np.mean(masks > 1) < 0.002
     # the tagged kinds: 3D value noise within the smooth tolerance, the float hash wrappers to the exact code
     value3 = np.abs(gpu[:, 256:320, 0] - cpu[:, 256:320, 0])
-    assert value3.max() <= 2 and np.mean(value3 > 1) < 0.001, f"noiseValue3 drift: max {value3.max()}"
+    assert value3.max() <= 2, f"noiseValue3 drift: max {value3.max()}"
+    assert np.mean(value3 > 1) < 0.001, f"noiseValue3 drift: max {value3.max()}"
     wrappers = gpu[:, 256:320, 1:] - cpu[:, 256:320, 1:]
     assert np.count_nonzero(wrappers) == 0, "hash31/hash33/hash21/hash22 are not bit-exact on the GPU"

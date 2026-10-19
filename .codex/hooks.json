@@ -1,53 +1,44 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "SessionStart": [
       {
-        "matcher": "Bash|PowerShell|Read|Edit|Write|NotebookEdit|Glob|Grep|Task|WebFetch|WebSearch",
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
             "type": "command",
-            "command": "uv run agent/harness/hooks/claude_trace.py"
+            "command": "uv run agent/harness/hooks/codex_sessionstart.py"
           }
         ]
-      },
+      }
+    ],
+    "UserPromptSubmit": [
       {
-        "matcher": "Bash|Edit|Write|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "uv run agent/harness/hooks/claude_pretooluse.py"
+            "command": "uv run agent/harness/hooks/codex_userpromptsubmit.py"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run agent/harness/hooks/codex_pretooluse.py"
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "matcher": "Bash|apply_patch",
         "hooks": [
           {
             "type": "command",
-            "command": "uv run agent/harness/hooks/claude_posttooluse.py"
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv run agent/harness/hooks/claude_sessionend.py"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv run agent/harness/hooks/claude_stop.py"
+            "command": "uv run agent/harness/hooks/codex_posttooluse.py"
           }
         ]
       }

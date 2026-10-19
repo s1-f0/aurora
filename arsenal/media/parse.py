@@ -12,13 +12,17 @@ Times are float seconds on the file's own clock. Words use the house word shape 
 {"start", "end", "word"}; segments are {"start", "end", "text"}; chapters are {"t0", "t1", "title"} like every other
 time-ranged row in the media catalog.
 """
+
 from __future__ import annotations
 
 import re
 from datetime import datetime
 from fractions import Fraction
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Union
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # =================================================================================================
 # OBS file names
@@ -28,7 +32,7 @@ from typing import Dict, Iterable, List, Optional, Union
 _OBS_STAMP = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})[ _T](\d{2})-(\d{2})-(\d{2})(?!\d)")
 
 
-def obs_time(name) -> Optional[datetime]:
+def obs_time(name) -> datetime | None:
     """The local wall-clock start time OBS put in a file name, as a naive datetime; None when the name holds none.
 
     The stamp is LOCAL time (OBS formats it from the machine clock), so it is returned naive on purpose: pair it with
@@ -38,7 +42,7 @@ def obs_time(name) -> Optional[datetime]:
         return None
     try:
         return datetime(*(int(g) for g in m.groups()))
-    except ValueError:          # 2026-13-45 is a stamp-shaped name, not a time
+    except ValueError:  # 2026-13-45 is a stamp-shaped name, not a time
         return None
 
 
@@ -100,14 +104,14 @@ def _format_of(path, text: str) -> str:
     return "srt"
 
 
-def _cues(text: str) -> List[tuple]:
+def _cues(text: str) -> list[tuple]:
     """(start, end, body) for every WebVTT/SRT cue; cue numbers, NOTE/STYLE blocks and settings are dropped."""
     out = []
     for block in re.split(r"\n\s*\n", text.replace("\r", "")):
         m = _CUE.search(block)
         if not m:
             continue
-        rest = block[m.end():]
+        rest = block[m.end() :]
         body = rest.split("\n", 1)[1] if "\n" in rest else ""
         out.append((_sec(m.group(1)), _sec(m.group(2)), body.strip("\n")))
     return out
@@ -117,7 +121,7 @@ def _clean(line: str) -> str:
     return re.sub(r"\s+", " ", _TAG.sub("", line)).strip()
 
 
-def _vtt_words(cues: List[tuple]) -> List[dict]:
+def _vtt_words(cues: list[tuple]) -> list[dict]:
     """YouTube-style word times: <00:00:01.234><c> word</c>. Only the lines that carry tags are read: a rolling
     caption repeats the previous line untagged in the next cue, and reading it would double every word."""
     words = []
@@ -125,18 +129,17 @@ def _vtt_words(cues: List[tuple]) -> List[dict]:
         for line in body.split("\n"):
             if not _INLINE_TS.search(line) and "<c>" not in line:
                 continue
-            pieces = _INLINE_TS.split(line)        # text, ts, text, ts, text ...
+            pieces = _INLINE_TS.split(line)  # text, ts, text, ts, text ...
             t = start
             for k, piece in enumerate(pieces):
                 if k % 2 == 1:
                     t = _sec(piece)
                     continue
-                for w in _clean(piece).split():
-                    words.append({"start": round(t, 3), "word": w, "_cue_end": end})
+                words.extend({"start": round(t, 3), "word": w, "_cue_end": end} for w in _clean(piece).split())
     return words
 
 
-def _spread(cues: List[tuple]) -> List[dict]:
+def _spread(cues: list[tuple]) -> list[dict]:
     """Words of untimed cues, spread evenly over each cue (marked timed=False: the times are a guess)."""
     words = []
     for start, end, body in cues:
@@ -147,7 +150,7 @@ def _spread(cues: List[tuple]) -> List[dict]:
     return words
 
 
-def _finish_words(words: List[dict]) -> List[dict]:
+def _finish_words(words: list[dict]) -> list[dict]:
     """End of a word = the next word's start, but never past its cue and never longer than 1 s (the rule
     analyze_video.py used for YouTube captions). A word that already knows its end (ASS karaoke) keeps it."""
     words.sort(key=lambda w: w["start"])
@@ -160,9 +163,9 @@ def _finish_words(words: List[dict]) -> List[dict]:
     return words
 
 
-def _segments(cues: List[tuple]) -> List[dict]:
+def _segments(cues: list[tuple]) -> list[dict]:
     """One row per cue; a cue that only repeats the text of the one before it extends it instead (rolling captions)."""
-    out: List[dict] = []
+    out: list[dict] = []
     for start, end, body in cues:
         text = "\n".join(_clean(ln) for ln in body.split("\n") if _clean(ln))
         if not text:
@@ -174,9 +177,9 @@ def _segments(cues: List[tuple]) -> List[dict]:
     return out
 
 
-def _ass_events(text: str) -> List[dict]:
+def _ass_events(text: str) -> list[dict]:
     """Dialogue events of an ASS/SSA script, fields named by its own [Events] Format line."""
-    fmt: Optional[List[str]] = None
+    fmt: list[str] | None = None
     in_events = False
     events = []
     for raw in text.replace("\r", "").split("\n"):
@@ -193,40 +196,43 @@ def _ass_events(text: str) -> List[dict]:
         elif key == "dialogue" and fmt:
             fields = value.lstrip().split(",", len(fmt) - 1)
             if len(fields) == len(fmt):
-                events.append(dict(zip(fmt, fields)))
+                events.append(dict(zip(fmt, fields, strict=False)))
     return events
 
 
 def _ass_text(raw: str) -> str:
-    return re.sub(r"\s+", " ", _ASS_OVERRIDE.sub("", raw).replace("\\N", " ").replace("\\n", " ")
-                  .replace("\\h", " ")).strip()
+    return re.sub(
+        r"\s+", " ", _ASS_OVERRIDE.sub("", raw).replace("\\N", " ").replace("\\n", " ").replace("\\h", " ")
+    ).strip()
 
 
-def _ass(text: str, level: str) -> List[dict]:
-    events = [(_sec(ev.get("start", "0:00:00.00")), _sec(ev.get("end", "0:00:00.00")), ev.get("text", ""))
-              for ev in _ass_events(text)]
+def _ass(text: str, level: str) -> list[dict]:
+    events = [
+        (_sec(ev.get("start", "0:00:00.00")), _sec(ev.get("end", "0:00:00.00")), ev.get("text", ""))
+        for ev in _ass_events(text)
+    ]
     karaoke = any(_ASS_KARAOKE.search(raw) for _, _, raw in events)
     if level == "segments" or (level == "auto" and not karaoke):
-        return [{"start": round(a, 3), "end": round(b, 3), "text": _ass_text(raw)}
-                for a, b, raw in events if _ass_text(raw)]
-    words: List[dict] = []
+        return [
+            {"start": round(a, 3), "end": round(b, 3), "text": _ass_text(raw)} for a, b, raw in events if _ass_text(raw)
+        ]
+    words: list[dict] = []
     for start, end, raw in events:
         if not _ASS_KARAOKE.search(raw):
             words += _spread([(start, end, _ass_text(raw))])
             continue
-        t = start                            # {\k50}syl: each syllable lasts its centiseconds, in order
+        t = start  # {\k50}syl: each syllable lasts its centiseconds, in order
         for m in re.finditer(r"\{([^}]*)\}([^{]*)", raw):
             k = re.search(r"\\[kK][fo]?(\d+)", m.group(1))
             dur = int(k.group(1)) / 100.0 if k else 0.0
             syl = _ass_text(m.group(2))
             if syl:
-                words.append({"start": round(t, 3), "end": round(min(t + dur, end), 3), "word": syl,
-                              "_cue_end": end})
+                words.append({"start": round(t, 3), "end": round(min(t + dur, end), 3), "word": syl, "_cue_end": end})
             t += dur
     return _finish_words(words)
 
 
-def subtitles(path, *, level: str = "auto") -> List[dict]:
+def subtitles(path, *, level: str = "auto") -> list[dict]:
     """Captions -> rows on the file's clock. path: a .vtt/.srt/.ass/.ssa file, or the caption text itself; a path
     that is not a file raises FileNotFoundError.
 
@@ -263,7 +269,7 @@ def _logical_lines(text: str) -> Iterable[str]:
     for raw in text.replace("\r", "").split("\n"):
         buf += raw
         trailing = len(buf) - len(buf.rstrip("\\"))
-        if trailing % 2 == 1:           # an odd run of backslashes escapes the newline
+        if trailing % 2 == 1:  # an odd run of backslashes escapes the newline
             buf = buf[:-1] + "\n"
             continue
         yield buf
@@ -274,8 +280,8 @@ def _logical_lines(text: str) -> Iterable[str]:
 
 def _split_kv(line: str):
     """key=value with \\-escapes undone; the first UNESCAPED '=' splits."""
-    key: List[str] = []
-    value: List[str] = []
+    key: list[str] = []
+    value: list[str] = []
     cur, escaped, seen_eq = key, False, False
     for ch in line:
         if escaped:
@@ -298,8 +304,8 @@ def read_ffmetadata(src) -> dict:
     text = _read_text(src)
     if not text.lstrip().startswith(";FFMETADATA"):
         raise ValueError("not an FFMETADATA file: the first line must be ;FFMETADATA1")
-    tags: Dict[str, str] = {}
-    chapters: List[dict] = []
+    tags: dict[str, str] = {}
+    chapters: list[dict] = []
     section, cur = "global", tags
     for line in list(_logical_lines(text))[1:]:
         if not line.strip() or line.lstrip().startswith((";", "#")):
@@ -323,8 +329,9 @@ def read_ffmetadata(src) -> dict:
     return {"tags": tags, "chapters": out}
 
 
-def write_ffmetadata(chapters: Iterable[dict], out=None, *, tags: Optional[dict] = None,
-                     timebase: Union[str, Fraction] = "1/1000") -> str:
+def write_ffmetadata(
+    chapters: Iterable[dict], out=None, *, tags: dict | None = None, timebase: str | Fraction = "1/1000"
+) -> str:
     """Chapters [{t0, t1, title}] (start/end keys also accepted) -> ;FFMETADATA1 text, written to `out` if given.
 
     Times are rounded to the timebase; a chapter without an end runs to the next chapter's start."""
@@ -346,8 +353,13 @@ def write_ffmetadata(chapters: Iterable[dict], out=None, *, tags: Optional[dict]
             t1 = rows[i + 1][0]
         if t1 < t0:
             raise ValueError(f"chapter at {t0} s ends before it starts ({t1} s)")
-        lines += ["", "[CHAPTER]", f"TIMEBASE={base.numerator}/{base.denominator}",
-                  f"START={round(Fraction(t0) / base)}", f"END={round(Fraction(t1) / base)}"]
+        lines += [
+            "",
+            "[CHAPTER]",
+            f"TIMEBASE={base.numerator}/{base.denominator}",
+            f"START={round(Fraction(t0) / base)}",
+            f"END={round(Fraction(t1) / base)}",
+        ]
         if title is not None:
             lines.append(f"title={_escape(title)}")
         lines += [f"{_escape(k)}={_escape(v)}" for k, v in extra.items()]

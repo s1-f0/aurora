@@ -24,6 +24,7 @@ HONEST FAILURE MODES, because this drives the operator's real desktop:
   - Every step stops the chain on refusal. A combo that carries on past a failed focus is how
     you type a handoff brief into somebody's YouTube tab.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -31,10 +32,8 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 from core.screenspace import act as A
-
 
 # --------------------------------------------------------------------------- the receipt plane
 
@@ -44,7 +43,7 @@ def projects_root() -> Path:
     return Path(os.path.expanduser("~")) / ".claude" / "projects"
 
 
-def session_dir(session_id: Optional[str] = None) -> Optional[Path]:
+def session_dir(session_id: str | None = None) -> Path | None:
     """The project folder holding THIS session's transcript, found by locating our own file.
 
     Derived rather than assumed: the folder name is a slug of the working directory and this
@@ -59,6 +58,7 @@ def session_dir(session_id: Optional[str] = None) -> Optional[Path]:
     if not sid:
         try:
             from core.coord.session_id import ambient_session_id
+
             sid, _src = ambient_session_id()
         except Exception:  # noqa: BLE001
             sid = None
@@ -79,7 +79,7 @@ def session_dir(session_id: Optional[str] = None) -> Optional[Path]:
     return best
 
 
-def session_files(d: Optional[Path]) -> frozenset:
+def session_files(d: Path | None) -> frozenset:
     return frozenset(p.name for p in d.glob("*.jsonl")) if d and d.is_dir() else frozenset()
 
 
@@ -91,12 +91,17 @@ class Step:
     name: str
     ok: bool
     detail: str = ""
-    refusal: Optional[str] = None
+    refusal: str | None = None
     elapsed_ms: float = 0.0
 
     def to_dict(self) -> dict:
-        return {"step": self.name, "ok": self.ok, "refusal": self.refusal,
-                "detail": self.detail[:400], "elapsed_ms": round(self.elapsed_ms, 1)}
+        return {
+            "step": self.name,
+            "ok": self.ok,
+            "refusal": self.refusal,
+            "detail": self.detail[:400],
+            "elapsed_ms": round(self.elapsed_ms, 1),
+        }
 
 
 @dataclass
@@ -106,8 +111,8 @@ class ComboResult:
     #: to the wrong neighbour in both directions.
     status: str = "refused"
     nonce: str = ""
-    steps: List[Step] = field(default_factory=list)
-    new_session: Optional[str] = None
+    steps: list[Step] = field(default_factory=list)
+    new_session: str | None = None
     detail: str = ""
     elapsed_ms: float = 0.0
 
@@ -116,39 +121,43 @@ class ComboResult:
         return self.status in ("ok", "staged")
 
     def to_dict(self) -> dict:
-        return {"status": self.status, "nonce": self.nonce, "new_session": self.new_session,
-                "detail": self.detail, "elapsed_ms": round(self.elapsed_ms, 1),
-                "steps": [s.to_dict() for s in self.steps]}
+        return {
+            "status": self.status,
+            "nonce": self.nonce,
+            "new_session": self.new_session,
+            "detail": self.detail,
+            "elapsed_ms": round(self.elapsed_ms, 1),
+            "steps": [s.to_dict() for s in self.steps],
+        }
 
     def render(self) -> str:
-        out = ["[screen prompt] %s  (%.0f ms)" % (self.status.upper(), self.elapsed_ms)]
+        out = [f"[screen prompt] {self.status.upper()}  ({self.elapsed_ms:.0f} ms)"]
         for s in self.steps:
             mark = "ok  " if s.ok else "REFUSED"
-            out.append("  %-7s %-16s %-22s %s"
-                       % (mark, s.name, s.refusal or "", s.detail[:96]))
+            out.append(f"  {mark:<7} {s.name:<16} {s.refusal or '':<22} {s.detail[:96]}")
         # Only when something was actually staged. Printing a receipt nonce beside a refusal
         # reads as "this went out with id X" when nothing left the process.
         if self.nonce and self.status != "refused":
-            out.append("  receipt nonce: %s" % self.nonce)
+            out.append(f"  receipt nonce: {self.nonce}")
         if self.new_session:
-            out.append("  NEW SESSION: %s" % self.new_session)
+            out.append(f"  NEW SESSION: {self.new_session}")
         if self.detail:
-            out.append("  %s" % self.detail)
+            out.append(f"  {self.detail}")
         return "\n".join(out)
 
 
 # --------------------------------------------------------------------------- post-conditions
 
 
-def _centre_strip(bounds: Tuple[int, int, int, int]) -> Tuple[int, int, int, int]:
+def _centre_strip(bounds: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
     """A small central region of the window, as (left, top, w, h).
 
     Used as the 'the view changed' observable after Ctrl+N. Small on purpose: hashing the whole
     8.4M-pixel window costs 88 ms and changes on any repaint anywhere; a 600x200 centre strip
     costs ~1 ms and changes when the CONVERSATION AREA changes, which is the question.
     """
-    l, t, r, b = bounds
-    cx, cy = (l + r) // 2, (t + b) // 2
+    left, top, right, bottom = bounds
+    cx, cy = (left + right) // 2, (top + bottom) // 2
     return (cx - 300, cy - 100, 600, 200)
 
 
@@ -156,7 +165,7 @@ def make_nonce(text: str) -> str:
     """A short, content-derived marker. Content-derived so the same brief yields the same
     receipt (re-checkable later), with the clock mixed in so two sends of one brief are still
     distinguishable."""
-    h = hashlib.sha256(("%s|%.3f" % (text[:4096], time.time())).encode("utf-8")).hexdigest()
+    h = hashlib.sha256((f"{text[:4096]}|{time.time():.3f}").encode()).hexdigest()
     return h[:10]
 
 
@@ -166,10 +175,17 @@ RECEIPT_TEMPLATE = "\n\n(akashic handoff receipt: {nonce})"
 # --------------------------------------------------------------------------- the combo
 
 
-def new_session_prompt(text: str, *, submit: bool = False, window_title: str = "Claude",
-                       hwnd: Optional[int] = None, agent_id: Optional[str] = None,
-                       timeout_s: float = 8.0, nonce: Optional[str] = None,
-                       new_chat_keys: str = "{Ctrl}n") -> ComboResult:
+def new_session_prompt(
+    text: str,
+    *,
+    submit: bool = False,
+    window_title: str = "Claude",
+    hwnd: int | None = None,
+    agent_id: str | None = None,
+    timeout_s: float = 8.0,
+    nonce: str | None = None,
+    new_chat_keys: str = "{Ctrl}n",
+) -> ComboResult:
     """Focus the desktop app, open a NEW session, stage ``text`` in it, and verify each step.
 
     Returns a :class:`ComboResult` whose ``status`` is one of:
@@ -183,8 +199,7 @@ def new_session_prompt(text: str, *, submit: bool = False, window_title: str = "
     res.nonce = nonce or make_nonce(text)
     body = text.rstrip() + RECEIPT_TEMPLATE.format(nonce=res.nonce)
 
-    def step(name: str, ok: bool, detail: str = "", refusal: Optional[str] = None,
-             ms: float = 0.0) -> Step:
+    def step(name: str, ok: bool, detail: str = "", refusal: str | None = None, ms: float = 0.0) -> Step:
         s = Step(name=name, ok=ok, detail=detail, refusal=refusal, elapsed_ms=ms)
         res.steps.append(s)
         return s
@@ -197,22 +212,25 @@ def new_session_prompt(text: str, *, submit: bool = False, window_title: str = "
 
     # ---- 0. preflight. Refuse BEFORE touching anything.
     locked = A.workstation_locked()
-    step("preflight:lock", locked is False,
-         "workstation_locked() -> %r" % (locked,),
-         refusal=None if locked is False else "locked")
+    step(
+        "preflight:lock",
+        locked is False,
+        f"workstation_locked() -> {locked!r}",
+        refusal=None if locked is False else "locked",
+    )
     if locked is not False:
-        return stop("refused",
-                    "the workstation is locked (or the probe is unavailable: %r). The window "
-                    "stays readable while locked, so this is checked rather than inferred. %s"
-                    % (locked, A.locked_detail()))
+        return stop(
+            "refused",
+            f"the workstation is locked (or the probe is unavailable: {locked!r}). The window "
+            f"stays readable while locked, so this is checked rather than inferred. {A.locked_detail()}",
+        )
 
     # ---- 1. locate the window (no control name: the keyboard path needs the window itself)
     got = A.locate(window_title=window_title, hwnd=hwnd, ttl_s=max(30.0, timeout_s * 2))
-    step("locate", got.ok, got.detail, got.refusal.value if got.refusal else None,
-         got.elapsed_ms)
+    step("locate", got.ok, got.detail, got.refusal.value if got.refusal else None, got.elapsed_ms)
     if not got.ok:
-        extra = (" candidates: %s" % (list(got.candidates),)) if got.candidates else ""
-        return stop("refused", "%s%s" % (got.detail, extra))
+        extra = (f" candidates: {list(got.candidates)}") if got.candidates else ""
+        return stop("refused", f"{got.detail}{extra}")
     tgt = got.target
 
     # ---- 2. focus, and ASSERT it took. Windows refuses foreground changes from a process with
@@ -224,13 +242,22 @@ def new_session_prompt(text: str, *, submit: bool = False, window_title: str = "
 
     # ---- 3. Ctrl+N, asserted by a REAL repaint of the conversation area.
     before = A._region_sha(_centre_strip(tgt.bounds))
-    r = A.act(tgt, "keys", new_chat_keys,
-              expect=(lambda: A._region_sha(_centre_strip(tgt.bounds)) != before) if before
-                     else None,
-              expect_what="the conversation area repainted after %s" % new_chat_keys,
-              timeout_s=timeout_s, agent_id=agent_id)
-    step("new-chat", r.ok, r.detail or ("view changed after %s" % new_chat_keys),
-         r.refusal.value if r.refusal else None, r.elapsed_ms)
+    r = A.act(
+        tgt,
+        "keys",
+        new_chat_keys,
+        expect=(lambda: A._region_sha(_centre_strip(tgt.bounds)) != before) if before else None,
+        expect_what=f"the conversation area repainted after {new_chat_keys}",
+        timeout_s=timeout_s,
+        agent_id=agent_id,
+    )
+    step(
+        "new-chat",
+        r.ok,
+        r.detail or (f"view changed after {new_chat_keys}"),
+        r.refusal.value if r.refusal else None,
+        r.elapsed_ms,
+    )
     if not r.ok:
         return stop("refused", r.detail)
 
@@ -243,20 +270,28 @@ def new_session_prompt(text: str, *, submit: bool = False, window_title: str = "
 
     # ---- 5. G3 read-back. Best-effort BY NATURE, and it says so.
     rb = A.act(tgt, "read_back", timeout_s=timeout_s, agent_id=agent_id)
-    seen = (rb.observed or "")
+    seen = rb.observed or ""
     verified = res.nonce in seen
-    step("read-back", verified,
-         ("nonce found in %d chars of composer text" % len(seen)) if verified
-         else ("could not confirm the nonce (%d chars read); the composer is a Chromium "
-               "contenteditable with no EditControl, so this is best-effort" % len(seen)),
-         refusal=None if verified else "unverified", ms=rb.elapsed_ms)
+    step(
+        "read-back",
+        verified,
+        (f"nonce found in {len(seen)} chars of composer text")
+        if verified
+        else (
+            f"could not confirm the nonce ({len(seen)} chars read); the composer is a Chromium "
+            "contenteditable with no EditControl, so this is best-effort"
+        ),
+        refusal=None if verified else "unverified",
+        ms=rb.elapsed_ms,
+    )
 
     if not submit:
-        return stop("staged" if verified else "unverified",
-                    "brief is staged in a NEW session and NOT sent (submit=False is the "
-                    "default). Press Enter in the window, or re-run with submit=True."
-                    + ("" if verified else " Read-back could not confirm it -- LOOK before "
-                                           "sending."))
+        return stop(
+            "staged" if verified else "unverified",
+            "brief is staged in a NEW session and NOT sent (submit=False is the "
+            "default). Press Enter in the window, or re-run with submit=True."
+            + ("" if verified else " Read-back could not confirm it -- LOOK before sending."),
+        )
 
     # ---- 6. submit, and take the causal receipt off the FILESYSTEM.
     d = session_dir()
@@ -276,28 +311,39 @@ def new_session_prompt(text: str, *, submit: bool = False, window_title: str = "
                 continue
         return False
 
-    got_receipt = A.settle(receipt, timeout_s=max(timeout_s, 20.0), interval_s=0.4,
-                           what="a new session transcript containing nonce %s" % res.nonce)
-    step("receipt", got_receipt.ok,
-         ("new transcript %s contains the nonce" % res.new_session) if got_receipt.ok
-         else ("no new transcript carried the nonce after %d polls / %.0f ms in %s"
-               % (got_receipt.polls, got_receipt.elapsed_ms, d)),
-         refusal=None if got_receipt.ok else "postcondition_failed",
-         ms=got_receipt.elapsed_ms)
+    got_receipt = A.settle(
+        receipt,
+        timeout_s=max(timeout_s, 20.0),
+        interval_s=0.4,
+        what=f"a new session transcript containing nonce {res.nonce}",
+    )
+    step(
+        "receipt",
+        got_receipt.ok,
+        (f"new transcript {res.new_session} contains the nonce")
+        if got_receipt.ok
+        else (
+            f"no new transcript carried the nonce after {got_receipt.polls} polls / "
+            f"{got_receipt.elapsed_ms:.0f} ms in {d}"
+        ),
+        refusal=None if got_receipt.ok else "postcondition_failed",
+        ms=got_receipt.elapsed_ms,
+    )
     if not got_receipt.ok:
-        return stop("unverified",
-                    "Enter was dispatched but no new session transcript carried the nonce. The "
-                    "message may have gone to an EXISTING session, or the app may write its "
-                    "transcript lazily -- check the window before re-sending, because re-running "
-                    "would send it twice.")
-    return stop("ok", "new session %s received the brief (nonce %s)"
-                      % (res.new_session, res.nonce))
+        return stop(
+            "unverified",
+            "Enter was dispatched but no new session transcript carried the nonce. The "
+            "message may have gone to an EXISTING session, or the app may write its "
+            "transcript lazily -- check the window before re-sending, because re-running "
+            "would send it twice.",
+        )
+    return stop("ok", f"new session {res.new_session} received the brief (nonce {res.nonce})")
 
 
 # --------------------------------------------------------------------------- status door
 
 
-def status(window_title: str = "Claude", agent_id: Optional[str] = None) -> dict:
+def status(window_title: str = "Claude", agent_id: str | None = None) -> dict:
     """Everything the actuator would check, WITHOUT acting -- the preflight as a read.
 
     Exists because every refusal above should be answerable before a caller commits to a
@@ -316,21 +362,31 @@ def status(window_title: str = "Claude", agent_id: Optional[str] = None) -> dict
         "uia": A._uia() is not None,
         "workstation_locked": locked,
         "foreground_hwnd": fg,
-        "windows": [{"hwnd": h, "title": t, "pid": A._pid_for(h), "dpi": A._dpi_for(h),
-                     "iconic": A._is_iconic(h), "is_foreground": h == fg} for h, t in wins],
+        "windows": [
+            {
+                "hwnd": h,
+                "title": t,
+                "pid": A._pid_for(h),
+                "dpi": A._dpi_for(h),
+                "iconic": A._is_iconic(h),
+                "is_foreground": h == fg,
+            }
+            for h, t in wins
+        ],
         "caps": caps,
         "session_dir": str(d) if d else None,
         "session_count": len(session_files(d)),
     }
     if len(wins) > 1:
-        out["ambiguous"] = ("%d windows match %r -- pass --hwnd to disambiguate; picking the "
-                            "first would be a coin flip over which live session gets the input."
-                            % (len(wins), window_title))
+        out["ambiguous"] = (
+            f"{len(wins)} windows match {window_title!r} -- pass --hwnd to disambiguate; picking the "
+            "first would be a coin flip over which live session gets the input."
+        )
     out["remedy"] = _remedy(agent_id)
     return out
 
 
-def _remedy(agent_id: Optional[str]) -> Optional[str]:
+def _remedy(agent_id: str | None) -> str | None:
     """ONE grant command covering every missing tier, or None when nothing is missing.
 
     Synthesised here rather than left to the per-verb refusal, because six refusals each naming
@@ -343,8 +399,10 @@ def _remedy(agent_id: Optional[str]) -> Optional[str]:
     needed and not a tier more.
     """
     try:
+        from core.paths import cli_command
         from core.trust import registry
         from core.trust.capabilities import Cap
+
         seat = agent_id or A.ambient_agent_id()
         grant = registry.resolve(seat)
         if grant is None:
@@ -354,11 +412,12 @@ def _remedy(agent_id: Optional[str]) -> Optional[str]:
         if not missing:
             return None
         full = sorted({c.value for c in grant.caps} | set(missing))
-        return ("A SECOND PARTY must grant %s (self-grant raises PermissionError). One command, "
-                "restating existing caps because --caps REPLACES them:\n"
-                "  py agent_cli.py grant %s --role %s --by daniil --hours 12 \\\n"
-                "    --caps %s \\\n"
-                "    --reason 'screenspace actuator drill: Ctrl+N + handoff combo'"
-                % (", ".join(missing), seat, grant.role, ",".join(full)))
+        return (
+            f"A SECOND PARTY must grant {', '.join(missing)} (self-grant raises PermissionError). One command, "
+            "restating existing caps because --caps REPLACES them:\n"
+            f"  {cli_command()} grant {seat} --role {grant.role} --by daniil --hours 12 \\\n"
+            f"    --caps {','.join(full)} \\\n"
+            "    --reason 'screenspace actuator drill: Ctrl+N + handoff combo'"
+        )
     except Exception:  # noqa: BLE001
         return None

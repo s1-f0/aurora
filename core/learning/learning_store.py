@@ -393,7 +393,7 @@ def wish_candidate(
     cause_s = (root_cause or "").strip()
     exp = (experiment or "").strip() or "this lesson"
 
-    haystack = " ".join((tried_s, result_s, rec_s, cause_s))
+    haystack = f"{tried_s} {result_s} {rec_s} {cause_s}"
     if cat == "correction":
         why = "correction"
     elif _WISH_TOOL_NAMED.search(haystack) and _WISH_DEFECT.search(haystack):
@@ -417,26 +417,25 @@ def wish_candidate(
         else "the tool this lesson concedes should be fixed rather than tolerated"
     )
     body = (
-        "%s\n\n"
-        "RECEIPT, drafted from lesson %s at the moment it was filed, in its own words.\n"
-        "  TRIED:  %s\n"
-        "  RESULT: %s\n"
-        "%s"
-        "%s"
+        "{}\n\n"
+        "RECEIPT, drafted from lesson {} at the moment it was filed, in its own words.\n"
+        "  TRIED:  {}\n"
+        "  RESULT: {}\n"
+        "{}"
+        "{}"
         "\nWHY THIS IS A WISH AND NOT ONLY A LESSON: a lesson teaches the next seat to work\n"
         "around the defect, so the defect survives and is paid for again every session.\n"
         "Edit this draft freely before filing, or delete the file and write your own.\n\n"
-        "Trigger: lesson %s. Land: fix the defect rather than document the workaround.\n"
-        % (
+        "Trigger: lesson {}. Land: fix the defect rather than document the workaround.\n".format(
             headline,
             exp,
             tried_s or "(not recorded)",
             result_s or "(not recorded)",
-            ("  CAUSE:  %s\n" % cause_s) if cause_s else "",
+            (f"  CAUSE:  {cause_s}\n") if cause_s else "",
             # The recommendation used to reach the draft only by ACCIDENT, as the headline.
             # Moving the headline to the cause dropped it entirely, which a pin caught: it is
             # the WANT half of a wish and the most reusable sentence the lesson has.
-            ("\nWANT, from the lesson's own recommendation:\n  %s\n" % rec_s) if rec_s else "",
+            (f"\nWANT, from the lesson's own recommendation:\n  {rec_s}\n") if rec_s else "",
             exp,
         )
     )

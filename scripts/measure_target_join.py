@@ -38,6 +38,7 @@ Read-only: xrange replays, no cursor is advanced, nothing is written.
 
     py scripts/measure_target_join.py [--limit 50000] [--json]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,7 +46,6 @@ import json
 import os
 import sys
 from collections import Counter
-from typing import Dict, List, Set, Tuple
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO not in sys.path:
@@ -57,17 +57,18 @@ EVENTS_STREAM = "events:raw"
 
 def _client():
     from core.comm.bus import Bus
+
     return Bus("claude")._client
 
 
-def _rows(client, stream: str, limit: int) -> List[dict]:
+def _rows(client, stream: str, limit: int) -> list[dict]:
     """Replay a stream oldest-first and JSON-decode each entry's single field. Never consumes."""
-    out: List[dict] = []
+    out: list[dict] = []
     for _mid, fields in client.xrange(stream, min="-", max="+", count=limit):
         try:
             raw = next(iter(fields.values()))
             out.append(json.loads(raw.decode() if isinstance(raw, bytes) else str(raw)))
-        except Exception:                                                 # noqa: BLE001
+        except Exception:  # noqa: BLE001  # fail-soft: best effort, skipped on any error
             continue
     return out
 
@@ -83,7 +84,7 @@ def cosmetic(k: str) -> str:
     tag off, separators unified, case folded, any :line[:col] suffix dropped."""
     s = strip_tag(k).replace("\\", "/").lower().rstrip("/")
     parts = s.split(":")
-    while len(parts) > 1 and parts[-1].isdigit():      # drop :line and :col
+    while len(parts) > 1 and parts[-1].isdigit():  # drop :line and :col
         parts = parts[:-1]
     return ":".join(parts)
 
@@ -93,7 +94,7 @@ def to_relative(k: str, repo: str) -> str:
     becomes repo-relative. Root-dependent by construction -- that is the whole point."""
     s = cosmetic(k)
     root = repo.replace("\\", "/").lower().rstrip("/") + "/"
-    return s[len(root):] if s.startswith(root) else s
+    return s[len(root) :] if s.startswith(root) else s
 
 
 def shape(k: str) -> str:
@@ -116,21 +117,20 @@ def main(argv=None) -> int:
 
     try:
         c = _client()
-    except Exception as e:                                                # noqa: BLE001
-        print("ERROR: no store client (%s: %s)" % (type(e).__name__, e))
+    except Exception as e:  # noqa: BLE001  # fail-soft: logged, exits 2
+        print(f"ERROR: no store client ({type(e).__name__}: {e})")
         return 2
 
     outcome_rows = _rows(c, OUTCOME_STREAM, a.limit)
     event_rows = _rows(c, EVENTS_STREAM, a.limit)
 
-    out_keys: Set[str] = {str(r.get("t") or r.get("target") or "").strip()
-                          for r in outcome_rows}
+    out_keys: set[str] = {str(r.get("t") or r.get("target") or "").strip() for r in outcome_rows}
     out_keys.discard("")
 
     touch_rows = [r for r in event_rows if str(r.get("kind") or "") == "touch"]
-    touch_keys: Set[str] = set()
+    touch_keys: set[str] = set()
     for r in touch_rows:
-        for ref in (r.get("refs") or []):
+        for ref in r.get("refs") or []:
             s = str(ref or "").strip()
             if s:
                 touch_keys.add(s)
@@ -147,7 +147,7 @@ def main(argv=None) -> int:
     # the ceiling a translation could ever reach: path-keyed outcome rows only
     rel_hit_p = {to_relative(k, _REPO) for k in out_keys if k.startswith("p:")} & cos_tch
 
-    rep: Dict[str, object] = {
+    rep: dict[str, object] = {
         "outcome_rows_replayed": len(outcome_rows),
         "event_rows_replayed": len(event_rows),
         "touch_rows": len(touch_rows),
@@ -168,31 +168,34 @@ def main(argv=None) -> int:
         return 0
 
     print("target join -- touch plane vs outcome plane")
-    print("  replayed: %d outcome rows, %d event rows (%d touches)   limit=%d"
-          % (len(outcome_rows), len(event_rows), len(touch_rows), a.limit))
-    print("  distinct keys: %d outcome, %d touch" % (len(out_keys), len(touch_keys)))
+    print(
+        f"  replayed: {len(outcome_rows)} outcome rows, {len(event_rows)} event rows "
+        f"({len(touch_rows)} touches)   limit={a.limit:d}"
+    )
+    print(f"  distinct keys: {len(out_keys)} outcome, {len(touch_keys)} touch")
     print()
     print("  OUTCOME key shapes:")
     for s, n in Counter(shape(k) for k in out_keys).most_common():
-        print("     %-34s %6d" % (s, n))
+        print(f"     {s!s:<34} {n:6d}")
     print("  TOUCH key shapes:")
     for s, n in Counter(shape(k) for k in touch_keys).most_common():
-        print("     %-34s %6d" % (s, n))
+        print(f"     {s!s:<34} {n:6d}")
     print()
-    print("  Q1  raw intersection                      %6d" % len(raw_hit))
-    print("  Q2  after cosmetic folds (a NORMALISER)   %6d   <- A2 as written buys this" % len(cos_hit))
-    print("  Q3  after abspath->relative TRANSLATION   %6d   <- what A2 would need to do" % len(rel_hit))
-    print("        of which, path-keyed outcome rows   %6d" % len(rel_hit_p))
+    print(f"  Q1  raw intersection                      {len(raw_hit):6d}")
+    print(f"  Q2  after cosmetic folds (a NORMALISER)   {len(cos_hit):6d}   <- A2 as written buys this")
+    print(f"  Q3  after abspath->relative TRANSLATION   {len(rel_hit):6d}   <- what A2 would need to do")
+    print(f"        of which, path-keyed outcome rows   {len(rel_hit_p):6d}")
     print()
-    print("  THE CEILING ON ANY FIX: %d of %d outcome keys are c: (command-keyed) and the touch"
-          % (c_share, len(out_keys)))
+    print(f"  THE CEILING ON ANY FIX: {c_share:d} of {len(out_keys)} outcome keys are c: (command-keyed) and the touch")
     print("  side mints no c: axis at all, so those rows cannot join under ANY key normalisation.")
     if len(out_keys):
-        print("  Command-keyed share: %.1f%% -- unreachable until `c:` is redefined as the file"
-              % (100.0 * c_share / len(out_keys)))
+        print(
+            f"  Command-keyed share: {100.0 * c_share / len(out_keys):.1f}% -- unreachable until "
+            "`c:` is redefined as the file"
+        )
         print("  targets touch.py already extracts.")
     print()
-    print("  Repo root used for the translation: %s" % _REPO)
+    print(f"  Repo root used for the translation: {_REPO}")
     print("  (Q3 is root-dependent BY CONSTRUCTION -- that is why it is a translation and not")
     print("   a spelling fold, and why a normaliser alone cannot perform it.)")
     return 0

@@ -28,6 +28,7 @@ Run::
 
     py -m pytest tests/test_the_new_session_combo_has_a_door.py -q
 """
+
 from __future__ import annotations
 
 import inspect
@@ -41,15 +42,20 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from core.screenspace import combo as C  # noqa: E402
+from core.screenspace import combo as C  # noqa: E402  # after the sys.path bootstrap
 
 CLI = str(ROOT / "agent_cli.py")
 
 
 def _run(*args, timeout=120):
-    return subprocess.run([sys.executable, "-X", "utf8", CLI, *args],
-                          capture_output=True, text=True, cwd=str(ROOT), timeout=timeout,
-                          stdin=subprocess.DEVNULL)
+    return subprocess.run(
+        [sys.executable, "-X", "utf8", CLI, *args],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        timeout=timeout,
+        stdin=subprocess.DEVNULL,
+    )
 
 
 # ------------------------------------------------------------------ the door
@@ -76,13 +82,21 @@ def test_status_is_read_only_and_names_what_it_would_refuse():
     r = _run("screen", "status", "--json")
     assert r.returncode == 0, r.stderr[:400]
     doc = json.loads(r.stdout)
-    for key in ("seat", "uia", "workstation_locked", "foreground_hwnd", "windows", "caps",
-                "session_dir", "session_count"):
+    for key in (
+        "seat",
+        "uia",
+        "workstation_locked",
+        "foreground_hwnd",
+        "windows",
+        "caps",
+        "session_dir",
+        "session_count",
+    ):
         assert key in doc, f"status does not report {key!r}"
     assert set(doc["caps"]) >= {"focus", "type", "keys", "invoke"}, doc["caps"]
     for verb, c in doc["caps"].items():
-        assert "allowed" in c and "why" in c, (
-            f"caps[{verb}] does not say WHY -- a refusal with no remedy is a dead end")
+        assert "allowed" in c, f"caps[{verb}] does not say WHY -- a refusal with no remedy is a dead end"
+        assert "why" in c, f"caps[{verb}] does not say WHY -- a refusal with no remedy is a dead end"
 
 
 def test_status_does_not_act():
@@ -91,8 +105,8 @@ def test_status_does_not_act():
     src = inspect.getsource(C.status)
     for forbidden in ("SendKeys", '"focus"', "'focus'", "SetForegroundWindow", "Click"):
         assert forbidden not in src, (
-            f"status() references {forbidden!r} -- a read-only door that focuses or types is "
-            f"not read-only")
+            f"status() references {forbidden!r} -- a read-only door that focuses or types is not read-only"
+        )
 
 
 # ------------------------------------------------------------------ fail-closed
@@ -102,8 +116,7 @@ def test_the_combo_refuses_without_the_caps():
     end-to-end, not merely log and continue."""
     r = _run("screen", "prompt", "this text must never reach a window", "--json")
     doc = json.loads(r.stdout or "{}")
-    assert doc.get("status") == "refused", (
-        "the combo did not refuse although the seat holds no screen.* cap: %r" % (doc,))
+    assert doc.get("status") == "refused", f"the combo did not refuse although the seat holds no screen.* cap: {doc!r}"
     assert r.returncode != 0, "a refused combo exited 0"
 
 
@@ -113,8 +126,8 @@ def test_a_refusal_stops_the_chain_rather_than_continuing():
     src = inspect.getsource(C.new_session_prompt)
     # every `step(...)` for an acting verb must be followed by a guarded early return
     assert src.count("return stop(") >= 5, (
-        "fewer early returns than acting steps -- at least one step can fail and let the chain "
-        "continue")
+        "fewer early returns than acting steps -- at least one step can fail and let the chain continue"
+    )
     assert "if not r.ok:" in src, "no step checks its own result"
 
 
@@ -132,7 +145,7 @@ def test_the_four_outcomes_are_not_a_bool():
     a bool rounds to the wrong neighbour in opposite directions."""
     src = inspect.getsource(C)
     for status in ("ok", "staged", "unverified", "refused"):
-        assert '"%s"' % status in src, f"the {status!r} outcome does not exist"
+        assert f'"{status}"' in src, f"the {status!r} outcome does not exist"
 
 
 # ------------------------------------------------------------------ the receipt plane
@@ -141,8 +154,7 @@ def test_the_session_dir_is_derived_not_guessed():
     slug computed from cwd picks the wrong one. The dir is found by locating our OWN transcript,
     which is the only self-verifying answer to "where will a sibling session land"."""
     src = inspect.getsource(C.session_dir)
-    assert "ambient_session_id" in src, (
-        "session_dir() does not locate our own transcript; it is guessing the slug")
+    assert "ambient_session_id" in src, "session_dir() does not locate our own transcript; it is guessing the slug"
     d = C.session_dir()
     if d is None:
         pytest.skip("no ~/.claude/projects on this host")
@@ -165,7 +177,8 @@ def test_the_nonce_is_embedded_so_the_receipt_is_causal():
     """Without a nonce in the text, "a new session appeared" proves a session appeared -- not
     that it got OUR brief. The nonce is what makes it causal rather than coincident."""
     n = C.make_nonce("some brief")
-    assert n and len(n) >= 8
+    assert n
+    assert len(n) >= 8
     assert "{nonce}" in C.RECEIPT_TEMPLATE
     assert n in C.RECEIPT_TEMPLATE.format(nonce=n)
     assert C.make_nonce("a") != C.make_nonce("b")
@@ -175,9 +188,10 @@ def test_the_centre_strip_is_small_enough_to_be_a_cheap_postcondition():
     """Measured: hashing the whole 8.4M-pixel window costs 88 ms AND changes on any repaint
     anywhere -- a streaming reply alone would trip it every time. A guard that always fires is
     a guard nobody keeps."""
-    l, t, w, h = C._centre_strip((-11, -11, 3851, 2171))
-    assert w * h <= 200_000, "the post-condition region is too large to be cheap (%dx%d)" % (w, h)
-    assert w > 0 and h > 0
+    _l, _t, w, h = C._centre_strip((-11, -11, 3851, 2171))
+    assert w * h <= 200_000, f"the post-condition region is too large to be cheap ({w}x{h})"
+    assert w > 0
+    assert h > 0
 
 
 def test_text_is_staged_through_the_clipboard_not_through_sendkeys():
@@ -185,15 +199,18 @@ def test_text_is_staged_through_the_clipboard_not_through_sendkeys():
     Prose pushed through it does not merely garble, it EXECUTES -- and a brief that arrives
     corrupted is worse than one that never arrives, which is this house's oldest identity law."""
     from core.screenspace import act as A
+
     src = inspect.getsource(A.act)
     assert "_clip_set" in src, "the type verb does not use the clipboard"
-    assert "_escape_sendkeys" in src, (
-        "the degraded SendKeys path is unescaped; unescaped prose executes")
+    assert "_escape_sendkeys" in src, "the degraded SendKeys path is unescaped; unescaped prose executes"
     # and the escaper must actually neutralise the dangerous set
     out = A._escape_sendkeys("{a 3} (b) 50% ^x !y +z")
     for ch in "{}()":
-        assert ("{%s}" % ch) in out or ("{{}" in out and "{}}" in out), out
-    assert "{%}" in out and "{^}" in out and "{!}" in out and "{+}" in out, out
+        assert (f"{{{ch}}}") in out or ("{{}" in out and "{}}" in out), out
+    assert "{%}" in out, out
+    assert "{^}" in out, out
+    assert "{!}" in out, out
+    assert "{+}" in out, out
 
 
 # ------------------------------------------------------------------ the remedy must WORK
@@ -216,13 +233,16 @@ def test_the_remedy_restates_existing_caps_rather_than_stripping_them():
     assert remedy, "verbs are refused but no remedy is offered -- a refusal with no path forward"
     assert "--role" in remedy, (
         "the remedy omits --role, which grant_writer REQUIRES (it raises on an unknown role) -- "
-        "following it literally would fail")
+        "following it literally would fail"
+    )
     from core.trust import registry
+
     g = registry.resolve(doc["seat"])
     for held in sorted(c.value for c in g.caps):
         assert held in remedy, (
             f"the remedy does not restate the seat's existing cap {held!r}; running it would "
-            f"STRIP that cap, because --caps replaces rather than adds")
+            f"STRIP that cap, because --caps replaces rather than adds"
+        )
 
 
 def test_the_remedy_names_a_second_party_because_self_grant_is_refused():
@@ -236,9 +256,11 @@ def test_the_remedy_names_a_second_party_because_self_grant_is_refused():
         pytest.skip("nothing missing")
     low = remedy.lower()
     assert "second party" in low or "--by daniil" in low, (
-        "the remedy does not say who may run it; self-granting raises PermissionError")
+        "the remedy does not say who may run it; self-granting raises PermissionError"
+    )
     assert "--hours" in remedy or "--permanent" in remedy, (
-        "the remedy is not time-boxed, and grant_writer refuses an untimed, non-permanent grant")
+        "the remedy is not time-boxed, and grant_writer refuses an untimed, non-permanent grant"
+    )
 
 
 def test_the_remedy_withholds_the_tiers_no_verb_needs():
@@ -264,7 +286,8 @@ def test_show_prints_the_brief_without_touching_the_desktop():
     assert r.returncode == 0, r.stderr[:300]
     doc = json.loads(r.stdout)
     assert doc["text"].startswith("hello world")
-    assert doc["nonce"] and doc["nonce"] in doc["text"], "the receipt nonce is not in the brief"
+    assert doc["nonce"], "the receipt nonce is not in the brief"
+    assert doc["nonce"] in doc["text"], "the receipt nonce is not in the brief"
     assert doc["chars"] == len(doc["text"])
 
 
@@ -297,7 +320,8 @@ def test_a_spilled_handoff_note_is_inlined_rather_than_left_as_a_pointer():
     None, with no handoff written or consumed by me in between. A pin that asserted through the
     live ledger would pass or skip according to another seat's unrelated activity.
     """
-    import agent_cli  # noqa: PLC0415 -- the resolver lives on the CLI door
+    import agent_cli  # the resolver lives on the CLI door
+
     assert hasattr(agent_cli, "_resolve_handoff_spill")
     src = inspect.getsource(agent_cli._resolve_handoff_spill)
     assert '"decision"' in src, (
@@ -305,13 +329,16 @@ def test_a_spilled_handoff_note_is_inlined_rather_than_left_as_a_pointer():
         "(id/title/status/context/decision/rationale/...), so reading `body` or `content` -- the "
         "names a reader naturally reaches for -- returns nothing and falls back to the POINTER "
         "with no error. That is how the first implementation shipped a brief truncated at its "
-        "opening while looking entirely plausible.")
+        "opening while looking entirely plausible."
+    )
     assert src.index('"decision"') < min([src.index('"body"'), src.index('"content"')]), (
-        "`decision` must be tried FIRST; the others are fallbacks for differently-shaped records")
+        "`decision` must be tried FIRST; the others are fallbacks for differently-shaped records"
+    )
     # and the renderer must actually route the context field through it
     rsrc = inspect.getsource(agent_cli._latest_handoff_text)
     assert "_resolve_handoff_spill" in rsrc, (
-        "the brief renderer never calls the resolver, so a spilled note stays a pointer")
+        "the brief renderer never calls the resolver, so a spilled note stays a pointer"
+    )
 
     # Opportunistic: if a handoff IS live right now, the end-to-end result must be pointer-free.
     r = _run("screen", "prompt", "--handoff", "claude", "--show", "--json")
@@ -319,4 +346,5 @@ def test_a_spilled_handoff_note_is_inlined_rather_than_left_as_a_pointer():
         doc = json.loads(r.stdout)
         assert "handoff-spill:" not in doc["text"], (
             "the brief carries a spill POINTER instead of the spilled body -- the new session "
-            "would have to go fetch its own briefing")
+            "would have to go fetch its own briefing"
+        )

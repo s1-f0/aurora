@@ -19,15 +19,15 @@ CONTRACT the fix must satisfy (per liveness.py):
   swallows; the loop must too);
 - the record carries code_sha (T114) so the roster can say alive-ON-WHAT.
 """
-import time
 
-import pytest
+import time
 
 from core.comm import liveness
 
 
 def _beater():
-    import agent.harness.dsh_web_heartbeat as beat  # noqa: F401  (RED: does not exist yet)
+    import agent.harness.dsh_web_heartbeat as beat  # RED: does not exist yet
+
     return beat
 
 
@@ -46,8 +46,7 @@ def test_idle_beater_keeps_worklive_fresh():
         age = liveness.worklive_beat_age("dsh_agent")
         assert age is not None, "no worklive record after beater start"
         assert age < liveness.WORKLIVE_TTL, (
-            f"beat age {age:.1f}s >= TTL -- an idle web seat reads OFFLINE and "
-            "operator mail stalls on global"
+            f"beat age {age:.1f}s >= TTL -- an idle web seat reads OFFLINE and operator mail stalls on global"
         )
     finally:
         stop()

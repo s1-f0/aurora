@@ -12,6 +12,7 @@ The honesty rules that keep it from becoming wallpaper, made testable here:
   written by the engine, so the floor cannot adjudicate its own silence;
 - every entry ships a falsifier that MUST fire -- proof the entry CAN fire before it is trusted.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -43,6 +44,7 @@ def _unavail(d="blind"):
 
 class _Spy:
     """A sensor that returns a fixed Signal and counts how many times it was called."""
+
     def __init__(self, sig):
         self.sig = sig
         self.calls = 0
@@ -54,8 +56,7 @@ class _Spy:
 
 def test_default_manifest_is_the_four_all_shadow():
     m = floor.default_manifest()
-    assert {e.key for e in m} == {
-        "undeliverable_mail", "noop_guard_success", "secret_egress", "floor_own_silence"}
+    assert {e.key for e in m} == {"undeliverable_mail", "noop_guard_success", "secret_egress", "floor_own_silence"}
     assert all(e.state == "shadow" for e in m), "shadow-first: nothing speaks until promoted"
 
 
@@ -65,7 +66,7 @@ def test_states_and_modes_exist():
 
 
 def test_make_entry_refuses_unknown_state():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown state"):
         floor.make_entry("t", sensor=_clear, state="SCREAMING")
 
 
@@ -75,8 +76,9 @@ def test_shadow_fire_is_journaled_not_surfaced(jp):
     assert not rep["live_firing"], "a shadow entry must never surface as a live alarm"
     assert any(x["key"] == "t" for x in rep["shadow_would_fire"])
     facts = journal.replay()["facts"]
-    assert any(f["kind"] == "floor_would_fire" and f["payload"].get("entry") == "t"
-               for f in facts), "the would-fire is the learning diary -- it must be journaled"
+    assert any(f["kind"] == "floor_would_fire" and f["payload"].get("entry") == "t" for f in facts), (
+        "the would-fire is the learning diary -- it must be journaled"
+    )
 
 
 def test_live_fire_is_surfaced(jp):
@@ -108,8 +110,13 @@ def test_found_vs_taken_closes_and_legend_is_written(jp):
         floor.make_entry("d", sensor=_clear(), state="off"),
     ]
     rep = floor.evaluate(es)
-    bucketed = (len(rep["live_firing"]) + len(rep["shadow_would_fire"]) + len(rep["clear"])
-                + len(rep["unavailable"]) + len(rep["off"]))
+    bucketed = (
+        len(rep["live_firing"])
+        + len(rep["shadow_would_fire"])
+        + len(rep["clear"])
+        + len(rep["unavailable"])
+        + len(rep["off"])
+    )
     assert bucketed == rep["total"] == 4, "every entry lands in exactly one bucket"
     assert rep["checked"] == 3, "off is not checked"
     assert rep["legend"].strip()
@@ -123,7 +130,7 @@ def test_modes_set_states(jp):
 
 
 def test_apply_mode_refuses_unknown_mode(jp):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown mode"):
         floor.apply_mode(floor.default_manifest(), "pandemonium")
 
 

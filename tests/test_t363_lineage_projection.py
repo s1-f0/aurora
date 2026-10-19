@@ -58,10 +58,8 @@ def parse_arcs():
                 row_status = rm.group(2).strip()
                 seg_start = refs[i - 1].end() if i else 0
                 quote = cell[seg_start : rm.start()]
-                quote = quote.strip().lstrip("\u00b7").strip().strip("\u201c\u201d\" ").strip()
-                current["instances"].append(
-                    {"when": when, "tid": tid, "row_status": row_status, "quote": quote}
-                )
+                quote = quote.strip().lstrip("\u00b7").strip().strip('\u201c\u201d" ').strip()
+                current["instances"].append({"when": when, "tid": tid, "row_status": row_status, "quote": quote})
     return arcs
 
 
@@ -116,9 +114,7 @@ def build():
             commit_cell = commit or "\u2014"
             owner = t.get("owner") or "\u2014"
             quote = inst["quote"] if inst["quote"] else short_title(t["title"])
-            lines.append(
-                f"| {inst['when']} | {quote} | {inst['tid']} | {status} | {owner} | {commit_cell} | {fcell} |"
-            )
+            lines.append(f"| {inst['when']} | {quote} | {inst['tid']} | {status} | {owner} | {commit_cell} | {fcell} |")
         lines.append("")
     lines.append("---")
     lines.append("")
@@ -144,5 +140,6 @@ def test_lineage_projection_builds():
     assert served > 0, "no arc instances resolved to ledger rows -- the join key drifted"
     assert OUT.exists()
     body = OUT.read_text(encoding="utf-8")
-    assert "Arc 1" in body and "Arc 8" in body
+    assert "Arc 1" in body
+    assert "Arc 8" in body
     print(f"\nlineage projection: {served} rows served, {breaks} chain breaks -> {OUT}")

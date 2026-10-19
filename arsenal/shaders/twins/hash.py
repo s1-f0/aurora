@@ -20,21 +20,22 @@ Apache-2.0, Akashic Aurora. Written fresh from the mathematics: Jarzynski and Ol
 Melissa O'Neill's PCG output permutation, and the research report research/reviewed/shader-school-2026-10-13/
 noise-procedural.md sections 2.3 and 2.4.
 """
+
 from __future__ import annotations
 
 import numpy as np
 
 MASK = np.uint64(0xFFFFFFFF)
-LCG_MUL, LCG_ADD = np.uint64(1664525), np.uint64(1013904223)        # Numerical Recipes' LCG: pcg3d and pcg4d
-PCG_MUL, PCG_ADD = np.uint64(747796405), np.uint64(2891336453)      # PCG's 32-bit LCG step
-PCG_OUT_MUL = np.uint64(277803737)                                  # PCG's RXS-M-XS output multiplier
-TAG_2D = 0x9E3779B9      # the third lane of the 2D wrappers (2^32 / golden ratio), so 2D never repeats a 3D slice
+LCG_MUL, LCG_ADD = np.uint64(1664525), np.uint64(1013904223)  # Numerical Recipes' LCG: pcg3d and pcg4d
+PCG_MUL, PCG_ADD = np.uint64(747796405), np.uint64(2891336453)  # PCG's 32-bit LCG step
+PCG_OUT_MUL = np.uint64(277803737)  # PCG's RXS-M-XS output multiplier
+TAG_2D = 0x9E3779B9  # the third lane of the 2D wrappers (2^32 / golden ratio), so 2D never repeats a 3D slice
 # XORed into the 3D wrappers' z lane (a word of pi's fraction, as the noise and warp tags are): without it hash31 of
 # (cell, z) read the same dice as value and gradient noise at seed z, and as any direct pcg3d caller with a small lane.
 TAG_3D = 0xEC4E6C89
 SINE_K2 = (127.1, 311.7)
 SINE_K3 = (127.1, 311.7, 74.7)
-SINE_SCALE = 43758.5453123   # the same 32-bit float as the 43758.5453 some files write
+SINE_SCALE = 43758.5453123  # the same 32-bit float as the 43758.5453 some files write
 
 
 def _u64(x):
@@ -99,7 +100,7 @@ def cellU3(p):
 
 def _with_lane(cells, lane_value):
     cells = np.asarray(cells, dtype=np.uint32)
-    extra = np.full(cells.shape[:-1] + (1,), lane_value, dtype=np.uint32)
+    extra = np.full((*cells.shape[:-1], 1), lane_value, dtype=np.uint32)
     return np.concatenate([cells, extra], axis=-1)
 
 

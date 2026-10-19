@@ -27,6 +27,7 @@ NA1_5658447097's cached JSON copied into it, the 4 replays were tied to that mat
 Two processes on one file for 15 s (a quick import loop against an add_spans loop): 144 imports, 1699 span writes,
 0 errors, nothing lost; the review had seen 1 failure in each loop before reads and replaces retried.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,22 +36,46 @@ import sqlite3
 import time
 from contextlib import closing, contextmanager
 from datetime import date, datetime
+from functools import partial
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Sequence
+from typing import TYPE_CHECKING
 
-from . import ff, probe as probe_mod
+from . import ff
+from . import probe as probe_mod
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator, Sequence
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Where the practice log keeps sessions (arsenal.performance.DEFAULT_ROOT); Riot matches: default_match_roots().
 SESSIONS_ROOT = _REPO_ROOT / "state" / "arsenal" / "performance"
 
-MEDIA_EXTS = frozenset((".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".flv", ".ts", ".m2ts", ".mts",
-                        ".mp3", ".wav", ".flac", ".ogg", ".opus", ".m4a", ".aac"))
+MEDIA_EXTS = frozenset(
+    (
+        ".mp4",
+        ".m4v",
+        ".mov",
+        ".mkv",
+        ".webm",
+        ".avi",
+        ".flv",
+        ".ts",
+        ".m2ts",
+        ".mts",
+        ".mp3",
+        ".wav",
+        ".flac",
+        ".ogg",
+        ".opus",
+        ".m4a",
+        ".aac",
+    )
+)
 SPAN_KINDS = ("shot", "chapter", "clock_pass", "event", "window", "silence", "note")
-DROP_MTIME_TOL_MS = 2000        # FAT/exFAT store mtimes to 2 s; NTFS and the browser agree to the millisecond
-DROP_SCAN_DEPTH = 2             # root/name, root/x/name, root/x/y/name
-REPLAY_LOOKBACK_S = 24 * 3600   # a replay recording is tied to the newest match that ended this long before it
+DROP_MTIME_TOL_MS = 2000  # FAT/exFAT store mtimes to 2 s; NTFS and the browser agree to the millisecond
+DROP_SCAN_DEPTH = 2  # root/name, root/x/name, root/x/y/name
+REPLAY_LOOKBACK_S = 24 * 3600  # a replay recording is tied to the newest match that ended this long before it
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS media (
@@ -73,20 +98,40 @@ CREATE TABLE IF NOT EXISTS artifacts (media_id TEXT NOT NULL, kind TEXT NOT NULL
 CREATE INDEX IF NOT EXISTS artifacts_media ON artifacts(media_id, kind);
 """
 TABLES = ("media", "streams", "tags", "spans", "artifacts")
-MEDIA_COLUMNS = ("id", "path", "name", "size", "mtime_ns", "duration_s", "container", "vcodec", "w", "h", "fps",
-                 "vfr", "keyint_s", "n_audio", "encoder", "recorded_at", "recorded_epoch", "kind", "probed_at",
-                 "sidecar")
+MEDIA_COLUMNS = (
+    "id",
+    "path",
+    "name",
+    "size",
+    "mtime_ns",
+    "duration_s",
+    "container",
+    "vcodec",
+    "w",
+    "h",
+    "fps",
+    "vfr",
+    "keyint_s",
+    "n_audio",
+    "encoder",
+    "recorded_at",
+    "recorded_epoch",
+    "kind",
+    "probed_at",
+    "sidecar",
+)
 
 
 # =================================================================================================
 # connection
 # =================================================================================================
 
+
 def db_path() -> Path:
     return ff.state_dir() / "catalog.sqlite"
 
 
-def connect(db: Optional[Path] = None) -> sqlite3.Connection:
+def connect(db: Path | None = None) -> sqlite3.Connection:
     """A connection to the catalog (default <state>/catalog.sqlite), WAL mode, schema in place; rows as sqlite3.Row.
     One per call or thread: the editor's server is threaded and sqlite3 connections are not shared across threads."""
     path = Path(db) if db else db_path()
@@ -101,46 +146,91 @@ def connect(db: Optional[Path] = None) -> sqlite3.Connection:
 
 @contextmanager
 def _db() -> Iterator[sqlite3.Connection]:
-    with closing(connect()) as con:
-        with con:                       # one transaction: commit on success, roll back on error
-            yield con
+    with closing(connect()) as con, con:  # one transaction: commit on success, roll back on error
+        yield con
 
 
 # =================================================================================================
 # sidecar -> rows (the only way rows are made, so rebuild() reproduces them exactly)
 # =================================================================================================
 
+
 def _json(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
-def _rows(sc: dict) -> Dict[str, List[tuple]]:
+def _rows(sc: dict) -> dict[str, list[tuple]]:
     v = sc.get("video") or {}
-    media = (sc["id"], sc["path"], sc.get("name") or Path(sc["path"]).name, sc.get("size"), sc.get("mtime_ns"),
-             sc.get("duration_s"), sc.get("container"), v.get("codec"), v.get("w"), v.get("h"), v.get("fps"),
-             int(bool(v.get("vfr"))) if v else None, v.get("keyint_s"), len(sc.get("audio") or []),
-             sc.get("encoder"), sc.get("recorded_at"), sc.get("recorded_epoch"), sc.get("kind"),
-             sc.get("probed_at"), str(probe_mod.sidecar_path(sc["id"])))
+    media = (
+        sc["id"],
+        sc["path"],
+        sc.get("name") or Path(sc["path"]).name,
+        sc.get("size"),
+        sc.get("mtime_ns"),
+        sc.get("duration_s"),
+        sc.get("container"),
+        v.get("codec"),
+        v.get("w"),
+        v.get("h"),
+        v.get("fps"),
+        int(bool(v.get("vfr"))) if v else None,
+        v.get("keyint_s"),
+        len(sc.get("audio") or []),
+        sc.get("encoder"),
+        sc.get("recorded_at"),
+        sc.get("recorded_epoch"),
+        sc.get("kind"),
+        sc.get("probed_at"),
+        str(probe_mod.sidecar_path(sc["id"])),
+    )
     streams = []
     if v:
         streams.append((sc["id"], v.get("index"), "video", v.get("codec"), None, None, v.get("title"), None))
-    for a in sc.get("audio") or []:
-        streams.append((sc["id"], a.get("stream"), "audio", a.get("codec"), a.get("channels"), a.get("sample_rate"),
-                        a.get("title"), a.get("house_name")))
-    for s in sc.get("subtitles") or []:
-        streams.append((sc["id"], s.get("stream"), "subtitle", s.get("codec"), None, None, s.get("title"), None))
-    tags = [(sc["id"], t["key"], None if t.get("value") is None else str(t["value"]), t.get("source"))
-            for t in sc.get("tags") or []]
-    spans = [(sc["id"], "chapter", c.get("t0"), c.get("t1"), c.get("title"), None, "container")
-             for c in sc.get("chapters") or []]
-    spans += [(sc["id"], s["kind"], s.get("t0"), s.get("t1"), s.get("label"),
-               None if s.get("data") is None else _json(s["data"]), s.get("source")) for s in sc.get("spans") or []]
-    artifacts = [(sc["id"], a["kind"], a["path"], _json(a.get("params") or {}), a.get("api"), a.get("created_at"))
-                 for a in sc.get("artifacts") or []]
+    streams.extend(
+        (
+            sc["id"],
+            a.get("stream"),
+            "audio",
+            a.get("codec"),
+            a.get("channels"),
+            a.get("sample_rate"),
+            a.get("title"),
+            a.get("house_name"),
+        )
+        for a in sc.get("audio") or []
+    )
+    streams.extend(
+        (sc["id"], s.get("stream"), "subtitle", s.get("codec"), None, None, s.get("title"), None)
+        for s in sc.get("subtitles") or []
+    )
+    tags = [
+        (sc["id"], t["key"], None if t.get("value") is None else str(t["value"]), t.get("source"))
+        for t in sc.get("tags") or []
+    ]
+    spans = [
+        (sc["id"], "chapter", c.get("t0"), c.get("t1"), c.get("title"), None, "container")
+        for c in sc.get("chapters") or []
+    ]
+    spans += [
+        (
+            sc["id"],
+            s["kind"],
+            s.get("t0"),
+            s.get("t1"),
+            s.get("label"),
+            None if s.get("data") is None else _json(s["data"]),
+            s.get("source"),
+        )
+        for s in sc.get("spans") or []
+    ]
+    artifacts = [
+        (sc["id"], a["kind"], a["path"], _json(a.get("params") or {}), a.get("api"), a.get("created_at"))
+        for a in sc.get("artifacts") or []
+    ]
     return {"media": [media], "streams": streams, "tags": tags, "spans": spans, "artifacts": artifacts}
 
 
-def _index(con: sqlite3.Connection, sc: dict) -> Dict[str, int]:
+def _index(con: sqlite3.Connection, sc: dict) -> dict[str, int]:
     """Replace every row of one media id with the rows its sidecar implies."""
     counts = {}
     for table, rows in _rows(sc).items():
@@ -168,7 +258,7 @@ def _mutate(media_id: str, change) -> dict:
         change(sc)
         sc["cataloged"] = True
         probe_mod.write_sidecar(sc)
-        reindex(sc)             # under the lock: rows land in the order the sidecars were written
+        reindex(sc)  # under the lock: rows land in the order the sidecars were written
     return sc
 
 
@@ -182,11 +272,12 @@ def reindex(sidecar: dict) -> None:
 # writes
 # =================================================================================================
 
+
 def is_cataloged(media_id: str) -> bool:
     return bool((probe_mod.read_sidecar(media_id) or {}).get("cataloged"))
 
 
-def _merged(given: dict, fresh: Optional[dict]) -> dict:
+def _merged(given: dict, fresh: dict | None) -> dict:
     """What upsert writes. The sidecar on disk is the truth for what was learned (spans, artifacts, tags, links,
     kind), so a probe result held while another writer added knowledge cannot erase it. The file's facts come from
     the newer probe; on a tie the disk's, which keeps a keyframe index added since."""
@@ -226,14 +317,20 @@ def _span_row(row, kind: str, source: str) -> dict:
         t0 = t1 = row
         label = data = None
     else:
-        seq = list(row) + [None, None, None]
+        seq = [*row, None, None, None]
         t0, t1, label, data = seq[0], seq[1] if seq[1] is not None else seq[0], seq[2], seq[3]
     if t0 is None:
         raise ff.MediaError(f"a {kind} span needs a start time: {row!r}")
     if t1 is not None and float(t1) < float(t0):
         raise ff.MediaError(f"a {kind} span ends before it starts: {row!r}")
-    return {"kind": kind, "t0": float(t0), "t1": None if t1 is None else float(t1),
-            "label": None if label is None else str(label), "data": data, "source": source}
+    return {
+        "kind": kind,
+        "t0": float(t0),
+        "t1": None if t1 is None else float(t1),
+        "label": None if label is None else str(label),
+        "data": data,
+        "source": source,
+    }
 
 
 def add_spans(media_id: str, kind: str, rows: Iterable, *, source: str) -> int:
@@ -246,6 +343,7 @@ def add_spans(media_id: str, kind: str, rows: Iterable, *, source: str) -> int:
 
     def change(sc: dict) -> None:
         sc["spans"] = [s for s in sc.get("spans") or [] if (s["kind"], s.get("source")) != (kind, source)] + new
+
     _mutate(media_id, change)
     return len(new)
 
@@ -253,20 +351,29 @@ def add_spans(media_id: str, kind: str, rows: Iterable, *, source: str) -> int:
 def add_artifact(media_id: str, kind: str, path, *, params: dict, api: str) -> None:
     """Remember a file made from this media (proxy, peaks, words, sheet, clockmap, stems). The same path again
     replaces its row."""
-    entry = {"kind": kind, "path": str(Path(path).resolve()), "params": dict(params or {}), "api": api,
-             "created_at": datetime.now().isoformat(timespec="seconds")}
+    entry = {
+        "kind": kind,
+        "path": str(Path(path).resolve()),
+        "params": dict(params or {}),
+        "api": api,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
 
     def change(sc: dict) -> None:
         sc["artifacts"] = [a for a in sc.get("artifacts") or [] if a["path"] != entry["path"]] + [entry]
+
     _mutate(media_id, change)
 
 
-def artifact(media_id: str, kind: str, *, params: Optional[dict] = None) -> Optional[dict]:
+def artifact(media_id: str, kind: str, *, params: dict | None = None) -> dict | None:
     """The newest artifact of that kind (and those params, when given) whose file still exists."""
     sc = probe_mod.read_sidecar(media_id) or {}
     want = None if params is None else _json(params)
-    hits = [a for a in sc.get("artifacts") or [] if a["kind"] == kind and os.path.isfile(a["path"])
-            and (want is None or _json(a.get("params") or {}) == want)]
+    hits = [
+        a
+        for a in sc.get("artifacts") or []
+        if a["kind"] == kind and os.path.isfile(a["path"]) and (want is None or _json(a.get("params") or {}) == want)
+    ]
     return max(hits, key=lambda a: a.get("created_at") or "") if hits else None
 
 
@@ -278,6 +385,7 @@ def tag(media_id: str, key: str, value, *, source: str = "user") -> None:
     def change(sc: dict) -> None:
         kept = [t for t in sc.get("tags") or [] if (t["key"], t.get("source")) != (key, source)]
         sc["tags"] = kept + [{"key": key, "value": str(v), "source": source} for v in values]
+
     _mutate(media_id, change)
 
 
@@ -285,15 +393,16 @@ def rebuild() -> dict:
     """Drop the database and re-index every cataloged sidecar: the sidecars are the truth, the database is an
     index. (Sidecars of files that were only probed, never imported, stay out, as they were.)"""
     from . import receipt
+
     t0 = time.perf_counter()
     paths = sorted(probe_mod.sidecar_dir().glob("*.json")) if probe_mod.sidecar_dir().is_dir() else []
-    errors, counts, n_cat = [], {t: 0 for t in TABLES}, 0
+    errors, counts, n_cat = [], dict.fromkeys(TABLES, 0), 0
     with _db() as con:
         for table in TABLES:
             con.execute(f"DELETE FROM {table}")
         for p in paths:
             try:
-                sc = json.loads(probe_mod.retry_shared(lambda: p.read_text(encoding="utf-8")))
+                sc = json.loads(probe_mod.retry_shared(partial(p.read_text, encoding="utf-8")))
                 if not sc.get("cataloged"):
                     continue
                 n_cat += 1
@@ -301,13 +410,20 @@ def rebuild() -> dict:
                     counts[table] += n
             except (OSError, ValueError, KeyError) as exc:
                 errors.append(f"{p.name}: {exc}")
-    payload = {"sidecars": len(paths), "cataloged": n_cat, "rows": counts, "errors": errors, "db": str(db_path()),
-               "seconds": round(time.perf_counter() - t0, 3)}
-    return receipt.result("find", None, {"op": "rebuild"}, payload,
-                          ["a sidecar that is not valid JSON is skipped and named in errors"])
+    payload = {
+        "sidecars": len(paths),
+        "cataloged": n_cat,
+        "rows": counts,
+        "errors": errors,
+        "db": str(db_path()),
+        "seconds": round(time.perf_counter() - t0, 3),
+    }
+    return receipt.result(
+        "find", None, {"op": "rebuild"}, payload, ["a sidecar that is not valid JSON is skipped and named in errors"]
+    )
 
 
-def dump() -> Dict[str, List[tuple]]:
+def dump() -> dict[str, list[tuple]]:
     """Every row of every table, sorted: two catalogs are the same when their dumps are equal."""
     with closing(connect()) as con:
         return {t: sorted((tuple(r) for r in con.execute(f"SELECT * FROM {t}")), key=repr) for t in TABLES}
@@ -316,6 +432,7 @@ def dump() -> Dict[str, List[tuple]]:
 # =================================================================================================
 # reads
 # =================================================================================================
+
 
 def _wall_time(value) -> str:
     """A recorded_after / recorded_before bound in the stored form, 'YYYY-MM-DDTHH:MM:SS' local wall time, so text
@@ -330,19 +447,24 @@ def _wall_time(value) -> str:
         try:
             dt = datetime.fromisoformat(str(value).strip())
         except ValueError:
-            raise ff.MediaError(f"find: {value!r} is not an ISO date or time "
-                                "(YYYY-MM-DD[ HH:MM[:SS]], local)") from None
+            raise ff.MediaError(
+                f"find: {value!r} is not an ISO date or time (YYYY-MM-DD[ HH:MM[:SS]], local)"
+            ) from None
     if dt.tzinfo is not None:
         dt = dt.astimezone().replace(tzinfo=None)
     return dt.isoformat()
 
 
-_FIND_SPECIAL = {"recorded_after": ("recorded_at >= ?", _wall_time), "recorded_before": ("recorded_at < ?", _wall_time),
-                 "duration_min": ("duration_s >= ?", float), "duration_max": ("duration_s <= ?", float),
-                 "text": ("(name LIKE ? OR path LIKE ?)", None)}
+_FIND_SPECIAL = {
+    "recorded_after": ("recorded_at >= ?", _wall_time),
+    "recorded_before": ("recorded_at < ?", _wall_time),
+    "duration_min": ("duration_s >= ?", float),
+    "duration_max": ("duration_s <= ?", float),
+    "text": ("(name LIKE ? OR path LIKE ?)", None),
+}
 
 
-def find(**where) -> List[dict]:
+def find(**where) -> list[dict]:
     """Media rows matching every condition, newest recording first.
 
     Any media column matches exactly (kind="screen", n_audio=1, vcodec="hevc", name=...). Also: recorded_after /
@@ -369,8 +491,10 @@ def find(**where) -> List[dict]:
             clauses.append("id IN (SELECT media_id FROM artifacts WHERE kind = ?)")
             args.append(value)
         else:
-            raise ff.MediaError(f"find: unknown condition {key!r} (columns: {', '.join(MEDIA_COLUMNS)}; also "
-                                f"{', '.join(_FIND_SPECIAL)}, tag, has_artifact, limit)")
+            raise ff.MediaError(
+                f"find: unknown condition {key!r} (columns: {', '.join(MEDIA_COLUMNS)}; also "
+                f"{', '.join(_FIND_SPECIAL)}, tag, has_artifact, limit)"
+            )
     sql = "SELECT * FROM media" + (" WHERE " + " AND ".join(clauses) if clauses else "")
     sql += " ORDER BY recorded_at DESC, name"
     if limit:
@@ -379,7 +503,7 @@ def find(**where) -> List[dict]:
         return [dict(r) for r in con.execute(sql, args)]
 
 
-def spans(media_id: str, kind: Optional[str] = None) -> List[dict]:
+def spans(media_id: str, kind: str | None = None) -> list[dict]:
     """Time-ranged rows of one file (all kinds, or one), in time order."""
     sql = "SELECT kind, t0, t1, label, data_json, source FROM spans WHERE media_id = ?"
     args: list = [media_id]
@@ -397,7 +521,8 @@ def spans(media_id: str, kind: Optional[str] = None) -> List[dict]:
 # drag and drop: a browser File (name, size, lastModified) -> the real path
 # =================================================================================================
 
-def _serve_roots() -> List[Path]:
+
+def _serve_roots() -> list[Path]:
     """arsenal serve's library roots (imported lazily: 77 ms once, then free)."""
     try:
         from arsenal.serve import DEFAULT_ROOTS
@@ -406,10 +531,10 @@ def _serve_roots() -> List[Path]:
     return [Path(r) for r in DEFAULT_ROOTS]
 
 
-def library_roots(extra: Optional[Sequence] = None) -> List[Path]:
+def library_roots(extra: Sequence | None = None) -> list[Path]:
     """Roots a dropped file is looked for in: the ones passed in, arsenal serve's, and every folder the catalog
     already holds a file from (import one file from a folder and the folder becomes a root)."""
-    roots: List[Path] = [Path(r) for r in (extra or [])] + _serve_roots()
+    roots: list[Path] = [Path(r) for r in (extra or [])] + _serve_roots()
     try:
         with closing(connect()) as con:
             roots += [Path(r[0]).parent for r in con.execute("SELECT path FROM media")]
@@ -424,7 +549,7 @@ def library_roots(extra: Optional[Sequence] = None) -> List[Path]:
     return out
 
 
-def _matches(path: str, size: int, last_modified_ms: int) -> Optional[float]:
+def _matches(path: str, size: int, last_modified_ms: int) -> float | None:
     """|mtime difference| in ms when the file at path has this size and an mtime within tolerance, else None.
     last_modified_ms <= 0 means the caller does not know it: name and size decide alone (difference 0)."""
     try:
@@ -456,14 +581,14 @@ def _scan(root: Path, name: str, depth: int) -> Iterator[str]:
             continue
 
 
-def resolve_dropped(name: str, size: int, last_modified_ms: int, *, roots: Optional[Sequence] = None) -> Optional[str]:
+def resolve_dropped(name: str, size: int, last_modified_ms: int, *, roots: Sequence | None = None) -> str | None:
     """The real path of a file dropped on the editor, from what the browser knows (File.name, .size,
     .lastModified); None when no library root holds it (the editor then names the folder to add as a root).
 
     Matches name + exact size + mtime within 2 s (a lastModified of 0, "unknown", leaves name and size to decide):
     the catalog first, then the library roots. Never copies."""
     name = Path(str(name).replace("\\", "/")).name
-    best: Optional[tuple] = None
+    best: tuple | None = None
     with closing(connect()) as con:
         for row in con.execute("SELECT path FROM media WHERE name = ? AND size = ?", (name, int(size))):
             diff = _matches(row[0], int(size), int(last_modified_ms))
@@ -489,14 +614,15 @@ def resolve_dropped(name: str, size: int, last_modified_ms: int, *, roots: Optio
 # link: what happened at the same wall time (practice sessions, Riot matches)
 # =================================================================================================
 
-def _iso_epoch(text) -> Optional[float]:
+
+def _iso_epoch(text) -> float | None:
     try:
         return datetime.fromisoformat(str(text).replace("Z", "+00:00")).timestamp()
     except (TypeError, ValueError):
         return None
 
 
-def _sessions(root: Path, t0: float, t1: float) -> List[dict]:
+def _sessions(root: Path, t0: float, t1: float) -> list[dict]:
     """Practice sessions whose [opened, opened + duration] can overlap [t0, t1]. Session folders are named by their
     LOCAL opening time (YYYYMMDD-HHMMSS-...), so only folders opened in the 24 h before t1 are read."""
     if not root.is_dir():
@@ -517,25 +643,32 @@ def _sessions(root: Path, t0: float, t1: float) -> List[dict]:
         dur = meta.get("duration_s")
         if dur is None and meta.get("last_t_ms") is not None:
             dur = meta["last_t_ms"] / 1000.0
-        out.append({"session": meta.get("session") or entry, "start": start, "end": start + float(dur or 0.0),
-                    "closed": bool(meta.get("closed")), "events": meta.get("event_count")})
+        out.append(
+            {
+                "session": meta.get("session") or entry,
+                "start": start,
+                "end": start + float(dur or 0.0),
+                "closed": bool(meta.get("closed")),
+                "events": meta.get("event_count"),
+            }
+        )
     return out
 
 
-_match_cache: Dict[str, tuple] = {}
+_match_cache: dict[str, tuple] = {}
 
 
-def default_match_roots() -> List[Path]:
+def default_match_roots() -> list[Path]:
     """Where cached Riot matches are looked for: the league lane's cache (arsenal.media.league.riot.default_root(),
     <state>/league/matches, so ARSENAL_MEDIA_STATE moves it too)."""
     try:
         from .league import riot
-    except Exception:                  # the league lane is not importable: nothing cached to link to
+    except Exception:  # the league lane is not importable: nothing cached to link to
         return []
     return [riot.default_root()]
 
 
-def _matches_in(roots: Sequence[Path]) -> List[dict]:
+def _matches_in(roots: Sequence[Path]) -> list[dict]:
     """Riot match windows from cached match files (match-v5 shape), read once per file version: the riot cache's
     layouts <id>/match.json and <id>.match.json, and a folder holding one match.json."""
     out = []
@@ -543,8 +676,12 @@ def _matches_in(roots: Sequence[Path]) -> List[dict]:
         root = Path(root)
         if not root.is_dir():
             continue
-        found = (set(root.glob("match.json")) | set(root.glob("*.match.json")) | set(root.glob("*/match.json"))
-                 | set(root.glob("*/*/match.json")))
+        found = (
+            set(root.glob("match.json"))
+            | set(root.glob("*.match.json"))
+            | set(root.glob("*/match.json"))
+            | set(root.glob("*/*/match.json"))
+        )
         for p in sorted(found):
             st = p.stat()
             key = str(p)
@@ -554,8 +691,12 @@ def _matches_in(roots: Sequence[Path]) -> List[dict]:
                     info = m.get("info") or {}
                     start = (info.get("gameStartTimestamp") or info.get("gameCreation") or 0) / 1000.0
                     end = (info.get("gameEndTimestamp") or 0) / 1000.0 or start + float(info.get("gameDuration") or 0)
-                    row = {"match_id": (m.get("metadata") or {}).get("matchId"), "start": start, "end": end,
-                           "path": str(p)}
+                    row = {
+                        "match_id": (m.get("metadata") or {}).get("matchId"),
+                        "start": start,
+                        "end": end,
+                        "path": str(p),
+                    }
                 except (OSError, ValueError, TypeError):
                     row = None
                 _match_cache[key] = ((st.st_size, st.st_mtime_ns), row)
@@ -568,14 +709,14 @@ def _overlap(a0: float, a1: float, b0: float, b1: float) -> float:
     return max(0.0, min(a1, b1) - max(a0, b0))
 
 
-def link(media_id: str, *, sessions_root=None, match_roots: Optional[Sequence] = None,
-         write_receipt: bool = True) -> dict:
+def link(media_id: str, *, sessions_root=None, match_roots: Sequence | None = None, write_receipt: bool = True) -> dict:
     """Tie a recording to what happened at the same wall time, store the links in its sidecar and tags, and return
     them: practice sessions (confidence = the share of the recording inside the session) and Riot matches played
     during it; a league_replay recording also gets the newest match that ended in the 24 h before it, as a
     replay candidate (confidence 0.5: recency only, the clock map confirms it). A recording that overlaps a
     practice session and is not League footage becomes kind "piano"."""
     from . import receipt
+
     if os.path.isfile(str(media_id)):
         media_id = probe_mod.probe(media_id)["id"]
     sc = _load(media_id)
@@ -588,27 +729,48 @@ def link(media_id: str, *, sessions_root=None, match_roots: Optional[Sequence] =
     for s in _sessions(Path(sessions_root) if sessions_root else SESSIONS_ROOT, t0, t1):
         ov = _overlap(t0, t1, s["start"], s["end"])
         if ov > 0 or (dur == 0 and s["start"] <= t0 <= s["end"]):
-            practice.append({"session": s["session"], "overlap_s": round(ov, 3),
-                             "confidence": round(ov / dur, 3) if dur else 1.0,
-                             "session_start": datetime.fromtimestamp(s["start"]).isoformat(timespec="seconds"),
-                             "session_s": round(s["end"] - s["start"], 3), "events": s["events"]})
+            practice.append(
+                {
+                    "session": s["session"],
+                    "overlap_s": round(ov, 3),
+                    "confidence": round(ov / dur, 3) if dur else 1.0,
+                    "session_start": datetime.fromtimestamp(s["start"]).isoformat(timespec="seconds"),
+                    "session_s": round(s["end"] - s["start"], 3),
+                    "events": s["events"],
+                }
+            )
     matches = []
     roots = [Path(r) for r in (match_roots if match_roots is not None else default_match_roots())]
     windows = _matches_in(roots)
     for m in windows:
         ov = _overlap(t0, t1, m["start"], m["end"])
         if ov > 0:
-            matches.append({"match_id": m["match_id"], "relation": "played_during", "overlap_s": round(ov, 3),
-                            "confidence": round(ov / min(dur or ov, m["end"] - m["start"]), 3)})
+            matches.append(
+                {
+                    "match_id": m["match_id"],
+                    "relation": "played_during",
+                    "overlap_s": round(ov, 3),
+                    "confidence": round(ov / min(dur or ov, m["end"] - m["start"]), 3),
+                }
+            )
     if sc.get("kind") == "league_replay" and not matches:
         before = [m for m in windows if 0 <= t0 - m["end"] <= REPLAY_LOOKBACK_S]
         if before:
             m = max(before, key=lambda x: x["end"])
-            matches.append({"match_id": m["match_id"], "relation": "replay_candidate",
-                            "gap_s": round(t0 - m["end"], 1), "confidence": 0.5})
+            matches.append(
+                {
+                    "match_id": m["match_id"],
+                    "relation": "replay_candidate",
+                    "gap_s": round(t0 - m["end"], 1),
+                    "confidence": 0.5,
+                }
+            )
     practice.sort(key=lambda x: -x["confidence"])
-    links = {"practice_sessions": practice, "riot_matches": matches,
-             "recorded": {"start": sc.get("recorded_at"), "from": sc.get("recorded_from"), "duration_s": dur}}
+    links = {
+        "practice_sessions": practice,
+        "riot_matches": matches,
+        "recorded": {"start": sc.get("recorded_at"), "from": sc.get("recorded_from"), "duration_s": dur},
+    }
 
     def change(s: dict) -> None:
         s["links"] = links
@@ -617,22 +779,33 @@ def link(media_id: str, *, sessions_root=None, match_roots: Optional[Sequence] =
         s["tags"] += [{"key": "match_id", "value": m["match_id"], "source": "link"} for m in matches]
         if practice and practice[0]["confidence"] >= 0.5 and not str(s.get("kind", "")).startswith("league"):
             s["kind"], s["kind_from"] = "piano", "practice_overlap"
+
     sc = _mutate(media_id, change)
     src = {"path": sc["path"], "size": sc["size"], "mtime_ns": sc["mtime_ns"], "id": media_id}
-    params = {"sessions_root": str(sessions_root or SESSIONS_ROOT),
-              "match_roots": [str(r) for r in roots],
-              "replay_lookback_s": REPLAY_LOOKBACK_S}
-    return receipt.result("import", src, params, {"id": media_id, "kind": sc.get("kind"), "links": links},
-                          ["wall times come from the OBS file name (local, 1 s) or the container's creation_time",
-                           "a replay is tied to a match by recency only; Riot matches are read from cached JSON"],
-                          write_receipt=write_receipt)
+    params = {
+        "sessions_root": str(sessions_root or SESSIONS_ROOT),
+        "match_roots": [str(r) for r in roots],
+        "replay_lookback_s": REPLAY_LOOKBACK_S,
+    }
+    return receipt.result(
+        "import",
+        src,
+        params,
+        {"id": media_id, "kind": sc.get("kind"), "links": links},
+        [
+            "wall times come from the OBS file name (local, 1 s) or the container's creation_time",
+            "a replay is tied to a match by recency only; Riot matches are read from cached JSON",
+        ],
+        write_receipt=write_receipt,
+    )
 
 
 # =================================================================================================
 # ingest: probe + sidecar + catalog row for every file first; the heavy artifacts after, each on request
 # =================================================================================================
 
-def _media_files(target: Path, recursive: bool) -> List[Path]:
+
+def _media_files(target: Path, recursive: bool) -> list[Path]:
     if target.is_file():
         return [target]
     if not target.is_dir():
@@ -645,6 +818,7 @@ def _optional(module: str):
     """arsenal.media.<module> when another lane has built it, else None."""
     import importlib
     import importlib.util
+
     try:
         if importlib.util.find_spec(f"arsenal.media.{module}") is None:
             return None
@@ -653,20 +827,22 @@ def _optional(module: str):
         return None
 
 
-def _files_in(res) -> List[str]:
+def _files_in(res) -> list[str]:
     """The existing files a primitive's result lists under "files" (a dict or a list of paths)."""
     files = (res or {}).get("files") if isinstance(res, dict) else None
     vals = files.values() if isinstance(files, dict) else (files or [])
     return sorted({str(x) for x in vals if isinstance(x, (str, Path)) and os.path.isfile(str(x))})
 
 
-def _heavy(sc: dict, *, proxy: bool, shots: bool, peaks: bool, clock: str, done: list, skipped: dict,
-           timings: dict) -> None:
+def _heavy(
+    sc: dict, *, proxy: bool, shots: bool, peaks: bool, clock: str, done: list, skipped: dict, timings: dict
+) -> None:
     from . import api
+
     path, media_id = sc["path"], sc["id"]
     t = time.perf_counter()
     if sc.get("video"):
-        probe_mod.probe(path, keyframes=True)          # re-indexes the row itself (the file is cataloged)
+        probe_mod.probe(path, keyframes=True)  # re-indexes the row itself (the file is cataloged)
         done.append("keyframes")
         timings["keyframes_s"] = round(time.perf_counter() - t, 3)
     cmap = None
@@ -678,22 +854,31 @@ def _heavy(sc: dict, *, proxy: bool, shots: bool, peaks: bool, clock: str, done:
         else:
             t = time.perf_counter()
             out = ff.state_dir() / "clockmap" / f"{media_id}.clockmap.json"
-            try:                                       # another lane's reader: its failure is reported, not fatal
+            try:  # another lane's reader: its failure is reported, not fatal
                 cmap = clock_mod.clockmap(path, out=str(out))
             except Exception as exc:
                 skipped["clock"] = f"failed: {type(exc).__name__}: {str(exc)[:200]}"
             if cmap is not None:
                 if out.is_file():
-                    add_artifact(media_id, "clockmap", out, params={"hud": "auto", "every": "keyframes"},
-                                 api=api("clockmap"))
+                    add_artifact(
+                        media_id, "clockmap", out, params={"hud": "auto", "every": "keyframes"}, api=api("clockmap")
+                    )
                 passes = cmap.get("passes") or []
-                add_spans(media_id, "clock_pass", [(p["file"][0], p["file"][1], p.get("id"),
-                                                    {"speed": p.get("speed"), "offset": p.get("offset")})
-                                                   for p in passes if p.get("file")], source="clock")
+                add_spans(
+                    media_id,
+                    "clock_pass",
+                    [
+                        (p["file"][0], p["file"][1], p.get("id"), {"speed": p.get("speed"), "offset": p.get("offset")})
+                        for p in passes
+                        if p.get("file")
+                    ],
+                    source="clock",
+                )
                 done.append("clock")
                 timings["clock_s"] = round(time.perf_counter() - t, 3)
     if (proxy or shots) and sc.get("video"):
         from . import shots as shots_mod
+
         t = time.perf_counter()
         shots_mod.proxy(path)
         done.append("proxy")
@@ -716,12 +901,19 @@ def _heavy(sc: dict, *, proxy: bool, shots: bool, peaks: bool, clock: str, done:
                         add_artifact(media_id, "peaks", f, params={"track": a["index"]}, api=api("peaks"))
                 done.append("peaks")
                 timings["peaks_s"] = round(time.perf_counter() - t, 3)
-            except Exception as exc:                   # another lane's module: report, keep importing
+            except Exception as exc:  # another lane's module: report, keep importing
                 skipped["peaks"] = f"failed: {type(exc).__name__}: {str(exc)[:200]}"
 
 
-def ingest(path_or_dir, *, recursive: bool = False, proxy: bool = True, shots: bool = True, peaks: bool = True,
-           clock: str = "auto") -> List[dict]:
+def ingest(
+    path_or_dir,
+    *,
+    recursive: bool = False,
+    proxy: bool = True,
+    shots: bool = True,
+    peaks: bool = True,
+    clock: str = "auto",
+) -> list[dict]:
     """Import files into the catalog without copying or touching them; one house result per file.
 
     Two phases, so the cheap part lands first: (1) for EVERY file, probe + sidecar + catalog row + time links
@@ -732,22 +924,28 @@ def ingest(path_or_dir, *, recursive: bool = False, proxy: bool = True, shots: b
     with the heavy phase for League footage, "on" whenever the League clock reader exists, "off" never. A file that
     fails reports its error and the others continue."""
     from . import receipt
+
     if clock not in ("auto", "on", "off"):
         raise ff.MediaError(f"clock must be auto, on or off, not {clock!r}")
     files = _media_files(Path(path_or_dir), recursive)
     params = {"recursive": recursive, "proxy": proxy, "shots": shots, "peaks": peaks, "clock": clock}
-    blind = ["the originals are opened read-only and never copied",
-             "kind is league_* only when arsenal.media.league.hud is built; peaks and clock need their lanes' modules"]
+    blind = [
+        "the originals are opened read-only and never copied",
+        "kind is league_* only when arsenal.media.league.hud is built; peaks and clock need their lanes' modules",
+    ]
     staged = []
-    for f in files:                                       # phase 1: every file becomes a catalog row
+    for f in files:  # phase 1: every file becomes a catalog row
         t = time.perf_counter()
         entry = {"path": str(f), "done": [], "skipped": {}, "timings": {}}
         try:
             sc = probe_mod.probe(f)
             votes = sc.get("kind_votes")
-            if sc.get("kind_from") == "rules" and probe_mod._hud() and (
-                    votes is None or any(str(v).startswith("error") for v in votes)):
-                sc = probe_mod.probe(f, refresh=True)     # the HUD reader was missing or failing then: ask again
+            if (
+                sc.get("kind_from") == "rules"
+                and probe_mod._hud()
+                and (votes is None or any(str(v).startswith("error") for v in votes))
+            ):
+                sc = probe_mod.probe(f, refresh=True)  # the HUD reader was missing or failing then: ask again
             upsert(sc)
             entry["done"].append("probe")
             entry["timings"]["probe_s"] = round(time.perf_counter() - t, 3)
@@ -760,21 +958,36 @@ def ingest(path_or_dir, *, recursive: bool = False, proxy: bool = True, shots: b
         staged.append(entry)
     heavy = proxy or shots or peaks or clock == "on"
     results = []
-    for entry in staged:                                  # phase 2: the heavy artifacts, one file at a time
+    for entry in staged:  # phase 2: the heavy artifacts, one file at a time
         sc = entry.pop("sc", None)
         if sc is not None and heavy:
             try:
-                _heavy(sc, proxy=proxy, shots=shots, peaks=peaks, clock=clock, done=entry["done"],
-                       skipped=entry["skipped"], timings=entry["timings"])
+                _heavy(
+                    sc,
+                    proxy=proxy,
+                    shots=shots,
+                    peaks=peaks,
+                    clock=clock,
+                    done=entry["done"],
+                    skipped=entry["skipped"],
+                    timings=entry["timings"],
+                )
             except (ff.MediaError, OSError) as exc:
                 entry["error"] = str(exc)
             sc = probe_mod.read_sidecar(sc["id"])
         payload = dict(entry)
         if sc is not None:
-            payload.update({"id": sc["id"], "kind": sc.get("kind"), "recorded_at": sc.get("recorded_at"),
-                            "duration_s": sc.get("duration_s"), "links": sc.get("links"),
-                            "artifacts": [a["kind"] + ": " + a["path"] for a in sc.get("artifacts") or []],
-                            "sidecar": str(probe_mod.sidecar_path(sc["id"]))})
+            payload.update(
+                {
+                    "id": sc["id"],
+                    "kind": sc.get("kind"),
+                    "recorded_at": sc.get("recorded_at"),
+                    "duration_s": sc.get("duration_s"),
+                    "links": sc.get("links"),
+                    "artifacts": [a["kind"] + ": " + a["path"] for a in sc.get("artifacts") or []],
+                    "sidecar": str(probe_mod.sidecar_path(sc["id"])),
+                }
+            )
             src = {"path": sc["path"], "size": sc["size"], "mtime_ns": sc["mtime_ns"], "id": sc["id"]}
         else:
             src = {"path": entry["path"]}
@@ -786,19 +999,25 @@ def ingest(path_or_dir, *, recursive: bool = False, proxy: bool = True, shots: b
 # CLI: import and find
 # =================================================================================================
 
-def _print_rows(rows: List[dict]) -> None:
+
+def _print_rows(rows: list[dict]) -> None:
     for r in rows:
         dur = r.get("duration_s") or 0.0
-        print(f"{r['id']}  {r.get('recorded_at') or '-':19s}  {dur / 60:6.1f} min  {r.get('kind') or '-':13s}  "
-              f"{r.get('vcodec') or '-':5s} {r.get('w') or '-'}x{r.get('h') or '-'}  a:{r.get('n_audio')}  {r['path']}")
+        print(
+            f"{r['id']}  {r.get('recorded_at') or '-':19s}  {dur / 60:6.1f} min  {r.get('kind') or '-':13s}  "
+            f"{r.get('vcodec') or '-':5s} {r.get('w') or '-'}x{r.get('h') or '-'}  a:{r.get('n_audio')}  {r['path']}"
+        )
     print(f"({len(rows)} file{'s' if len(rows) != 1 else ''})")
 
 
-def _cli_import(argv: List[str]) -> int:
+def _cli_import(argv: list[str]) -> int:
     import argparse
-    ap = argparse.ArgumentParser(prog="py -m arsenal.media import",
-                                 description="import videos into the media catalog (probe + sidecar + catalog row, "
-                                             "then proxy, scene cuts, waveform peaks), never copying or touching them")
+
+    ap = argparse.ArgumentParser(
+        prog=f"{ff.pyl()} -m arsenal.media import",
+        description="import videos into the media catalog (probe + sidecar + catalog row, "
+        "then proxy, scene cuts, waveform peaks), never copying or touching them",
+    )
     ap.add_argument("paths", nargs="+", help="files or folders")
     ap.add_argument("--recursive", action="store_true", help="also look inside sub-folders")
     ap.add_argument("--quick", action="store_true", help="probe + catalog row only (what the editor does on a drop)")
@@ -813,9 +1032,14 @@ def _cli_import(argv: List[str]) -> int:
     failed = 0
     for target in a.paths:
         try:
-            results = ingest(target, recursive=a.recursive, proxy=not (quick or a.no_proxy),
-                             shots=not (quick or a.no_shots), peaks=not (quick or a.no_peaks),
-                             clock="off" if quick else a.clock)
+            results = ingest(
+                target,
+                recursive=a.recursive,
+                proxy=not (quick or a.no_proxy),
+                shots=not (quick or a.no_shots),
+                peaks=not (quick or a.no_peaks),
+                clock="off" if quick else a.clock,
+            )
         except ff.MediaError as exc:
             print(f"! {target}: {exc}")
             failed += 1
@@ -832,22 +1056,30 @@ def _cli_import(argv: List[str]) -> int:
                 continue
             sessions = [p["session"] for p in (r.get("links") or {}).get("practice_sessions", [])]
             matches = [m["match_id"] for m in (r.get("links") or {}).get("riot_matches", [])]
-            print(f"{Path(r['path']).name}: {r.get('kind')}, {(r.get('duration_s') or 0) / 60:.1f} min, "
-                  f"recorded {r.get('recorded_at')}; did {', '.join(r['done'])}"
-                  + (f"; practice {', '.join(sessions)}" if sessions else "")
-                  + (f"; match {', '.join(matches)}" if matches else "")
-                  + "".join(f"; skipped {k} ({v})" for k, v in r["skipped"].items()))
+            print(
+                f"{Path(r['path']).name}: {r.get('kind')}, {(r.get('duration_s') or 0) / 60:.1f} min, "
+                f"recorded {r.get('recorded_at')}; did {', '.join(r['done'])}"
+                + (f"; practice {', '.join(sessions)}" if sessions else "")
+                + (f"; match {', '.join(matches)}" if matches else "")
+                + "".join(f"; skipped {k} ({v})" for k, v in r["skipped"].items())
+            )
     if a.dropped:
-        print("The files stay where they are; the catalog only remembers them." if not failed
-              else "Some files did not import. Read the messages above.")
+        print(
+            "The files stay where they are; the catalog only remembers them."
+            if not failed
+            else "Some files did not import. Read the messages above."
+        )
     return 1 if failed else 0
 
 
-def _cli_find(argv: List[str]) -> int:
+def _cli_find(argv: list[str]) -> int:
     import argparse
-    ap = argparse.ArgumentParser(prog="py -m arsenal.media find",
-                                 description="query the media catalog: recordings by kind, date, track count; "
-                                             "resolve a dropped file; link by time; rebuild from sidecars")
+
+    ap = argparse.ArgumentParser(
+        prog=f"{ff.pyl()} -m arsenal.media find",
+        description="query the media catalog: recordings by kind, date, track count; "
+        "resolve a dropped file; link by time; rebuild from sidecars",
+    )
     ap.add_argument("--kind")
     ap.add_argument("--after", help="recorded at or after (YYYY-MM-DD[ HH:MM[:SS]], local; a T works too)")
     ap.add_argument("--before", help="recorded before (same form)")
@@ -856,8 +1088,12 @@ def _cli_find(argv: List[str]) -> int:
     ap.add_argument("--tag", help="key=value, e.g. practice_session=20261011-165503-f62d348c")
     ap.add_argument("--has-artifact", help="proxy, peaks, sheet, clockmap ...")
     ap.add_argument("--limit", type=int)
-    ap.add_argument("--resolve", nargs=3, metavar=("NAME", "SIZE", "LAST_MODIFIED_MS"),
-                    help="where is the file a browser dropped (File.name, .size, .lastModified)?")
+    ap.add_argument(
+        "--resolve",
+        nargs=3,
+        metavar=("NAME", "SIZE", "LAST_MODIFIED_MS"),
+        help="where is the file a browser dropped (File.name, .size, .lastModified)?",
+    )
     ap.add_argument("--root", action="append", help="an extra library root for --resolve")
     ap.add_argument("--link", metavar="ID_OR_PATH", help="tie a recording to practice sessions and Riot matches")
     ap.add_argument("--spans", metavar="ID", help="time-ranged rows of one file (shots, chapters, clock passes)")
@@ -868,9 +1104,15 @@ def _cli_find(argv: List[str]) -> int:
         t = time.perf_counter()
         hit = resolve_dropped(a.resolve[0], int(a.resolve[1]), int(a.resolve[2]), roots=a.root)
         ms = (time.perf_counter() - t) * 1000
-        print(json.dumps({"path": hit, "ms": round(ms, 1)}) if a.json else
-              (f"{hit}  ({ms:.0f} ms)" if hit else f"not found in the catalog or the library roots ({ms:.0f} ms): "
-               f"add its folder as a library root"))
+        print(
+            json.dumps({"path": hit, "ms": round(ms, 1)})
+            if a.json
+            else (
+                f"{hit}  ({ms:.0f} ms)"
+                if hit
+                else f"not found in the catalog or the library roots ({ms:.0f} ms): add its folder as a library root"
+            )
+        )
         return 0 if hit else 1
     if a.link:
         res = link(a.link)
@@ -883,8 +1125,16 @@ def _cli_find(argv: List[str]) -> int:
         res = rebuild()
         print(json.dumps({k: res[k] for k in ("sidecars", "cataloged", "rows", "errors", "seconds", "db")}, indent=1))
         return 0
-    rows = find(kind=a.kind, recorded_after=a.after, recorded_before=a.before, n_audio=a.n_audio, text=a.text,
-                tag=a.tag, has_artifact=a.has_artifact, limit=a.limit)
+    rows = find(
+        kind=a.kind,
+        recorded_after=a.after,
+        recorded_before=a.before,
+        n_audio=a.n_audio,
+        text=a.text,
+        tag=a.tag,
+        has_artifact=a.has_artifact,
+        limit=a.limit,
+    )
     if a.json:
         print(json.dumps(rows, indent=1))
     else:
@@ -892,5 +1142,5 @@ def _cli_find(argv: List[str]) -> int:
     return 0
 
 
-def cli(verb: str, argv: List[str]) -> int:
+def cli(verb: str, argv: list[str]) -> int:
     return _cli_import(argv) if verb == "import" else _cli_find(argv)

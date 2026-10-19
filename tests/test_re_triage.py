@@ -11,13 +11,13 @@ These pins assert the CONTRACT, not the exact byte signatures of any one detecto
 Fixtures are hand-built byte prefixes (a PE is large; we test the header parser against
 a synthetic minimal header + a real fixture path when reachable). Every claim is tagged.
 """
+
 import os
 import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-import pytest
 
 from arsenal.re.triage import triage
 
@@ -41,9 +41,9 @@ def _minimal_pe(e_lfanew=0x80, machine=0x8664, opt_magic=0x20B, com_rva=0):
     buf = bytearray(e_lfanew + 24 + 0x70 + 16 * 8 + 16)  # room for the full optional header + slack
     buf[0:2] = b"MZ"
     struct.pack_into("<I", buf, 0x3C, e_lfanew)
-    buf[e_lfanew:e_lfanew + 4] = b"PE\x00\x00"
-    struct.pack_into("<H", buf, e_lfanew + 4, machine)          # Machine
-    struct.pack_into("<H", buf, e_lfanew + 24, opt_magic)       # OptionalHeader.Magic
+    buf[e_lfanew : e_lfanew + 4] = b"PE\x00\x00"
+    struct.pack_into("<H", buf, e_lfanew + 4, machine)  # Machine
+    struct.pack_into("<H", buf, e_lfanew + 24, opt_magic)  # OptionalHeader.Magic
     if com_rva:
         struct.pack_into("<I", buf, e_lfanew + 24 + 0x60 + 14 * 8, com_rva)  # COM descriptor dir
     return bytes(buf)
@@ -51,35 +51,37 @@ def _minimal_pe(e_lfanew=0x80, machine=0x8664, opt_magic=0x20B, com_rva=0):
 
 # ---- observed field checks -----------------------------------------------------
 
+
 def test_pe_executable_observed_and_routes_to_binary(tmp_path):
     p = _write(tmp_path, "a.exe", _minimal_pe())
     r = triage(p)
     assert r["api"] == "arsenal.re/v0"
     assert r["payload"]["kind"] == "pe-executable"
-    assert r["payload"]["route"] == "arsenal re binary"   # gap G5, named not built
-    tags = {m["detector"]: m["tag"] for m in r["payload"]["matches"]}
+    assert r["payload"]["route"] == "arsenal re binary"  # gap G5, named not built
     # the PE header detector emits OBSERVED facts
-    assert any(m["detector"] == "pe-header" and m["tag"] == "observed"
-               for m in r["payload"]["matches"])
+    assert any(m["detector"] == "pe-header" and m["tag"] == "observed" for m in r["payload"]["matches"])
     assert r["computed_with"]["no_processes"] is True
 
 
 def test_pe_with_clr_infers_managed(tmp_path):
     p = _write(tmp_path, "b.exe", _minimal_pe(com_rva=0x2000))
     r = triage(p)
-    assert any(m["detector"] == "pe-header" and m["tag"] == "inferred"
-               and "managed" in m["claim"].lower() for m in r["payload"]["matches"])
+    assert any(
+        m["detector"] == "pe-header" and m["tag"] == "inferred" and "managed" in m["claim"].lower()
+        for m in r["payload"]["matches"]
+    )
 
 
 def test_elf_and_macho_route_to_binary(tmp_path):
-    elf = b"\x7fELF" + bytes([2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]) \
-          + struct.pack("<H", 2) + struct.pack("<H", 62)  # ET_EXEC
+    elf = (
+        b"\x7fELF" + bytes([2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]) + struct.pack("<H", 2) + struct.pack("<H", 62)
+    )  # ET_EXEC
     p = _write(tmp_path, "c.bin", elf + b"\x00" * 80)
     r = triage(p)
     assert r["payload"]["kind"] == "elf-executable"
     assert r["payload"]["route"] == "arsenal re binary"
 
-    macho = b"\xcf\xfa\xed\xfe" + b"\x00" * 28   # 64-bit little-endian Mach-O
+    macho = b"\xcf\xfa\xed\xfe" + b"\x00" * 28  # 64-bit little-endian Mach-O
     p2 = _write(tmp_path, "d.bin", macho)
     r2 = triage(p2)
     assert r2["payload"]["kind"] == "mach-o"
@@ -93,7 +95,7 @@ def test_archive_media_text_route(tmp_path):
     png = _write(tmp_path, "f.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 40)
     r = triage(png)
     assert r["payload"]["kind"] == "image"
-    assert r["payload"]["route"] == "arsenal media probe"   # exists
+    assert r["payload"]["route"] == "arsenal media probe"  # exists
 
     glsl = _write(tmp_path, "g.frag", b"#version 300 es\nvoid main(){}\n")
     r = triage(glsl)
@@ -117,8 +119,7 @@ def test_bounded_negative_stays_bounded(tmp_path):
 def test_missing_and_denied_are_loud_unknowns(tmp_path):
     r = triage(str(tmp_path / "does_not_exist.xyz"))
     assert r["payload"]["kind"] == "unknown"
-    assert any(m["tag"] == "unknown" and "not found" in m["claim"].lower()
-               for m in r["payload"]["matches"])
+    assert any(m["tag"] == "unknown" and "not found" in m["claim"].lower() for m in r["payload"]["matches"])
 
 
 def test_triage_never_executes(tmp_path):

@@ -6,6 +6,7 @@ epistemic floor, bounded sharpness, landmarks, and a return tether.  The
 contract to the native sweep/ground/capture substrate without inventing a
 second renderer-specific control plane.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -15,7 +16,6 @@ import json
 import pytest
 
 from core.coord.observations import Observation, Snapshot
-
 
 SUBJECT = "synthetic-sol-t084-orient"
 AXES = {"authority", "claim_kind", "currency", "identity_state", "risk"}
@@ -118,7 +118,7 @@ def test_orient_composes_a_subject_bound_scene_with_truth_floor_and_return_tethe
 
     # Surface depth folds evidence with a drillable contour, while the five-axis
     # epistemic floor remains present at minimum sharpness.
-    assert AXES == set(scene["focus"]["epistemic"])
+    assert set(scene["focus"]["epistemic"]) == AXES
     assert scene["focus"]["epistemic_scope"] == "observation envelope, not nested claims"
     assert scene["focus"]["folded"]["present"] is True
     assert scene["focus"]["folded"]["fields"] > 0
@@ -128,9 +128,7 @@ def test_orient_composes_a_subject_bound_scene_with_truth_floor_and_return_tethe
     route_names = [route["name"] for route in scene["routes"]]
     assert route_names == ["focus", "return"]
     assert scene["routes"][0]["steps"][0]["verb"] == "ground"
-    assert scene["routes"][1]["steps"][0] == {
-        "verb": "sweep", "args": {"agent": SUBJECT}
-    }
+    assert scene["routes"][1]["steps"][0] == {"verb": "sweep", "args": {"agent": SUBJECT}}
     for route in scene["routes"]:
         assert route["effects"] == []
         assert route["risk"] == "ordinary"
@@ -140,12 +138,8 @@ def test_orient_composes_a_subject_bound_scene_with_truth_floor_and_return_tethe
 def test_evidence_depth_expands_the_same_focus_without_changing_its_truth_state():
     from core.coord.orient import build_orientation
 
-    surface = build_orientation(
-        SUBJECT, "verb:capture", depth="surface", providers=_providers()
-    )
-    evidence = build_orientation(
-        SUBJECT, "verb:capture", depth="evidence", providers=_providers()
-    )
+    surface = build_orientation(SUBJECT, "verb:capture", depth="surface", providers=_providers())
+    evidence = build_orientation(SUBJECT, "verb:capture", depth="evidence", providers=_providers())
 
     assert evidence["focus"]["evidence"]["schema"] == "ground.result.v1"
     assert evidence["focus"]["epistemic"] == surface["focus"]["epistemic"]
@@ -163,9 +157,7 @@ def test_destination_is_typed_and_seat_continuity_cannot_borrow_a_peer():
     with pytest.raises(ValueError, match="bound subject"):
         build_orientation(SUBJECT, "seat:someone-else", providers=_providers())
 
-    own = build_orientation(
-        SUBJECT, f"seat:{SUBJECT}", depth="evidence", providers=_providers()
-    )
+    own = build_orientation(SUBJECT, f"seat:{SUBJECT}", depth="evidence", providers=_providers())
     assert own["focus"]["evidence"]["mode"] == "continuity"
     assert own["routes"][0]["steps"][0]["args"]["continuity"] is True
 
@@ -202,10 +194,15 @@ def test_aperture_values_refuse_unknown_physics_instead_of_guessing():
 def test_compact_renderer_names_focus_contours_truth_floor_and_effects():
     from core.coord.orient import build_orientation, render_orientation
 
-    text = render_orientation(build_orientation(
-        SUBJECT, "verb:capture", density="compact", depth="surface",
-        providers=_providers(),
-    ))
+    text = render_orientation(
+        build_orientation(
+            SUBJECT,
+            "verb:capture",
+            density="compact",
+            depth="surface",
+            providers=_providers(),
+        )
+    )
 
     assert f"subject={SUBJECT}" in text
     assert "focus verb:capture" in text
@@ -223,25 +220,40 @@ def test_cli_mcp_and_toolbox_share_the_native_scene_seam(monkeypatch, tmp_path):
     from scripts.checkers import check_door_parity
 
     fixture = {
-        "schema": "orient.scene.v1", "subject": SUBJECT, "effects": [],
-        "target": None, "aperture": {"density": "compact", "depth": "surface"},
-        "position": {}, "focus": None, "nearby": [], "periphery": [],
-        "routes": [], "bounds": {}, "blind": [],
+        "schema": "orient.scene.v1",
+        "subject": SUBJECT,
+        "effects": [],
+        "target": None,
+        "aperture": {"density": "compact", "depth": "surface"},
+        "position": {},
+        "focus": None,
+        "nearby": [],
+        "periphery": [],
+        "routes": [],
+        "bounds": {},
+        "blind": [],
     }
     monkeypatch.setattr(orient_module, "build_orientation", lambda *a, **k: dict(fixture))
 
     parser = agent_cli.build_parser()
-    subs = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
-    parsed = parser.parse_args([
-        "orient", "verb:capture", "--agent", SUBJECT,
-        "--density", "compact", "--depth", "surface", "--json",
-    ])
+    assert any(isinstance(a, argparse._SubParsersAction) for a in parser._actions)
+    parsed = parser.parse_args(
+        [
+            "orient",
+            "verb:capture",
+            "--agent",
+            SUBJECT,
+            "--density",
+            "compact",
+            "--depth",
+            "surface",
+            "--json",
+        ]
+    )
     assert parsed.target == "verb:capture"
     assert parsed.agent == SUBJECT
 
-    raw = asyncio.run(ai_setup_mcp.orient(
-        agent=SUBJECT, target="verb:capture", density="compact", depth="surface"
-    ))
+    raw = asyncio.run(ai_setup_mcp.orient(agent=SUBJECT, target="verb:capture", density="compact", depth="surface"))
     assert json.loads(raw)["schema"] == "orient.scene.v1"
     assert "\n" not in raw, "model-facing MCP JSON should not spend tokens on indentation"
 
@@ -250,12 +262,20 @@ def test_cli_mcp_and_toolbox_share_the_native_scene_seam(monkeypatch, tmp_path):
     assert check_door_parity.MANIFEST["orient"] == "shared"
 
     tb = ToolBox(
-        tmp_path, allow_exec=False, trust=False, allow_secrets=False,
-        confirm=lambda *_: False, agent_id=SUBJECT,
+        tmp_path,
+        allow_exec=False,
+        trust=False,
+        allow_secrets=False,
+        confirm=lambda *_: False,
+        agent_id=SUBJECT,
     )
-    monkeypatch.setattr(tb, "_agent_cli", lambda *_a, **_k: (_ for _ in ()).throw(
-        AssertionError("orient must compose native structures, not shell through agent_cli")
-    ))
+    monkeypatch.setattr(
+        tb,
+        "_agent_cli",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("orient must compose native structures, not shell through agent_cli")
+        ),
+    )
     tb_raw = tb.orient("verb:capture")
     assert json.loads(tb_raw)["schema"] == "orient.scene.v1"
     assert "\n" not in tb_raw, "model-facing ToolBox JSON should stay compact"
@@ -265,7 +285,10 @@ def test_unbound_toolbox_cannot_borrow_an_orientation_subject(tmp_path):
     from core.comm.toolbox import ToolBox
 
     tb = ToolBox(
-        tmp_path, allow_exec=False, trust=False, allow_secrets=False,
+        tmp_path,
+        allow_exec=False,
+        trust=False,
+        allow_secrets=False,
         confirm=lambda *_: False,
     )
     with pytest.raises(ValueError, match="subject is required"):
@@ -279,7 +302,8 @@ def test_ground_knows_orient_is_an_open_read_seam_on_every_door():
     authorized = next(row for row in result["rungs"] if row["name"] == "authorized")
 
     assert authorized["state"] == "observed"
-    assert {
-        door: row["state"]
-        for door, row in authorized["details"]["doors"].items()
-    } == {"cli": "observed", "mcp": "observed", "toolbox": "observed"}
+    assert {door: row["state"] for door, row in authorized["details"]["doors"].items()} == {
+        "cli": "observed",
+        "mcp": "observed",
+        "toolbox": "observed",
+    }

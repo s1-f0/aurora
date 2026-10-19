@@ -32,6 +32,7 @@ never be committed. The committable artifact is the INSTALLER, and `doctor --dep
 report when it has not been run -- otherwise this repeats the console-fix trap, where half the
 fix lived in a file that could not be version-controlled.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,10 +40,8 @@ import os
 import subprocess
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.paths import repo_root  # noqa: E402
+from core.paths import repo_root
 
 ROOT = repo_root()
 INSTALLER = ROOT / "scripts" / "githooks" / "install_git_hooks.py"
@@ -56,9 +55,18 @@ DERIVED_DOCS = ("MODULE_INDEX.md", "PHYSICS.md", "MAP.md", "DOORS.md", "PRIOR_AR
 
 
 def _run(args, **kw):
-    return subprocess.run(args, capture_output=True, text=True, cwd=str(ROOT),
-                          encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
-                          close_fds=True, timeout=180, **kw)
+    return subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        encoding="utf-8",
+        errors="replace",
+        stdin=subprocess.DEVNULL,
+        close_fds=True,
+        timeout=180,
+        **kw,
+    )
 
 
 # ------------------------------------------------------------------ the installer
@@ -67,18 +75,20 @@ def test_w1_an_installer_exists_because_hooks_cannot_be_committed():
     survive a fresh clone -- the same trap the console fix fell into."""
     assert INSTALLER.exists(), (
         "no scripts/githooks/install_git_hooks.py -- a hook that cannot be installed from tracked "
-        "code does not survive a clone, and this repo has already been bitten by exactly that")
+        "code does not survive a clone, and this repo has already been bitten by exactly that"
+    )
 
 
 def test_w2_installer_is_idempotent_and_actually_installs():
     r1 = _run([sys.executable, "-X", "utf8", str(INSTALLER)])
     assert r1.returncode == 0, f"installer failed: {r1.stdout}\n{r1.stderr}"
     import subprocess as _sp
-    cfg = _sp.run(["git","config","core.hooksPath"], capture_output=True, text=True,
-                  cwd=str(ROOT)).stdout.strip()
-    assert cfg.replace(chr(92),"/").endswith("scripts/githooks"), (
+
+    cfg = _sp.run(["git", "config", "core.hooksPath"], capture_output=True, text=True, cwd=str(ROOT)).stdout.strip()
+    assert cfg.replace(chr(92), "/").endswith("scripts/githooks"), (
         "core.hooksPath not set to scripts/githooks -- the hooks exist and are tracked, but "
-        "git is not looking at them, so nothing runs at the write edge (got %r)" % cfg)
+        f"git is not looking at them, so nothing runs at the write edge (got {cfg!r})"
+    )
     assert HOOK.exists(), "tracked hook script missing"
     r2 = _run([sys.executable, "-X", "utf8", str(INSTALLER)])
     assert r2.returncode == 0, "installer is not idempotent -- second run failed"
@@ -91,7 +101,8 @@ def test_w3_doctor_deploy_reports_when_the_hook_is_missing():
     out = (r.stdout or "") + (r.stderr or "")
     assert "hook" in out.lower(), (
         "doctor --deploy says nothing about the pre-commit hook, so a fresh deploy cannot "
-        "discover that its write-edge enforcement is missing:\n" + out[:600])
+        "discover that its write-edge enforcement is missing:\n" + out[:600]
+    )
 
 
 # ------------------------------------------------------- fix 1: derived != source
@@ -100,12 +111,12 @@ def test_w4_hook_regenerates_derived_docs_instead_of_only_checking_them():
     fresh, not fail because they went stale the moment the code changed."""
     assert HOOK.exists(), "tracked hook script missing"
     body = HOOK.read_text(encoding="utf-8", errors="replace")
-    src = (ROOT / "scripts" / "githooks" / "pre_commit.py").read_text(
-        encoding="utf-8", errors="replace")
+    src = (ROOT / "scripts" / "githooks" / "pre_commit.py").read_text(encoding="utf-8", errors="replace")
     joined = body + src
     assert "gen_" in joined or "regen" in joined.lower(), (
         "the hook does not regenerate the derived docs -- checking a derivative for freshness "
-        "is a category error that guarantees a permanent race")
+        "is a category error that guarantees a permanent race"
+    )
 
 
 def test_w5_regeneration_makes_the_freshness_gate_pass():
@@ -120,14 +131,15 @@ def test_w5_regeneration_makes_the_freshness_gate_pass():
     commit now regenerates. A pin that fires on a transient state teaches people to ignore
     pins, which is the same disease one level down from the one being fixed here.
     """
-    from scripts.githooks import pre_commit as pc  # noqa
+    from scripts.githooks import pre_commit as pc
 
     ok, note = pc.regenerate_derived(stage=False)
     assert ok, f"a generator did not run, so freshness cannot be restored: {note}"
     r = _run([sys.executable, "-X", "utf8", "scripts/checkers/check_comprehensibility.py"])
     assert r.returncode == 0, (
         "regeneration ran but the freshness gate still fails -- the generators and the checker "
-        f"disagree about what fresh means:\n{r.stdout[-800:]}")
+        f"disagree about what fresh means:\n{r.stdout[-800:]}"
+    )
 
 
 # ------------------------------------------------------------- fix 2: the ratchet
@@ -136,25 +148,28 @@ def test_w6_a_counted_baseline_exists_so_green_is_achievable_today():
     which is precisely how a 30-day outage goes unnoticed."""
     assert BASELINE.exists(), (
         "no state/ci/guardrail_baseline.json -- with live debt in wiring and door-parity, an "
-        "absolute gate can never pass, so it teaches everyone to ignore it")
+        "absolute gate can never pass, so it teaches everyone to ignore it"
+    )
     data = json.loads(BASELINE.read_text(encoding="utf-8"))
-    assert isinstance(data.get("counts"), dict) and data["counts"], "baseline records no counts"
+    assert isinstance(data.get("counts"), dict), "baseline records no counts"
+    assert data["counts"], "baseline records no counts"
 
 
 def test_w7_baseline_matches_reality_or_is_stale_loudly():
     """A baseline that drifts above reality silently re-hides debt someone already paid down."""
     data = json.loads(BASELINE.read_text(encoding="utf-8"))
-    from scripts.githooks import pre_commit as pc  # noqa
+    from scripts.githooks import pre_commit as pc
+
     live = pc.guardrail_counts()
-    worse = {k: (live.get(k), v) for k, v in data["counts"].items()
-             if live.get(k, 0) > v}
+    worse = {k: (live.get(k), v) for k, v in data["counts"].items() if live.get(k, 0) > v}
     assert not worse, f"guardrail debt INCREASED beyond the baseline: {worse}"
 
 
 def test_w8_the_hook_refuses_a_new_violation():
     """The point of the whole exercise: a violation is refused by the machine in front of you,
     in the second you make it -- not by a badge tomorrow that nobody reads."""
-    from scripts.githooks import pre_commit as pc  # noqa
+    from scripts.githooks import pre_commit as pc
+
     # Construct the increase EXPLICITLY rather than by decrementing the recorded baseline.
     # The first draft did the latter, and it broke the moment the debt was actually paid to
     # zero: max(0, 0-1) == 0, so the "tightened" baseline equalled reality and the ratchet

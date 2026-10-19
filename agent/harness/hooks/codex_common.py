@@ -5,6 +5,7 @@ payloads are not interchangeable.  This module is the explicit Codex boundary: e
 seat resolution, canonical ``apply_patch`` path extraction, bounded raw-payload capture, and
 cross-config duplicate suppression.  It contains no model calls and consumes no bus cursor.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -14,12 +15,9 @@ import re
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
-
-_STATE_ROOT = os.getenv("AKASHIC_RECALL_STATE_DIR") or os.path.join(
-    tempfile.gettempdir(), "akashic_recall"
-)
+_STATE_ROOT = os.getenv("AKASHIC_RECALL_STATE_DIR") or os.path.join(tempfile.gettempdir(), "akashic_recall")
 _CAP_DIR = os.path.join(_STATE_ROOT, "codex_payloads")
 _DEDUP_DIR = os.path.join(_STATE_ROOT, "codex_hook_dedup")
 _DEDUP_WINDOW_S = 4.0
@@ -39,7 +37,7 @@ def resolve_seat(session_id: str) -> str:
         return (os.getenv("AKASHIC_AGENT_ID") or "").strip() or "unknown"
 
 
-def event_seat(data: Dict[str, Any]) -> str:
+def event_seat(data: dict[str, Any]) -> str:
     return resolve_seat(str(data.get("session_id") or ""))
 
 
@@ -87,18 +85,17 @@ def subject_context(seat: str, session_id: str) -> str:
                 f"declared={pointer_subject or 'UNKNOWN'}, active={seat})"
             )
     lines.append(
-        "first law: attribution is not verification; before adopting a receipt, ask "
-        "whether its subject is you."
+        "first law: attribution is not verification; before adopting a receipt, ask whether its subject is you."
     )
     return "\n".join(lines)
 
 
-def subject_label(data: Dict[str, Any], seat: str | None = None) -> str:
+def subject_label(data: dict[str, Any], seat: str | None = None) -> str:
     seat = seat or event_seat(data)
-    return f"[akashic subject={seat} session={str(data.get('session_id') or 'unknown')}]"
+    return f"[akashic subject={seat} session={data.get('session_id') or 'unknown'!s}]"
 
 
-def dedup_should_skip(data: Dict[str, Any]) -> bool:
+def dedup_should_skip(data: dict[str, Any]) -> bool:
     """Atomically suppress the duplicate caused by merged user and repo hook sources."""
     try:
         key_material = [
@@ -111,9 +108,7 @@ def dedup_should_skip(data: Dict[str, Any]) -> bool:
             data.get("prompt", ""),
             data.get("tool_input", {}),
         ]
-        key = hashlib.sha256(
-            json.dumps(key_material, sort_keys=True, default=str).encode("utf-8")
-        ).hexdigest()[:32]
+        key = hashlib.sha256(json.dumps(key_material, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:32]
         os.makedirs(_DEDUP_DIR, exist_ok=True)
         now = time.time()
         try:
@@ -134,7 +129,7 @@ def dedup_should_skip(data: Dict[str, Any]) -> bool:
         return False
 
 
-def capture_payload(data: Dict[str, Any]) -> None:
+def capture_payload(data: dict[str, Any]) -> None:
     """Best-effort bounded capture; diagnostics can never block the lifecycle event."""
     try:
         from agent.harness.capture import capture
@@ -154,13 +149,13 @@ def _absolute_patch_path(raw: str, cwd: str) -> str:
     return os.path.normpath(str(path))
 
 
-def action_paths(data: Dict[str, Any]) -> List[str]:
+def action_paths(data: dict[str, Any]) -> list[str]:
     if str(data.get("tool_name") or "") != "apply_patch":
         return []
     ti = data.get("tool_input")
     command = str(ti.get("command") or "") if isinstance(ti, dict) else ""
     cwd = str(data.get("cwd") or os.getcwd())
-    out: List[str] = []
+    out: list[str] = []
     for raw in _PATCH_PATH.findall(command):
         path = _absolute_patch_path(raw, cwd)
         if path not in out:
@@ -168,7 +163,7 @@ def action_paths(data: Dict[str, Any]) -> List[str]:
     return out
 
 
-def action_targets(data: Dict[str, Any]) -> List[str]:
+def action_targets(data: dict[str, Any]) -> list[str]:
     from core.recall.at_action import normalize_target
 
     tool = str(data.get("tool_name") or "")
@@ -182,7 +177,7 @@ def action_targets(data: Dict[str, Any]) -> List[str]:
     return []
 
 
-def in_scope_paths(data: Dict[str, Any]) -> List[str]:
+def in_scope_paths(data: dict[str, Any]) -> list[str]:
     try:
         from agent.harness.scope import file_in_scope
 
@@ -191,7 +186,7 @@ def in_scope_paths(data: Dict[str, Any]) -> List[str]:
         return []
 
 
-def event_in_scope(data: Dict[str, Any]) -> bool:
+def event_in_scope(data: dict[str, Any]) -> bool:
     tool = str(data.get("tool_name") or "")
     if tool == "apply_patch":
         return bool(in_scope_paths(data))
@@ -201,9 +196,7 @@ def event_in_scope(data: Dict[str, Any]) -> bool:
 
             ti = data.get("tool_input")
             ti = ti if isinstance(ti, dict) else {}
-            return shell_in_scope(
-                str(data.get("cwd") or os.getcwd()), str(ti.get("command") or "")
-            )
+            return shell_in_scope(str(data.get("cwd") or os.getcwd()), str(ti.get("command") or ""))
         except Exception:
             return False
     return False
@@ -214,8 +207,8 @@ def touch_working(seat: str, session_id: str) -> None:
     if not seat or seat == "unknown" or not session_id:
         return
     try:
-        from core.comm.bus import NS
         from core.comm import roster
+        from core.comm.bus import NS
 
         roster.heartbeat(NS, seat, session_id, phase="working")
     except Exception:

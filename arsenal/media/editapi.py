@@ -15,8 +15,10 @@ track follows 0.26 s later and its waveform about 4 s after that.
 Routes whose primitive is not built yet answer 503 {"error": "arsenal.media.<module> not built yet"}; work still in
 the queue answers 202 {"state": ...}.
 """
+
 from __future__ import annotations
 
+import contextlib
 import itertools
 import math
 import os
@@ -26,22 +28,40 @@ import secrets
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from . import edit, ff
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 PREFIX = "/api/edit/"
-VIDEO_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm",
-               ".mkv": "video/x-matroska"}
-AUDIO_TYPES = {".ogg": "audio/ogg", ".opus": "audio/ogg", ".oga": "audio/ogg", ".m4a": "audio/mp4",
-               ".mp4": "audio/mp4", ".aac": "audio/aac", ".flac": "audio/flac", ".wav": "audio/wav",
-               ".mp3": "audio/mpeg", ".mka": "audio/x-matroska", ".webm": "audio/webm"}
+VIDEO_TYPES = {
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+    ".mkv": "video/x-matroska",
+}
+AUDIO_TYPES = {
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",
+    ".aac": "audio/aac",
+    ".flac": "audio/flac",
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".mka": "audio/x-matroska",
+    ".webm": "audio/webm",
+}
 MEDIA_JOBS = ("demux", "peaks", "shots")
 PRIORITY = {"demux": 0, "peaks": 1, "render": 2, "lossless": 2, "shots": 3}
 NEEDS = {"demux": ("audio", "demux"), "peaks": ("peaks", "peaks"), "shots": ("shots", "shots")}
-DERIVED = {"demux": "audio", "peaks": "peaks", "shots": "shots"}       # job kind -> its key in rec["derived"]
-BUILDERS: Dict[str, Callable] = {"demux": edit.build_demux, "peaks": edit.build_peaks, "shots": edit.build_shots}
+DERIVED = {"demux": "audio", "peaks": "peaks", "shots": "shots"}  # job kind -> its key in rec["derived"]
+BUILDERS: dict[str, Callable] = {"demux": edit.build_demux, "peaks": edit.build_peaks, "shots": edit.build_shots}
 KEEP_JOBS = 500
 _JID = r"j\d+-[0-9a-f]{6}"
 
@@ -55,15 +75,16 @@ class Jobs:
     """Background work, one job at a time, in priority order; a job is a callable taking progress(fraction)."""
 
     def __init__(self):
-        self._q: "queue.PriorityQueue" = queue.PriorityQueue()
-        self._jobs: Dict[str, dict] = {}
-        self._by_key: Dict[str, str] = {}
+        self._q: queue.PriorityQueue = queue.PriorityQueue()
+        self._jobs: dict[str, dict] = {}
+        self._by_key: dict[str, str] = {}
         self._lock = threading.Lock()
         self._seq = itertools.count(1)
-        self._worker: Optional[threading.Thread] = None
+        self._worker: threading.Thread | None = None
 
-    def submit(self, kind: str, fn: Callable[[Callable[[float], None]], object], *, key: Optional[str] = None,
-               **meta) -> dict:
+    def submit(
+        self, kind: str, fn: Callable[[Callable[[float], None]], object], *, key: str | None = None, **meta
+    ) -> dict:
         """Queue fn; with a key, a job of that key already queued or running is returned instead (no twins)."""
         with self._lock:
             if key and key in self._by_key:
@@ -71,9 +92,19 @@ class Jobs:
                 if job and job["state"] in ("queued", "running"):
                     return self._view(job)
             n = next(self._seq)
-            job = {"id": f"j{n}-{secrets.token_hex(3)}", "kind": kind, "key": key, "state": "queued",
-                   "progress": 0.0, "result": None, "error": None, "created_at": time.time(), "started_at": None,
-                   "finished_at": None, **meta}
+            job = {
+                "id": f"j{n}-{secrets.token_hex(3)}",
+                "kind": kind,
+                "key": key,
+                "state": "queued",
+                "progress": 0.0,
+                "result": None,
+                "error": None,
+                "created_at": time.time(),
+                "started_at": None,
+                "finished_at": None,
+                **meta,
+            }
             self._jobs[job["id"]] = job
             if key:
                 self._by_key[key] = job["id"]
@@ -84,12 +115,12 @@ class Jobs:
                 self._worker.start()
             return self._view(job)
 
-    def get(self, jid: str) -> Optional[dict]:
+    def get(self, jid: str) -> dict | None:
         with self._lock:
             job = self._jobs.get(jid)
             return self._view(job) if job else None
 
-    def for_key(self, key: str) -> Optional[dict]:
+    def for_key(self, key: str) -> dict | None:
         with self._lock:
             jid = self._by_key.get(key)
             return self._view(self._jobs[jid]) if jid in self._jobs else None
@@ -117,7 +148,7 @@ class Jobs:
 
     def _prune(self) -> None:
         done = [j for j in self._jobs.values() if j["state"] in ("done", "error")]
-        for j in sorted(done, key=lambda j: j["finished_at"] or 0)[:max(0, len(self._jobs) - KEEP_JOBS)]:
+        for j in sorted(done, key=lambda j: j["finished_at"] or 0)[: max(0, len(self._jobs) - KEEP_JOBS)]:
             self._jobs.pop(j["id"], None)
             if j.get("key") and self._by_key.get(j["key"]) == j["id"]:
                 del self._by_key[j["key"]]
@@ -150,10 +181,10 @@ class EditService:
         self.jobs = Jobs()
         roots = list(getattr(getattr(app, "library", None), "roots", []) or [])
         self.out_root = (Path(roots[0]) / edit.OUT_FOLDER) if roots else ff.state_dir() / "edit-renders"
-        self._bodies: Dict[str, Tuple[int, bytes]] = {}
+        self._bodies: dict[str, tuple[int, bytes]] = {}
 
     # ----------------------------------------------------------------- media jobs
-    def media_jobs(self, rec: dict, *, retry: bool = False) -> Dict[str, str]:
+    def media_jobs(self, rec: dict, *, retry: bool = False) -> dict[str, str]:
         """{demux, peaks, shots: "queued"|"running"|"done"|"error: ..."}; queues what is missing."""
         states = {}
         for kind in MEDIA_JOBS:
@@ -167,11 +198,15 @@ class EditService:
             key = f"{kind}:{rec['id']}"
             job = self.jobs.for_key(key)
             if job and (job["state"] == "done" or (retry and job["state"] == "error")):
-                self.jobs.forget(key)     # done but its files are gone, or a retry was asked for
+                self.jobs.forget(key)  # done but its files are gone, or a retry was asked for
                 job = None
             if job is None:
-                job = self.jobs.submit(kind, lambda progress, k=kind, mid=rec["id"]: BUILDERS[k](mid, progress),
-                                       key=key, media_id=rec["id"])
+                job = self.jobs.submit(
+                    kind,
+                    lambda progress, k=kind, mid=rec["id"]: BUILDERS[k](mid, progress),
+                    key=key,
+                    media_id=rec["id"],
+                )
             states[kind] = f"error: {job['error']}" if job["state"] == "error" else job["state"]
         return states
 
@@ -205,8 +240,27 @@ def service(app) -> EditService:
 def media_view(rec: dict) -> dict:
     """What the page gets for one imported file: the facts the bin and the inspector show, and its URLs."""
     mid = rec["id"]
-    keys = ("id", "name", "path", "size", "mtime_ns", "duration_s", "container", "kind", "recorded_at", "encoder",
-            "video", "audio", "n_audio", "chapters", "links", "tags", "facts_from", "facts_notes", "imported_at")
+    keys = (
+        "id",
+        "name",
+        "path",
+        "size",
+        "mtime_ns",
+        "duration_s",
+        "container",
+        "kind",
+        "recorded_at",
+        "encoder",
+        "video",
+        "audio",
+        "n_audio",
+        "chapters",
+        "links",
+        "tags",
+        "facts_from",
+        "facts_notes",
+        "imported_at",
+    )
     out = {k: rec.get(k) for k in keys}
     # every time above is a file time; Chrome's <video>.currentTime counts on the container's own clock (measured,
     # Chrome 154: a source whose container clock starts at 1.4 s opens at currentTime 1.4), so the page converts by it
@@ -214,9 +268,14 @@ def media_view(rec: dict) -> dict:
     n = len(rec.get("audio") or [])
     base = f"{PREFIX}media/{mid}"
     out["tracks"] = n
-    out["urls"] = {"video": f"{base}/video", "audio": [f"{base}/audio/{i}" for i in range(n)],
-                   "peaks": [f"{base}/peaks/{i}" for i in range(n)], "shots": f"{base}/shots",
-                   "keyframes": f"{base}/keyframes", "cutplan": f"{base}/cutplan"}
+    out["urls"] = {
+        "video": f"{base}/video",
+        "audio": [f"{base}/audio/{i}" for i in range(n)],
+        "peaks": [f"{base}/peaks/{i}" for i in range(n)],
+        "shots": f"{base}/shots",
+        "keyframes": f"{base}/keyframes",
+        "cutplan": f"{base}/cutplan",
+    }
     return out
 
 
@@ -224,7 +283,7 @@ def media_view(rec: dict) -> dict:
 # routes
 # =================================================================================================
 
-Reply = Optional[Tuple[int, object]]
+Reply = tuple[int, object] | None
 
 
 def _import(svc: EditService, handler, query, body) -> Reply:
@@ -240,19 +299,19 @@ def _import(svc: EditService, handler, query, body) -> Reply:
         except (TypeError, ValueError):
             last_ms = 0
         path = None
-        try:
+        with contextlib.suppress(edit.NotBuilt):
             path = edit.module("catalog", "resolve_dropped").resolve_dropped(name, size, last_ms, roots=roots)
-        except edit.NotBuilt:
-            pass
         if not path:
             clip = handler.app.library.resolve(name, size)
             path = clip["path"] if clip else None
         if not path:
-            return 404, {"error": f"{name} ({size} bytes) is not under the library roots",
-                         "hint": "a browser drop carries a name and size, never a path: move the file under a library "
-                                 "root, start the server with --root <its folder>, or import it by path "
-                                 "(py -m arsenal.media edit add <project> <file>)",
-                         "roots": roots}
+            return 404, {
+                "error": f"{name} ({size} bytes) is not under the library roots",
+                "hint": "a browser drop carries a name and size, never a path: move the file under a library "
+                "root, start the server with --root <its folder>, or import it by path "
+                f"({ff.pyl()} -m arsenal.media edit add <project> <file>)",
+                "roots": roots,
+            }
     rec = edit.import_media(path)
     return 200, {"media": media_view(rec), "jobs": svc.media_jobs(rec, retry=True)}
 
@@ -294,8 +353,9 @@ def _not_ready(svc: EditService, rec: dict, kind: str) -> Reply:
 def _track(rec: dict, n: str) -> int:
     i = int(n)
     if i >= len(rec.get("audio") or []):
-        raise edit.EditError(f"{rec.get('name')} has {len(rec.get('audio') or [])} audio track(s), no track {i}",
-                             status=404)
+        raise edit.EditError(
+            f"{rec.get('name')} has {len(rec.get('audio') or [])} audio track(s), no track {i}", status=404
+        )
     return i
 
 
@@ -336,7 +396,7 @@ def _float_arg(query, name: str) -> float:
         v = float(raw)
     except ValueError:
         v = math.nan
-    if not math.isfinite(v):                # float() takes 'nan' and 'inf'; neither is a time
+    if not math.isfinite(v):  # float() takes 'nan' and 'inf'; neither is a time
         raise edit.EditError(f"{name} must be a number of seconds, not {raw!r}")
     return v
 
@@ -351,10 +411,19 @@ def _presets(svc, handler, query, body) -> Reply:
     rows = []
     for pid, p in edit.presets().items():
         if pid in edit.ALPHA_PRESETS:
-            continue                       # timeline renders carry no alpha; the clip exporter serves those
-        rows.append({"id": pid, "label": p.get("label") or pid.replace("_", " "), "width": p.get("width"),
-                     "height": p.get("height"), "fps": p.get("fps"), "container": p.get("container"),
-                     "loudness": p.get("loudness"), "why": p.get("why")})
+            continue  # timeline renders carry no alpha; the clip exporter serves those
+        rows.append(
+            {
+                "id": pid,
+                "label": p.get("label") or pid.replace("_", " "),
+                "width": p.get("width"),
+                "height": p.get("height"),
+                "fps": p.get("fps"),
+                "container": p.get("container"),
+                "loudness": p.get("loudness"),
+                "why": p.get("why"),
+            }
+        )
     return 200, {"presets": rows}
 
 
@@ -388,7 +457,7 @@ def _render(svc: EditService, handler, query, body, pid) -> Reply:
     if not any(c.get("lane") == "V1" for c in doc.get("clips") or []):
         return 400, {"error": "the timeline has no clips on V1"}
     preset = body.get("preset") or "youtube_4k60_fast"
-    p = edit.resolve_preset(preset)          # 400 unknown, 503 when the export lane is not built
+    p = edit.resolve_preset(preset)  # 400 unknown, 503 when the export lane is not built
     out = body.get("out")
     if out is not None:
         if not isinstance(out, str) or not os.path.isabs(out):
@@ -400,9 +469,13 @@ def _render(svc: EditService, handler, query, body, pid) -> Reply:
     problems = edit.validate(doc, media_lookup=edit._registry_lookup)
     if problems:
         return 400, {"error": "; ".join(problems[:5]), "problems": problems}
-    job = svc.jobs.submit("render", lambda progress: _render_summary(
-        edit.render(doc, p, out=out, out_root=svc.out_root, progress=progress)),
-        project_id=pid, rev=doc.get("rev"), preset=p["id"])
+    job = svc.jobs.submit(
+        "render",
+        lambda progress: _render_summary(edit.render(doc, p, out=out, out_root=svc.out_root, progress=progress)),
+        project_id=pid,
+        rev=doc.get("rev"),
+        preset=p["id"],
+    )
     return 202, {"job": job}
 
 
@@ -414,24 +487,27 @@ def _job(svc, handler, query, body, jid) -> Reply:
 
 
 _M, _P = edit.MID_PATTERN, edit.PID_PATTERN
-ROUTES: List[Tuple[str, "re.Pattern", Callable]] = [(m, re.compile(rx), fn) for m, rx, fn in (
-    ("GET", r"/api/edit/media", _media_list),
-    ("GET", rf"/api/edit/media/({_M})", _media_get),
-    ("GET", rf"/api/edit/media/({_M})/video", _video),
-    ("GET", rf"/api/edit/media/({_M})/audio/(\d{{1,2}})", _audio),
-    ("GET", rf"/api/edit/media/({_M})/peaks/(\d{{1,2}})", _peaks),
-    ("GET", rf"/api/edit/media/({_M})/shots", _shots),
-    ("GET", rf"/api/edit/media/({_M})/keyframes", _keyframes),
-    ("GET", rf"/api/edit/media/({_M})/cutplan", _cutplan),
-    ("GET", r"/api/edit/projects", _projects),
-    ("GET", rf"/api/edit/projects/({_P})", _project_get),
-    ("GET", rf"/api/edit/jobs/({_JID})", _job),
-    ("GET", r"/api/edit/presets", _presets),
-    ("POST", r"/api/edit/import", _import),
-    ("POST", r"/api/edit/projects", _project_new),
-    ("POST", rf"/api/edit/projects/({_P})/render", _render),
-    ("PUT", rf"/api/edit/projects/({_P})", _project_put),
-)]
+ROUTES: list[tuple[str, re.Pattern, Callable]] = [
+    (m, re.compile(rx), fn)
+    for m, rx, fn in (
+        ("GET", r"/api/edit/media", _media_list),
+        ("GET", rf"/api/edit/media/({_M})", _media_get),
+        ("GET", rf"/api/edit/media/({_M})/video", _video),
+        ("GET", rf"/api/edit/media/({_M})/audio/(\d{{1,2}})", _audio),
+        ("GET", rf"/api/edit/media/({_M})/peaks/(\d{{1,2}})", _peaks),
+        ("GET", rf"/api/edit/media/({_M})/shots", _shots),
+        ("GET", rf"/api/edit/media/({_M})/keyframes", _keyframes),
+        ("GET", rf"/api/edit/media/({_M})/cutplan", _cutplan),
+        ("GET", r"/api/edit/projects", _projects),
+        ("GET", rf"/api/edit/projects/({_P})", _project_get),
+        ("GET", rf"/api/edit/jobs/({_JID})", _job),
+        ("GET", r"/api/edit/presets", _presets),
+        ("POST", r"/api/edit/import", _import),
+        ("POST", r"/api/edit/projects", _project_new),
+        ("POST", rf"/api/edit/projects/({_P})/render", _render),
+        ("PUT", rf"/api/edit/projects/({_P})", _project_put),
+    )
+]
 
 
 def _same_machine(handler) -> bool:
@@ -445,16 +521,21 @@ def handle(handler, method: str, path: str, query: dict, body_reader: Callable[[
     body: object = None
     if method in ("POST", "PUT"):
         try:
-            body = body_reader()        # read first: a refused request leaves the keep-alive connection usable
+            body = body_reader()  # read first: a refused request leaves the keep-alive connection usable
         except ValueError as exc:
             return handler._json(400, {"error": f"the body is not JSON: {exc}"})
         if not _same_machine(handler):
-            return handler._json(403, {"error": f"editor writes are accepted from this machine's pages only, not "
-                                                f"{handler.headers.get('Origin')}"})
+            return handler._json(
+                403,
+                {
+                    "error": f"editor writes are accepted from this machine's pages only, not "
+                    f"{handler.headers.get('Origin')}"
+                },
+            )
         body = {} if body is None else body
         if not isinstance(body, dict):
             return handler._json(400, {"error": "the body must be a JSON object"})
-    for verb, rx, fn in ROUTES:
+    for verb, rx, fn in ROUTES:  # noqa: B007  # fn is the matched route's handler, called after the break
         m = rx.fullmatch(path) if verb == method else None
         if m:
             break
@@ -473,3 +554,4 @@ def handle(handler, method: str, path: str, query: dict, body_reader: Callable[[
     if reply is not None:
         status, payload = reply
         handler._json(status, payload)
+    return None

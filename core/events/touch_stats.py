@@ -28,42 +28,43 @@ THE THREE THINGS THIS MODULE REFUSES TO DO, each because the opposite has cost t
 
 Pure: every statistic is computed from records handed in. Nothing here reads Redis.
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 #: Distinct from 0, from None and from a missing key, and it is a STRING so that it survives JSON,
 #: a terminal render and a copy-paste into a report without quietly becoming null.
 UNCHECKABLE = "UNCHECKABLE"
 
 _WHY = {
-    "p95_hook_latency_ms":
-        "not captured: the PostToolUse payload carries no duration and touch.v1 does not stamp "
-        "one yet, so there is nothing to take a percentile of. Stamping it is one field in the "
-        "hook and the next slice after this one.",
-    "anchor_resolve_cost_ms":
-        "not captured: the context door (W0.6) is the thing that resolves an anchor, and it does "
-        "not exist yet, so there is no call to time.",
+    "p95_hook_latency_ms": "not captured: the PostToolUse payload carries no duration and touch.v1 does not stamp "
+    "one yet, so there is nothing to take a percentile of. Stamping it is one field in the "
+    "hook and the next slice after this one.",
+    "anchor_resolve_cost_ms": "not captured: the context door (W0.6) is the thing that resolves an anchor, and it does "
+    "not exist yet, so there is no call to time.",
 }
 
 
-def _pct(sorted_vals: Sequence[float], q: float) -> Optional[float]:
+def _pct(sorted_vals: Sequence[float], q: float) -> float | None:
     if not sorted_vals:
         return None
-    i = min(len(sorted_vals) - 1, max(0, int(round(q * (len(sorted_vals) - 1)))))
+    i = min(len(sorted_vals) - 1, max(0, round(q * (len(sorted_vals) - 1))))
     return sorted_vals[i]
 
 
-def compute(records: Sequence[Dict[str, Any]], *, now: float, window_h: float = 24.0,
-            drops: int = 0) -> Dict[str, Any]:
+def compute(records: Sequence[dict[str, Any]], *, now: float, window_h: float = 24.0, drops: int = 0) -> dict[str, Any]:
     """One report over the raw event records handed in.
 
     `records` are events:raw rows as dicts ({at, kind, agent_id, session_id, detail}), with `at`
     either a float epoch or an ISO string. The caller decides how many to read; this decides what
     they mean."""
     floor = now - window_h * 3600.0
-    rows: List[Dict[str, Any]] = []
-    oldest_seen: Optional[float] = None
+    rows: list[dict[str, Any]] = []
+    oldest_seen: float | None = None
 
     for r in records or []:
         at = _at(r)
@@ -76,7 +77,7 @@ def compute(records: Sequence[Dict[str, Any]], *, now: float, window_h: float = 
     touches = [r for r in rows if r.get("kind") == "touch"]
 
     # ---- coverage, across every kind: the number the wave is for
-    by_kind: Dict[str, Dict[str, int]] = {}
+    by_kind: dict[str, dict[str, int]] = {}
     with_sid = 0
     for r in rows:
         k = str(r.get("kind") or "?")
@@ -95,7 +96,7 @@ def compute(records: Sequence[Dict[str, Any]], *, now: float, window_h: float = 
     }
 
     # ---- rate, per seat
-    per_hour: Dict[str, float] = {}
+    per_hour: dict[str, float] = {}
     span_h = max(1e-9, min(window_h, (now - oldest_seen) / 3600.0) if oldest_seen else window_h)
     for r in touches:
         a = str(r.get("agent_id") or "?")
@@ -108,7 +109,7 @@ def compute(records: Sequence[Dict[str, Any]], *, now: float, window_h: float = 
     # empty; the distribution is over touches whose targets are KNOWN, and the unknown share is
     # reported beside it rather than folded into it. Caught by running this on live data, where
     # the first render said mean=0.13 and the number was a lie told by its own denominator.
-    counts: List[float] = []
+    counts: list[float] = []
     incomplete = truncated = unknown = 0
     for r in touches:
         d = r.get("detail") or {}
@@ -123,7 +124,7 @@ def compute(records: Sequence[Dict[str, Any]], *, now: float, window_h: float = 
             unknown += 1
     counts.sort()
 
-    report: Dict[str, Any] = {
+    report: dict[str, Any] = {
         "window_h": window_h,
         "session_coverage": coverage,
         "touches": len(touches),
@@ -149,25 +150,26 @@ def compute(records: Sequence[Dict[str, Any]], *, now: float, window_h: float = 
 
     # The ring ate part of the window: every rate above is a floor, not a measurement.
     report["window_truncated_by_ring"] = bool(
-        oldest_seen is not None and (now - oldest_seen) < window_h * 3600.0 * 0.999
-        and len(rows) > 0)
+        oldest_seen is not None and (now - oldest_seen) < window_h * 3600.0 * 0.999 and len(rows) > 0
+    )
     return report
 
 
-def _at(r: Dict[str, Any]) -> Optional[float]:
+def _at(r: dict[str, Any]) -> float | None:
     v = r.get("at")
     if isinstance(v, (int, float)):
         return float(v)
     if isinstance(v, str) and v:
         try:
             import datetime as _dt
+
             return _dt.datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
-        except Exception:                                                 # noqa: BLE001
+        except Exception:  # noqa: BLE001
             return None
     return None
 
 
-def render(rep: Dict[str, Any]) -> str:
+def render(rep: dict[str, Any]) -> str:
     """One screen a human reads, with the headline first and the holes visible."""
     cov = rep["session_coverage"]
     share = cov["share"]
@@ -180,22 +182,28 @@ def render(rep: Dict[str, Any]) -> str:
     ]
     for k, v in sorted(cov["by_kind"].items(), key=lambda kv: -kv[1]["total"])[:8]:
         s = (v["with_session"] / v["total"]) if v["total"] else None
-        out.append(f"      {k:<22} {v['with_session']:>5}/{v['total']:<6} "
-                   f"{(f'{s:.0%}' if s is not None else '-'):>5}")
+        out.append(f"      {k:<22} {v['with_session']:>5}/{v['total']:<6} {(f'{s:.0%}' if s is not None else '-'):>5}")
     out += ["", f"  TOUCHES            {rep['touches']} in window"]
     for a, n in sorted(rep["touches_per_hour"].items(), key=lambda kv: -kv[1]):
         out.append(f"      {a:<22} {n:>8.2f}/h")
     t = rep["targets_per_touch"]
     out += [
         "",
-        f"  TARGETS PER TOUCH  mean={t['mean']} p50={t['p50']} p95={t['p95']} max={t['max']}"
-        f"   (over {t['known']} knowable; {t['unknown']} unknowable excluded, not counted as zero)",
-        f"  COULD NOT SEE IN   {_share(rep['incomplete_share'])}   "
-        f"(a command whose targets are unknowable, reported as null, never as zero)",
+        (
+            f"  TARGETS PER TOUCH  mean={t['mean']} p50={t['p50']} p95={t['p95']} max={t['max']}"
+            f"   (over {t['known']} knowable; {t['unknown']} unknowable excluded, not counted as zero)"
+        ),
+        (
+            f"  COULD NOT SEE IN   {_share(rep['incomplete_share'])}   "
+            f"(a command whose targets are unknowable, reported as null, never as zero)"
+        ),
         f"  TRUNCATED AT CAP   {_share(rep['truncated_share'])}",
         f"  RING RETENTION     {rep['ring_retention_h']}h"
-        + ("   <- SHORTER THAN THE WINDOW: every rate above is a floor, not a measurement"
-           if rep.get("window_truncated_by_ring") else ""),
+        + (
+            "   <- SHORTER THAN THE WINDOW: every rate above is a floor, not a measurement"
+            if rep.get("window_truncated_by_ring")
+            else ""
+        ),
         f"  TOUCHES DROPPED    {rep['drops']}",
         "",
         "  NOT MEASURED (named rather than estimated):",
@@ -206,5 +214,5 @@ def render(rep: Dict[str, Any]) -> str:
     return "\n".join(out)
 
 
-def _share(v: Optional[float]) -> str:
+def _share(v: float | None) -> str:
     return f"{v:.1%}" if isinstance(v, float) else "UNKNOWN (no touches in window)"
