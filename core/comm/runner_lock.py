@@ -457,8 +457,24 @@ def _ts_epoch(ts, default: float = 0.0) -> float:
 
 
 def _pid_alive_default(pid) -> bool:
-    """Is this pid running? tasklist probe (the claude_stop.py pattern -- proven on this host).
+    """Is this pid running? tasklist on Windows, signal 0 elsewhere (the claude_stop.py pattern).
     FAIL TOWARD ALIVE: a probe error must never justify freeing a seat."""
+    if os.name != "nt":
+        # No tasklist off Windows: calling it always raised, so fail-toward-alive read every dead
+        # listener as alive and a crashed session's seat waited out its TTL. Signal 0 checks that
+        # the pid exists and delivers nothing.
+        try:
+            pid = int(pid)
+            if pid <= 0:
+                return False  # 0 and negatives name a process GROUP, never one listener
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False  # the one error that proves death
+        except PermissionError:
+            return True  # it exists; another user owns it
+        except Exception:
+            return True
+        return True
     try:
         import subprocess
 

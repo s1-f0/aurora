@@ -11,7 +11,97 @@ chat-completions loops stay species-specific until two of them stabilize side by
 
 from __future__ import annotations
 
+import contextlib
 import os
+import signal
+import sys
+
+# ---------------------------------------------------------------- stop signals
+# WHY: systemd (KillMode=control-group) and ManagedChild.terminate() stop a runner with SIGTERM.
+# Python's default SIGTERM action kills the process on the spot, so the runner's `finally` never
+# ran: no retire_seat, no runner_lock.release, no exit summary. Each restart left a dead holder on
+# the runner lock (the next daemon idled ~20 s on "a foreign runner holds the runner lock") and a
+# 'running' roster card the doctor paged as HARD WEDGE. The handler below makes a stop signal take
+# the same exit path as Ctrl-C always has.
+#
+# One-shot by design: the first SIGTERM/SIGINT sets BOTH to SIG_IGN before raising, so a second
+# signal (systemd and the daemon both send one; humans press Ctrl-C twice) cannot raise into the
+# cleanup it started. POSIX only: on Windows ManagedChild stops a child with TerminateProcess,
+# which no handler can catch, and Ctrl-C keeps its default -- that behaviour is unchanged.
+_STOP_SIGNAL_NAMES = ("SIGTERM", "SIGINT")
+_STOP_STATE: dict = {"signum": None, "installed": False}
+
+
+class StopSignal(KeyboardInterrupt):
+    """The KeyboardInterrupt a stop signal raises. A subclass, so every runner's existing
+    `except (KeyboardInterrupt, EOFError)` exit path catches it unchanged."""
+
+    def __init__(self, signum: int):
+        super().__init__(f"stop signal {signum}")
+        self.signum = int(signum)
+
+
+def _stop_signals() -> list:
+    return [s for s in (getattr(signal, n, None) for n in _STOP_SIGNAL_NAMES) if s is not None]
+
+
+def ignore_stop_signals() -> None:
+    """Disarm: SIG_IGN for SIGTERM/SIGINT. Call it FIRST in the cleanup, so a stop signal that
+    arrives while the cleanup runs cannot interrupt it. A no-op unless install_stop_signals()
+    armed this process (so Windows, and any runner that never armed, keep their old behaviour).
+    Never raises."""
+    if _STOP_STATE.get("installed"):
+        _ignore_stop_signals()
+
+
+def _ignore_stop_signals() -> None:
+    for s in _stop_signals():
+        with contextlib.suppress(ValueError, OSError):
+            signal.signal(s, signal.SIG_IGN)
+
+
+def _on_stop_signal(signum, _frame):
+    _STOP_STATE["signum"] = int(signum)
+    _ignore_stop_signals()
+    raise StopSignal(signum)
+
+
+def install_stop_signals() -> bool:
+    """Arm the one-shot stop handler: the first SIGTERM/SIGINT ignores both from then on and
+    raises StopSignal (a KeyboardInterrupt) in the main thread, so the runner's `finally`
+    (retire_seat, runner_lock.release) and its exit summary run. Install it right after the
+    runner lock is won, immediately before the try whose finally releases that lock.
+
+    Returns True when armed. False on Windows (deliberately unchanged) and when called off the
+    main thread (signal.signal refuses there). Never raises."""
+    if sys.platform == "win32":
+        return False
+    try:
+        for s in _stop_signals():
+            signal.signal(s, _on_stop_signal)
+    except (ValueError, OSError):
+        return False
+    _STOP_STATE["installed"] = True
+    return True
+
+
+def stop_requested() -> bool:
+    """True once a stop signal has arrived. A runner checks it at its loop top as a backstop:
+    a broad `except BaseException` somewhere in a turn could swallow the StopSignal, and the
+    handler has already set SIG_IGN, so without this check the runner would run on deaf to
+    every later SIGTERM until a SIGKILL."""
+    return _STOP_STATE.get("signum") is not None
+
+
+def stop_exit_code(default: int = 0) -> int:
+    """The exit code for a runner that stopped. SIGINT (Ctrl-C) keeps the old clean `default`.
+    Any other stop signal exits 128+signum, the shell convention for "killed by" -- so a
+    supervisor still sees an abnormal stop: before this handler a SIGTERM death read as -15, and
+    ManagedChild respawned it; an exit 0 would instead read as a deliberate stay-down."""
+    signum = _STOP_STATE.get("signum")
+    if signum is None or signum == getattr(signal, "SIGINT", None):
+        return default
+    return 128 + int(signum)
 
 
 def set_seat_agent(agent: str) -> str:

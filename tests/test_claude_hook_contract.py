@@ -141,9 +141,14 @@ def test_main_backfills_fail_then_resolves_success_once(tmp_path, monkeypatch):
     assert calls == [("contract-e2e", tgt, False), ("contract-e2e", tgt, True)], (
         "first success after a transcript failure must backfill FAIL then resolve SUCCESS"
     )
-    # same event again: the failure is watermarked -> no second backfill (never farm one failure)
+    # the same command succeeds again: the failure is watermarked -> no second backfill (never
+    # farm one failure). A second real call carries its OWN tool_use_id (every live PostToolUse
+    # payload does); reusing the fixture's id would be the double-registration of ONE call, which
+    # agent/harness/dedup.py collapses by design.
+    again = _bash_success_payload_for(cmd)
+    again["tool_use_id"] = "toolu_second_success_call"
     calls2 = []
-    _run_main(monkeypatch, _bash_success_payload_for(cmd), calls2, tmp_path)
+    _run_main(monkeypatch, again, calls2, tmp_path)
     assert calls2 == [("contract-e2e", tgt, True)]
 
 

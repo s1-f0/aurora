@@ -11,7 +11,7 @@ Class: reference
 > Companions: ARCHITECTURE.md (skeleton) - MODULE_INDEX.md (docstrings) -
 > PHYSICS.md (bounds+flags) - the charter docs/library/brief/20260719_the-master-map-documentation-as-projecti_a26fd3.md.
 
-## GAP queue (44 of 213 modules lack both pin and paper by name)
+## GAP queue (42 of 213 modules lack both pin and paper by name)
 
 - core/foundation/durable_reconcile.py
 - core/foundation/filelock.py
@@ -31,7 +31,6 @@ Class: reference
 - core/comm/interject.py
 - core/comm/lane_depths.py
 - core/comm/runner_lib.py
-- core/comm/runner_lock.py
 - core/comm/runtime_age.py
 - core/comm/session_exit.py
 - core/comm/session_state.py
@@ -50,7 +49,6 @@ Class: reference
 - core/narrative/chapter_lifecycle.py
 - core/narrative/theme_assigner.py
 - core/trust/action_authority.py
-- core/trust/grant_writer.py
 - core/fleet/model_roster.py
 - core/state/session_checkpoint.py
 - core/state/session_recovery.py
@@ -130,7 +128,7 @@ Class: reference
 | `interject.py` | Adaptive interjection router -- when a human types into a live agent session, decide whether the | GAP | GAP |  |
 | `kinds.py` | T176 s1 -- the kind registry: total resolution, so a miss stops reading as a decision. | tests/test_t175_skip_kinds_names_what_it_skips.py | GAP |  |
 | `lane_depths.py` | lane_depths -- the engine room's flow gauge source (T079-E2). | GAP | GAP | `BIFROST_NAMESPACE` |
-| `launcher.py` | Bifrost Launcher — spawn and monitor agent processes from the Bifrost UI. | tests/test_aurora_launcher.py | GAP | `AKASHIC_SHOW_CONSOLES`, `LAUNCHER_AUTO_REVIVE_JITTER`, `LAUNCHER_RESTART_BACKOFF`, `LAUNCHER_RESTART_BACKOFF_MAX`, `LAUNCHER_RESTART_MAX`, `LAUNCHER_RESTART_RESET` |
+| `launcher.py` | Bifrost Launcher — spawn and monitor agent processes from the Bifrost UI. | tests/test_aurora_launcher.py | GAP | `AKASHIC_SHOW_CONSOLES`, `AKASHIC_SUPERVISED_SEATS`, `LAUNCHER_AUTO_REVIVE_JITTER`, `LAUNCHER_RESTART_BACKOFF`, `LAUNCHER_RESTART_BACKOFF_MAX`, `LAUNCHER_RESTART_MAX`, `LAUNCHER_RESTART_RESET` |
 | `liveness.py` | Work-progress heartbeat (L1) -- pure observability for wedge detection. | tests/test_launcher_drainer_liveness.py | docs/library/design/20260701_agent-liveness-tier-stuck-lost-agent-fai_8c0d79.md | `AKASHIC_UNATTENDED_S`, `BIFROST_APPROACHING_WEDGE_SECONDS`, `BIFROST_NAMESPACE`, `BIFROST_WEDGE_SECONDS` |
 | `locks.py` | Advisory path-locks (Concurrency design C2). | tests/test_g4_latent_locks_age.py | GAP |  |
 | `mailbox.py` | mailbox -- T095 M0: shadow mailbox state index over the append-only lanes. | tests/test_axi_mailbox.py | docs/library/design/20260701_comms-mailbox-over-the-log-t095-governin_06357f.md | `AKASHIC_MAILBOX`, `BIFROST_NAMESPACE` |
@@ -148,7 +146,7 @@ Class: reference
 | `roster.py` | roster -- S2: the lobby. Per-seat liveness the whole fleet can read. | tests/test_axi_roster.py | docs/library/design/20260718_frontier-roster-playbook-opening-positio_fde0ed.md | `AKASHIC_RESUME_GAP_S`, `AKASHIC_ROSTER_CHURN_AT`, `AKASHIC_ROSTER_CHURN_WINDOW_S`, `AKASHIC_WORKLIVE_FRESH_S`, `AKASHIC_WORKLIVE_TTL_S` |
 | `router.py` | T060 N0: pure route explanation and bounded shadow-delivery counters. | tests/test_deconstruct_skill_router.py | docs/library/report/20260717_t060-n0-shadow-router-deepseek-review-pe_bf6b68.md |  |
 | `runner_lib.py` | core.comm.runner_lib -- shared hardening for OpenAI-compatible seat transports (K0, 2026-07-18). | GAP | GAP | `BIFROST_INCARNATION`, `BIFROST_NAMESPACE` |
-| `runner_lock.py` | Bifrost runner singleton-lock -- at most ONE live runner per agent id. | GAP | GAP | `BIFROST_NAMESPACE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_SESSION_ID` |
+| `runner_lock.py` | Bifrost runner singleton-lock -- at most ONE live runner per agent id. | tests/test_runner_lock_pid_alive_portable.py | GAP | `BIFROST_NAMESPACE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_SESSION_ID` |
 | `runtime_age.py` | runtime_age (T116) -- how much code a RUNNING process cannot possibly contain. | GAP | GAP | `BIFROST_NAMESPACE` |
 | `seat_identity.py` | seat_identity -- WHO AM I, resolved per SESSION instead of per PROCESS. | tests/test_axi_seat_identity.py | GAP | `AKASHIC_AGENT_ID`, `AKASHIC_CLAIM_TTL_S`, `BIFROST_NAMESPACE` |
 | `secret_intake.py` | Secret intake — credentials travel window -> file, never through a transcript. | tests/test_secret_intake_pins.py | GAP | `AKASHIC_SECRETS_DIR` |
@@ -289,7 +287,7 @@ Class: reference
 |---|---|---|---|---|
 | `action_authority.py` | One read-only authority detector shared by ToolBox execution and intent shadows. | GAP | GAP |  |
 | `capabilities.py` | Capability tokens + role templates -- the atomic vocabulary of the security schema. | GAP | docs/library/report/20260924_duckdb-lane-capabilities_5d2414.md |  |
-| `grant_writer.py` | core.trust.grant_writer -- the WRITE side of security/acl.json (T163, S-3 of the security schema). | GAP | GAP |  |
+| `grant_writer.py` | core.trust.grant_writer -- the WRITE side of security/acl.json (T163, S-3 of the security schema). | tests/test_grant_writer_follows_acl_symlink.py | GAP |  |
 | `private_plane.py` | The private-plane leak guard: ingress, at the one place everything must pass. | tests/test_private_plane_guard.py | GAP |  |
 | `registry.py` | Grant registry -- the reader over security/acl.json (source of truth), mirroring core/fleet/model_roster.py (r | tests/test_audit_registry_wiring_kimi.py | docs/library/design/20260711_t034-registry-dial-consolidation-deepsee_a65322.md | `AKASHIC_ACL_PATH`, `AURORA_LAUNCHER` |
 

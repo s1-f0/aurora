@@ -27,6 +27,8 @@ Process safety:
   - Kill is best-effort: terminate() then kill() after grace period.
   - Failed launches are tracked (exit_reason set) so the UI shows the failure.
   - Zombie reaping: the monitor thread reaps exited processes.
+  - A seat declared in AKASHIC_SUPERVISED_SEATS ("deepseek=aurora-heimdall") belongs to its systemd
+    user unit: launch starts that unit, revive restarts it, and nothing is spawned.
 
 Integration with the Bifrost UI (scripts/bifrost_ui.py):
   GET  /launcher/status          -> all agent specs + their run status
@@ -41,6 +43,7 @@ import contextlib
 import json
 import os
 import random
+import re
 import signal
 import subprocess
 import sys
@@ -66,6 +69,64 @@ AUTO_REVIVE_KEY = "bifrost:auto_revive"
 # Jitter before an auto-revive so a simultaneous multi-agent wedge doesn't thunder-herd
 # (N kills + N onboarding boots all at once hammering Redis/CPU).
 AUTO_REVIVE_JITTER = float(os.getenv("LAUNCHER_AUTO_REVIVE_JITTER", "4"))
+
+# Seats an OS service manager owns (2026-10-19). Where systemd runs a seat as a user unit (on the
+# Ubuntu box: deepseek = aurora-heimdall, the daemon plus its runner), a launch that spawns its own
+# child makes a DUPLICATE, unsupervised runner inside whatever process asked (the console's
+# auto-launch put one in the UI's cgroup every time Heimdall restarted and dropped out of presence).
+# AKASHIC_SUPERVISED_SEATS declares the owners explicitly -- "deepseek=aurora-heimdall" or several
+# separated by ',' or ';' -- and for a declared seat the launcher asks systemd for THAT unit (start;
+# revive restarts) and never spawns. Unit names are never guessed. Unset: nothing changes, which is
+# what Windows and every machine without such units relies on.
+SUPERVISED_SEATS_ENV = "AKASHIC_SUPERVISED_SEATS"
+_UNIT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:_.@\\-]*$")  # systemd's unit-name alphabet, no leading '-'
+_UNIT_UP = ("active", "activating", "reloading")  # systemd is already running or bringing the seat back
+SYSTEMCTL_TIMEOUT_S = 10  # --no-block returns once the job is queued; this bounds a hung user manager
+
+
+def supervised_seats(raw: str | None = None) -> dict[str, str | None]:
+    """Parse AKASHIC_SUPERVISED_SEATS into {agent_id: unit}. Seat names are lower-cased (agent ids
+    are). A seat named with a missing or malformed unit maps to None, and the launcher REFUSES it
+    rather than falling back to a spawn: a typo in the declaration must not quietly reopen the
+    duplicate the declaration exists to stop."""
+    # The name is spelled out (not SUPERVISED_SEATS_ENV) so the physics-sheet scanner lists the flag.
+    text = os.environ.get("AKASHIC_SUPERVISED_SEATS", "") if raw is None else raw
+    seats: dict[str, str | None] = {}
+    for entry in re.split(r"[,;]", text):
+        seat, _, unit = entry.partition("=")
+        seat, unit = seat.strip().lower(), unit.strip()
+        if seat:
+            seats[seat] = unit if _UNIT_NAME.match(unit) else None
+    return seats
+
+
+def _systemctl(*args: str) -> tuple[int, str, str]:
+    """One `systemctl --user` call -> (returncode, stdout, stderr). Never raises: a missing binary
+    or a hung user manager comes back as a non-zero code with the reason in stderr."""
+    try:
+        p = subprocess.run(
+            ["systemctl", "--user", *args],
+            capture_output=True,
+            text=True,
+            timeout=SYSTEMCTL_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
+        )
+        return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
+    except Exception as e:
+        return 127, "", f"{type(e).__name__}: {e}"
+
+
+def _not_applied(tag: str, seat: str, prompt: str = "", extra_args: list[str] | None = None) -> list[str]:
+    """What a supervised launch cannot honour: the unit runs its own command line, so a variant tag's
+    flags (deepseek-build), a priming prompt and extra args all stay unapplied -- and the result says so."""
+    dropped = []
+    if tag.lower() != seat:
+        dropped.append(f"the '{tag}' flags")
+    if prompt:
+        dropped.append("the prompt")
+    if extra_args:
+        dropped.append("extra args")
+    return dropped
 
 
 def _bus_redis():
@@ -366,9 +427,17 @@ class Launcher:
 
         If the agent is already running, returns ok=False with a reason.
         If prompt is given, it's injected as stdin or as an extra arg (for Claude headless).
+        A seat declared in AKASHIC_SUPERVISED_SEATS is never spawned: its systemd user unit is
+        started instead and the result carries supervised=True, unit and action (see _ask_supervisor).
         """
         self._reload()
         spec = self._specs.get(tag)
+        seat = (spec.agent_id if spec else tag).lower()
+        seats = supervised_seats()
+        if seat in seats:
+            return self._ask_supervisor(
+                tag, seat, seats[seat], restart=False, dropped=_not_applied(tag, seat, prompt, extra_args)
+            )
         if spec is None:
             return {"ok": False, "error": f"unknown agent tag: {tag}"}
 
@@ -545,6 +614,12 @@ class Launcher:
         """Recover a wedged or dead runner: kill it (if up), free its singleton lock, relaunch.
         This is the primitive behind the UI 'Revive' button and (when armed) the auto-revive monitor."""
         spec = self._specs.get(tag)
+        seat = (spec.agent_id if spec else tag).lower()
+        seats = supervised_seats()
+        if seat in seats:  # the unit owns the seat's process: restart THAT, there is nothing of ours to kill
+            res = self._ask_supervisor(tag, seat, seats[seat], restart=True, dropped=_not_applied(tag, seat))
+            res.update({"revived": True, "revive_reason": reason, "killed_pid": None})
+            return res
         if spec is None:
             return {"ok": False, "error": f"unknown agent tag: {tag}"}
         aid = spec.agent_id
@@ -559,6 +634,43 @@ class Launcher:
         self._restart_last.pop(aid, None)
         res = self.launch(tag)
         res.update({"revived": True, "revive_reason": reason, "killed_pid": dead_pid})
+        return res
+
+    def _ask_supervisor(self, tag: str, seat: str, unit: str | None, *, restart: bool, dropped=()) -> dict[str, Any]:
+        """Hand a supervised seat's launch (restart=False) or revive (restart=True) to its systemd
+        user unit, and never spawn. A launch leaves a unit that is already up or coming up alone
+        (action 'already_up': mid-restart, systemd is bringing the seat back itself); otherwise it
+        queues a start. --no-block, because a unit still stopping (TimeoutStopSec) would hold a
+        blocking start -- and the console's send with it -- for that long. The result is
+        {ok, supervised, unit, action, state_before, error?, reason?, note?}."""
+        base: dict[str, Any] = {"agent_id": seat, "tag": tag, "supervised": True, "unit": unit}
+        if unit is None:
+            return {
+                **base,
+                "ok": False,
+                "error": f"{SUPERVISED_SEATS_ENV} names '{seat}' without a valid unit; refusing to spawn "
+                f"a child for a seat a service manager owns (expected e.g. {seat}=aurora-heimdall)",
+                "reason": f"no valid unit for '{seat}' in {SUPERVISED_SEATS_ENV}",
+            }
+        _rc, out, _err = _systemctl("is-active", unit)
+        state = out.splitlines()[0].strip() if out else ""  # "" = could not tell; try the start
+        if not restart and state in _UNIT_UP:
+            res = {**base, "ok": True, "action": "already_up", "state_before": state}
+        else:
+            verb = "restart" if restart else "start"
+            rc, _out, err = _systemctl(verb, "--no-block", unit)
+            if rc != 0:
+                return {
+                    **base,
+                    "ok": False,
+                    "action": verb,
+                    "state_before": state,
+                    "error": f"systemctl --user {verb} --no-block {unit} failed (rc {rc}): {err or 'no output'}",
+                    "reason": err or f"rc {rc}",
+                }
+            res = {**base, "ok": True, "action": "restarted" if restart else "started", "state_before": state}
+        if dropped:
+            res["note"] = f"{unit} runs its own command line; {', '.join(dropped)} not applied"
         return res
 
     def _armed_set(self) -> set:

@@ -199,3 +199,14 @@ def _isolate_operator_identity(tmp_path_factory, monkeypatch):
 def _isolate_authorship_ledger(tmp_path_factory, monkeypatch):
     d = tmp_path_factory.mktemp("authorship_ledger")
     monkeypatch.setenv("AKASHIC_AUTHORSHIP_LEDGER", str(d / "seats.jsonl"))
+
+
+# 2026-10-19: hooks dedupe a double-registered event through a marker in the temp dir
+# (agent/harness/dedup.py, three-second window). Tests reuse fixed payloads, so without this
+# one test's hook call marks the payload and the next test's identical call is skipped as a
+# "second registration". Each test is its own universe of events.
+
+
+@pytest.fixture(autouse=True)
+def _isolate_hook_dedup(tmp_path_factory, monkeypatch):
+    monkeypatch.setenv("AKASHIC_HOOK_DEDUP_DIR", str(tmp_path_factory.mktemp("hook_dedup")))

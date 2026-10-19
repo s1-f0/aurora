@@ -258,7 +258,8 @@ def build_parser() -> argparse.ArgumentParser:
         dest="external_supervisor",
         help=(
             "keep this daemon process anchored to an external supervisor instead of "
-            "launching a detached stale-code successor"
+            "launching a detached stale-code successor; the managed runner is told the "
+            "same and exits 7 for an immediate respawn instead of forking one"
         ),
     )
     ap.add_argument(
@@ -343,8 +344,15 @@ def managed_runner_env(
     *,
     consume_lane=None,
     base=None,
+    external_supervisor: bool = False,
 ):
-    """Build the managed child's environment with an optional attested lane."""
+    """Build the managed child's environment with an optional attested lane.
+
+    ``external_supervisor`` hands the runner the explicit signal that a supervisor owns its
+    restarts (self_restart.EXTERNAL_SUPERVISOR_ENV="1"): a stale runner then exits
+    ManagedChild.HANDOVER_EXIT for this daemon to respawn, instead of forking a detached
+    successor outside the supervision tree. Without the flag the variable is stripped, so a
+    runner can only ever learn it from this daemon's own --external-supervisor."""
     lane = str(consume_lane or "").strip().lower() or None
     if lane not in (None, "legacy", "work"):
         raise ValueError(f"invalid managed runner consume lane: {consume_lane!r}")
@@ -352,6 +360,10 @@ def managed_runner_env(
     environment.update(_GIT_ID(agent))
     if lane is not None:
         environment["BIFROST_CONSUME_LANE"] = lane
+    if external_supervisor:
+        environment[_SELF_RESTART.EXTERNAL_SUPERVISOR_ENV] = "1"
+    else:
+        environment.pop(_SELF_RESTART.EXTERNAL_SUPERVISOR_ENV, None)
     return environment
 
 
@@ -558,6 +570,7 @@ def main(argv=None) -> int:
                 env=managed_runner_env(
                     agent,
                     consume_lane=args.runner_consume_lane,
+                    external_supervisor=args.external_supervisor,
                 ),
                 cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                 on_blocker=_send_blocker,
@@ -822,6 +835,7 @@ def main(argv=None) -> int:
                             env=managed_runner_env(
                                 agent,
                                 consume_lane=args.runner_consume_lane,
+                                external_supervisor=args.external_supervisor,
                             ),
                             cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             on_blocker=_send_blocker,
