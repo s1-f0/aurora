@@ -336,6 +336,17 @@ def main():
         # fail-open for the agent, never silent for the operator (the 2026-07-02 lesson)
         print(f"[stop-hook] stdin unparseable: {type(e).__name__}: {e}", file=sys.stderr)
         payload = {}
+    if payload:
+        try:
+            sys.path.insert(
+                0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            )
+            from agent.harness.dedup import first_fire
+
+            if not first_fire("stop:" + str(payload.get("hook_event_name") or "Stop"), payload):
+                return  # the other registration (user or project surface) already judged this stop
+        except Exception:
+            pass
     session_id = str(payload.get("session_id") or "")
     _beat_idle(session_id)
     if session_id:

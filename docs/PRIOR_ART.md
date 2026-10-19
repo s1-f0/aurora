@@ -35,7 +35,7 @@ rebuilt wheels and dead ends, so the sweep is now a standing artifact rather tha
 - `core/primitives` -- DRIFT (7->8), reviewed 2026-07-26
 - `core/trust` -- DRIFT (2->5), reviewed 2026-07-26
 - `core/fleet` -- DRIFT (2->9), reviewed 2026-07-26
-- `agent/harness` -- DRIFT (9->15), reviewed 2026-07-26
+- `agent/harness` -- DRIFT (9->16), reviewed 2026-07-26
 - `scripts/hooks` -- DRIFT (7->8), reviewed 2026-07-26
 - `scripts/checkers` -- DRIFT (12->22), reviewed 2026-07-26
 - `scripts/generators` -- DRIFT (6->14), reviewed 2026-07-26
@@ -380,7 +380,7 @@ _Reviewed 2026-07-26 by claude._
 
 _Reviewed 2026-07-26 by claude._
 
-## `agent/harness` -- 15 modules  ·  DRIFT (9->15)
+## `agent/harness` -- 16 modules  ·  DRIFT (9->16)
 
 **What it does.** The seat side of the fleet: how an agent session is launched, kept alive, woken from idle, and stood down. Includes the wake listener, seat lifecycle and the runner glue that turns a bus message into a live turn.
 
