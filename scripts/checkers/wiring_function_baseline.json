@@ -3,7 +3,7 @@
   "generated_by": "T134, claude",
   "what_this_is": "A frozen CENSUS of public functions in WIRED core/ modules that no production entry point names, taken the day the function-level gate landed. It is a BACKLOG, not an amnesty -- the same contract as EXCEPTIONS in check_wiring.py. A NEW orphan FAILS the gate; these are the ones that already existed. Deliberately NOT annotated with 117 hand-written reasons: inventing a justification per entry would read as 117 considered decisions when it is one measurement. Drain it in slices, with a real reason per slice, and delete entries as they are wired or removed. stale_function_baseline() reports entries that became wired, so this list can shrink -- an exemption list that can only grow stops being a backlog.",
   "how_to_read": "module::function -- see py scripts/checkers/check_wiring.py --functions",
-  "count": 122,
+  "count": 123,
   "entries": [
     "core/comm/bifrost_api.py::council",
     "core/comm/bifrost_api.py::covers",
@@ -58,6 +58,7 @@
     "core/coord/task_ledger.py::sync_redis_from_git",
     "core/events/event_log.py::rebuild_index",
     "core/events/event_log.py::reset_event_log_singleton",
+    "core/foundation/embedded_redis.py::find_class",
     "core/foundation/redis_connection.py::clear_reachability_cache",
     "core/foundation/sqlite_store.py::backup_to",
     "core/foundation/sqlite_store.py::wal_bytes",
@@ -215,6 +216,14 @@
       "added": [
         "core/oneworld/floor.py::self_check",
         "core/screenspace/foreground.py::subscribe"
+      ]
+    },
+    {
+      "date": "2026-10-20",
+      "change": "122 -> 123",
+      "why": "Closing the embedded bus server's code-execution hole added a restricted pickle.Unpickler whose find_class override gates fakeredis's RESTORE (core/foundation/embedded_redis.py::_RestoreUnpickler). The pickle machinery calls find_class by name during unpickling, so no production entry point names it statically -- a structural orphan, not latent capability. It is wired in fact: _harden_restore() routes DUMP/RESTORE through it, exercised by tests/test_embedded_redis_sandbox.py and by core/world_seed.copy_prefix's round-trip. UNWIRE-WHEN: fakeredis exposes a documented unpickler hook we can set directly instead of subclassing.",
+      "added": [
+        "core/foundation/embedded_redis.py::find_class"
       ]
     }
   ]
