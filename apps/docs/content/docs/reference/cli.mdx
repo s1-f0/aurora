@@ -7,7 +7,7 @@ This page lists every verb the `aurora` command offers. A script builds it from 
 
 Each verb prints for an agent or for a person. [Commands](/docs/reference/commands) explains how to choose with `--output agent` or `--output human`. A verb marked as converted has been measured before and after the change. The bench gives a reader model only the verb's output and checks its answers against known data.
 
-121 verbs; 121 converted to agent and human output.
+127 verbs; 121 converted to agent and human output.
 
 ## `alias`
 
@@ -415,6 +415,7 @@ help[1]:
 | `--session` |   |   | session id for the per-session wake seat (default: harness session env) |
 | `--no-listen` |   |   | drain + report only; do not block |
 | `--limit` |   |   |   |
+| `--min-tier` |   | 0,1,2,3 | S3 tier floor for this arm: 0 operator only, 1 +directed asks, 2 +answers to my asks (DEFAULT; env BIFROST_WAKE_MIN_TIER), 3 everything (the pre-S3 behaviour) |
 
 Agent output of `aurora bifrost-standby claude --no-listen` on the bench data:
 
@@ -772,6 +773,22 @@ help[1]:
   uv run agent_cli.py events --get <ref>
 ```
 
+## `context`
+
+| | |
+|---|---|
+| Does | W0.5/W0.6: one anchor, every plane -- or `--stats` to meter the stream |
+| Output | One format for every reader. Not converted to agent and human modes yet. |
+
+| Flag | Required | Values | What it does |
+|---|---|---|---|
+| `<anchor>` |   |   | a context.target.v1 anchor: a path, path:line, dir/, ref (sha:/task:/lesson:/event:), url or verb: |
+| `--level` |   |   | 0 summaries, 1 rows (default), 2 receipts |
+| `--stats` |   |   | the instrument: coverage, rate, shape, drops |
+| `--hours` |   |   | window in hours (default 24) |
+| `--limit` |   |   | max raw events to read (default 20000) |
+| `--json` |   |   |   |
+
 ## `corpus`
 
 | | |
@@ -871,6 +888,9 @@ items[20]{id,needs,by,filed,cmd}:
 |---|---|---|---|
 | `<agent_id>` | yes |   |   |
 | `--ack` |   |   | advance the seen mark to current positions after reading |
+| `--disk` |   |   | also report what moved ON DISK that no plane recorded: repo / private / VOLATILE, with per-file attribution from the touch stream |
+| `--hours` |   |   | --disk: how far back to look (default 12) |
+| `--scope` |   |   | --disk: restrict to this root (repeatable); default is the house roots minus test debris, plus the private and volatile trees |
 
 Agent output of `aurora delta alice` on the bench data:
 
@@ -916,7 +936,7 @@ help[1]:
 
 | | |
 |---|---|
-| Does | list every verb + its purpose (the self-describing door) |
+| Does | list every verb with when to use it and its purpose (the self-describing door) |
 | Output | Agent mode (TOON) and human mode (colour). |
 | Reader accuracy | 83% before, 100% after |
 | Output tokens | 1,745 before, 2,018 after (+16%) |
@@ -924,8 +944,11 @@ help[1]:
 
 | Flag | Required | Values | What it does |
 |---|---|---|---|
-| `<query>` |   |   | optional substring to filter verbs by name/purpose |
+| `<query>` |   |   | optional substring to filter verbs by name, purpose, use-when line or keyword |
 | `--json` |   |   |   |
+| `--map` |   |   | print the situation map every session starts with: each verb under the situation it serves |
+| `--awareness` |   |   | measure, from this machine's Claude transcripts, how often agents needed reminding of a verb, looked one up, used one, or followed a suggestion (read-only) |
+| `--since` |   |   | with --awareness: only sessions active on or after this ISO date |
 | `--semantic` |   |   | ask at the level of MEANING instead of substring: 'does this system already do X?' Returns EXISTS/WHAT/GAP/NEAREST MISS over the verb table + module index. Costs one model call (~20s, under a cent). A failed or malformed call renders UNKNOWN, never 'no' -- this verb exists to stop absence being inferred, so it must never infer one |
 
 Agent output of `aurora discover` on the bench data:
@@ -1170,7 +1193,7 @@ help[2]:
 
 | | |
 |---|---|
-| Does | find a file BY NAME anywhere on the machine (Search Everything / es.exe) |
+| Does | find a file BY NAME anywhere on the machine (Search Everything / es.exe; plocate off Windows) |
 | Output | Agent mode (TOON) and human mode (colour). |
 | Reader accuracy | 100% before, 100% after |
 | Output tokens | 1,738 before, 204 after (-88%) |
@@ -1178,7 +1201,8 @@ help[2]:
 
 | Flag | Required | Values | What it does |
 |---|---|---|---|
-| `<query>` | yes |   | Everything search term -- a bare word matches any filename substring, case-insensitive |
+| `<query>` |   |   | Everything search term -- a bare word matches any filename substring, case-insensitive |
+| `--reindex` |   |   | rebuild the plocate index now and wait for it (Linux/macOS; it otherwise refreshes itself in the background) |
 | `--limit` |   |   | max results (default 0 = no cap, return everything) |
 | `--offset` |   |   | skip this many ranked results before returning (paging past --limit) |
 | `--path` |   |   | match against the full path, not just the name |
@@ -1639,7 +1663,10 @@ recall_slots: no (history kept)
 | `--reason` |   |   | why -- required; an unexplained grant is the one nobody can safely revoke later |
 | `--hours` |   |   | time box (T151: an observed time box is a deadline) |
 | `--permanent` |   |   | explicitly permanent (10 of the 11 original grants are) |
-| `--caps` |   |   | comma-separated cap override (default: role template) |
+| `--caps` |   |   | comma-separated FULL SET (a REPLACE; refuses if it drops a held cap unless --replace) |
+| `--add-caps` |   |   | W252: add these to what the seat ALREADY holds (the usual intent) |
+| `--drop-caps` |   |   | W252: remove these from what the seat already holds |
+| `--replace` |   |   | say out loud that --caps may DROP caps the seat holds, the way --permanent has to be said out loud |
 | `--path-scope` |   |   | comma-separated globs (default: role template) |
 | `--request-ref` |   |   | the ask this grant answers |
 | `--revoke` |   |   | remove the grant (the undo path) |
@@ -2301,6 +2328,17 @@ help[1]:
   uv run agent_cli.py manual search <question> --shelf runbooks
 ```
 
+## `media`
+
+| | |
+|---|---|
+| Does | video toolbox (arsenal.media) instead of hand-rolled ffmpeg/ffprobe: probe streams and audio track names, grab frames, contact sheet, filmstrip, trim/cut to the exact frame, scene detection (scdet), loudness LUFS (ebur128, loudnorm), silencedetect, waveform peaks, demux and mix audio tracks, transcribe, League clock OCR, Riot timeline, export presets |
+| Output | One format for every reader. Not converted to agent and human modes yet. |
+
+| Flag | Required | Values | What it does |
+|---|---|---|---|
+| `<rest>` | yes |   | a media verb + args, e.g. media doctor / media grab v.mp4 --at 12.5 --sheet / media cut v.mp4 10:00 10:20 out.mkv / media shots v.mp4 (bare `media` lists verbs) |
+
 ## `memreplay`
 
 | | |
@@ -2723,6 +2761,39 @@ help[2]:
   uv run agent_cli.py recall --full learn:experiment:bus_restart
   uv run agent_cli.py recall-feedback --source learn:experiment:bus_restart --useful
 ```
+
+## `recall-audit`
+
+| | |
+|---|---|
+| Does | is recall ACCURATE? blind labelling pack + precision/recall/agreement score |
+| Output | One format for every reader. Not converted to agent and human modes yet. |
+
+| Flag | Required | Values | What it does |
+|---|---|---|---|
+| `<action>` | yes | pack,score |   |
+| `--n` |   |   | pack: cases to draw (default 30) |
+| `--seed` |   |   | pack: deterministic draw; a published number that cannot be re-drawn cannot be audited |
+| `--limit` |   |   | pack: cap impressions harvested |
+| `--out` |   |   | pack: write to a file instead of stdout |
+| `--labels` |   |   | score: JSON \{"&lt;labeller&gt;": \{"&lt;case&gt;:&lt;slot&gt;": "on\|off\|skip"\}\} |
+| `--labels-file` |   |   | score: read the labels JSON from a file |
+| `--misses` |   |   | score: JSON \{"&lt;labeller&gt;": \{"&lt;case&gt;": ["source-or-desc", ...]\}\} -- the recall arm: what SHOULD have surfaced and did not |
+| `--total-surfaced` |   |   | score: coverage denominator (default: computed from the ledger) |
+| `--json` |   |   |   |
+
+## `recall-bench`
+
+| | |
+|---|---|
+| Does | W0.3: grade recall against the answer key (recall@k, abstention, chrome share) |
+| Output | One format for every reader. Not converted to agent and human modes yet. |
+
+| Flag | Required | Values | What it does |
+|---|---|---|---|
+| `--set` |   |   | path to a moments.json (default: the committed set) |
+| `--limit` |   |   | k for recall@k (default 5) |
+| `--json` |   |   |   |
 
 ## `recall-counters`
 
@@ -3221,6 +3292,30 @@ help[2]:
   uv run agent_cli.py resident adjudicate scout-e2a6eb998985 --outcome confirmed|refuted --by <operator>
 ```
 
+## `screen`
+
+| | |
+|---|---|
+| Does | screenspace ACTUATOR: see the desktop, open a new session, hand it a brief -- refusal-first |
+| Output | One format for every reader. Not converted to agent and human modes yet. |
+
+| Flag | Required | Values | What it does |
+|---|---|---|---|
+| `<action>` | yes | status,locate,prompt |   |
+| `<text>` | yes |   | prompt: the brief, inline (prefer --text-file for anything long or flag-shaped) |
+| `--window` |   |   | substring of the target window title (default: Claude) |
+| `--hwnd` |   |   | disambiguate when more than one window matches -- the remedy for an AMBIGUOUS_TARGET refusal |
+| `--name` |   |   | locate: the control's UIA Name (the ADDRESS -- name-first beats a tree walk 17-24x here) |
+| `--role` |   |   | locate: control type, e.g. Button, Document |
+| `--ttl` |   |   | locate: token lifetime in seconds (default 5) |
+| `--text-file` |   |   | prompt: read the brief from PATH (use this for anything long or containing flags) |
+| `--handoff` |   |   | prompt: use the newest unconsumed handoff addressed to this agent, rendered from the same briefing surface a `boot` reads |
+| `--show` |   |   | prompt: print the exact brief that WOULD be sent (spilled handoff notes resolved) and exit without touching the desktop |
+| `--submit` |   |   | prompt: actually SEND it. Default is to stage the brief in a new session and stop -- submitting is a separate, explicit decision |
+| `--timeout` |   |   | prompt: seconds to wait for each post-condition (default 8) |
+| `--agent` |   |   | act as this seat (default: ambient). The ACL decides, not this flag |
+| `--json` |   |   |   |
+
 ## `season-score`
 
 | | |
@@ -3661,6 +3756,17 @@ help[2]:
   uv run agent_cli.py story --track ai-setup
   uv run agent_cli.py story --themes
 ```
+
+## `suite`
+
+| | |
+|---|---|
+| Does | README-ONLY test-pipeline doors: diff / triage / rerun-failing / tail (projects over suite_baseline + pytest's lastfailed cache + the run log; writes nothing) |
+| Output | One format for every reader. Not converted to agent and human modes yet. |
+
+| Flag | Required | Values | What it does |
+|---|---|---|---|
+| `<suite_sub>` | yes | diff,triage,rerun-failing,tail |   |
 
 ## `suite-baseline`
 
