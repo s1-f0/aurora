@@ -4,12 +4,12 @@ Status: current
 Class: reference
 
 > Do NOT edit by hand. Regenerate with `py scripts/generators/gen_physics_sheet.py`.
-> Derived at 4c720430e. A bound you discover by collision is not awareness -- this sheet
+> Derived at d4a7696bc. A bound you discover by collision is not awareness -- this sheet
 > exists so every clip, cap, timeout and flag is READABLE before it is HIT.
 > Dynamic envelopes (throughput, latency, limits-under-load) are NOT here: they require
 > measurement, not grep -- see the master-map charter M2b (benchmark half).
 
-## Configuration flags (310 names)
+## Configuration flags (311 names)
 
 | Flag | Default (as written) | Read sites |
 |---|---|---|
@@ -218,6 +218,7 @@ Class: reference
 | `BIFROST_WEDGE_SECONDS` | `"300"` | core/comm/liveness.py |
 | `BUS_MAX_MESSAGE_BYTES` | `DEFAULT_MAX_MESSAGE_BYTES` | core/comm/packet_spec.py |
 | `CLAUDE_CODE_SESSION_ID` | `""` | agent/bifrost_pull.py, agent/harness/context.py, agent/harness/hooks/claude_posttooluse.py +7 |
+| `CLAUDE_CONFIG_DIR` | `` | core/coord/verb_awareness.py |
 | `CLAUDE_PROJECT_DIR` | `` | agent/harness/hooks/claude_pretooluse.py |
 | `CLAUDE_SESSION_ID` | `` | agent/harness/context.py, core/comm/runner_lock.py |
 | `COMPUTERNAME` | `` | arsenal/lanes/gst_d3d12_soak.py |
@@ -324,7 +325,7 @@ Class: reference
 | `TMP` | `` | agent/harness/hooks/snippet_autofile.py |
 | `XDG_CACHE_HOME` | `` | core/tools/locate.py |
 
-## Mechanical bounds (382 numeric constants)
+## Mechanical bounds (383 numeric constants)
 
 | Constant | Value | Site | Note |
 |---|---|---|---|
@@ -684,6 +685,7 @@ Class: reference
 | `_DEFAULT_BUDGET_LINES` | 12 | agent/harness/context.py | W6; AKASHIC_WHISPER_LINES overrides (R6) |
 | `_DONE_CAP` | 8,192 | core/comm/packet_spec.py |  |
 | `_FAILURE_WINDOW_S` | 120 | core/comm/operator_reply.py |  |
+| `_INSTRUCTIONS_CAP` | 4,096 | ai_setup_mcp.py |  |
 | `_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION` | 9 | scripts/run_job.py |  |
 | `_MAX` | 4,000 | agent_cli.py | clamp absurdly long fields an agent might paste |
 | `_MAX_BLOB` | 3,000,000 | scripts/checkers/check_secrets.py |  |
