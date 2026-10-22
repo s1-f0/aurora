@@ -39,10 +39,12 @@ def main() -> int:
             build_bus_line,
             build_page_lines,
             build_plan_recall,
+            build_verb_line,
         )
 
         pieces = [
             build_plan_recall(str(data.get("prompt") or ""), sid, seat),
+            build_verb_line(str(data.get("prompt") or ""), sid, seat),
             build_bus_line(seat),
             *build_page_lines(),
         ]

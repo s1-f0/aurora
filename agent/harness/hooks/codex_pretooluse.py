@@ -143,6 +143,11 @@ def main() -> int:
 
         pieces = [id_fact(path) for path in paths]
         pieces.append(recall_context(data, seat, paths[0] if paths else ""))
+        if data.get("tool_name") == "Bash":
+            from agent.harness.verbs import verb_action_line
+
+            command = str((data.get("tool_input") or {}).get("command") or "")
+            pieces.append(verb_action_line(command, sid, seat, sid))
         pieces = [piece for piece in pieces if piece]
         if pieces:
             emit_context(subject_context(seat, sid) + "\n" + "\n".join(pieces))

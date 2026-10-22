@@ -153,7 +153,10 @@ def test_seen_sources_have_complete_delivered_text(monkeypatch, selected, altitu
         if altitude == "action"
         else actions.plan_block("example", "session", "seen")
     )
-    assert delivered == [lesson["source"] for lesson in selected["lessons"]]
+    # Verbs the block rendered are marked seen too ("verb:<name>", shared with the verb nudges in
+    # agent/harness/verbs.py); each one must likewise have been delivered.
+    assert [s for s in delivered if not s.startswith("verb:")] == [lesson["source"] for lesson in selected["lessons"]]
+    assert [s for s in delivered if s.startswith("verb:")] == [f"verb:{v['verb']}" for v in selected["verbs"]]
     assert_selected_intact(out, selected)
     if altitude == "action":
         import contextlib

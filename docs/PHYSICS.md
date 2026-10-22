@@ -4,12 +4,12 @@ Status: current
 Class: reference
 
 > Do NOT edit by hand. Regenerate with `py scripts/generators/gen_physics_sheet.py`.
-> Derived at c86e21275. A bound you discover by collision is not awareness -- this sheet
+> Derived at b573dfc37. A bound you discover by collision is not awareness -- this sheet
 > exists so every clip, cap, timeout and flag is READABLE before it is HIT.
 > Dynamic envelopes (throughput, latency, limits-under-load) are NOT here: they require
 > measurement, not grep -- see the master-map charter M2b (benchmark half).
 
-## Configuration flags (311 names)
+## Configuration flags (313 names)
 
 | Flag | Default (as written) | Read sites |
 |---|---|---|
@@ -166,6 +166,8 @@ Class: reference
 | `AKASHIC_UI_URL` | `"http://localhost:8787"` | scripts/ui_shot.py |
 | `AKASHIC_UNATTENDED_S` | `"300"` | core/comm/bus.py, core/comm/liveness.py |
 | `AKASHIC_VERB_FLOOR` | `"0.9"` | core/recall/at_action.py |
+| `AKASHIC_VERB_MAP` | `"1"` | agent/harness/verbs.py |
+| `AKASHIC_VERB_NUDGE` | `"1"` | agent/harness/verbs.py |
 | `AKASHIC_WAKE_EXPECTED_DIR` | `` | core/comm/resume_on_deaf.py |
 | `AKASHIC_WAKE_MARKER_FRESH_MIN` | `""` | core/comm/wake_seat.py |
 | `AKASHIC_WAKE_RECEIPTS_DIR` | `` | core/comm/wake_seat.py |
@@ -325,7 +327,7 @@ Class: reference
 | `TMP` | `` | agent/harness/hooks/snippet_autofile.py |
 | `XDG_CACHE_HOME` | `` | core/tools/locate.py |
 
-## Mechanical bounds (383 numeric constants)
+## Mechanical bounds (384 numeric constants)
 
 | Constant | Value | Site | Note |
 |---|---|---|---|
@@ -457,6 +459,7 @@ Class: reference
 | `HINT_TTL_SECONDS` | 300 | core/comm/context_hints.py | 5 min soft expiry (stale hints silently dropped by drain) |
 | `HINT_WINDOW` | 600 | agent/harness/hooks/snippet_autofile.py | seconds: "the last 10 minutes" |
 | `HISTORY_CAP` | 200 | core/comm/turn_metrics.py |  |
+| `HOOK_CONTEXT_CAP` | 10,000 | agent/harness/verbs.py |  |
 | `IMPLAUSIBLE_MIN_N` | 5 | core/coord/sift.py | below this, a high rate is small-n noise, not an alarm |
 | `IMPORT_TIMEOUT_S` | 20 | tooling-upgrade/oracle.py |  |
 | `INNER_BLOCK_MS` | 120,000 | research/in-flight/t342/dead-modules/scripts__heimdall.py | 2-min inner blocks; loop if a batch is all noise |

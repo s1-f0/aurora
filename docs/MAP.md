@@ -11,7 +11,7 @@ Class: reference
 > Companions: ARCHITECTURE.md (skeleton) - MODULE_INDEX.md (docstrings) -
 > PHYSICS.md (bounds+flags) - the charter docs/library/brief/20260719_the-master-map-documentation-as-projecti_a26fd3.md.
 
-## GAP queue (44 of 215 modules lack both pin and paper by name)
+## GAP queue (44 of 216 modules lack both pin and paper by name)
 
 - core/foundation/durable_reconcile.py
 - core/foundation/filelock.py
@@ -330,7 +330,7 @@ Class: reference
 | `reinforce.py` | ReinforcedGraph (Slice P1) -- an association graph whose edges STRENGTHEN with co-use | GAP | GAP |  |
 | `schema.py` | Perspectives schema (Slice P0) -- Lens + Map shapes. Pure data, no behavior. | tests/test_arsenal_jam_schemas.py | docs/THE-FILING-SCHEMA.md |  |
 
-## agent/harness/  (16 modules)
+## agent/harness/  (17 modules)
 
 | Module | One-line spec | Pin | Paper | Flags |
 |---|---|---|---|---|
@@ -350,6 +350,7 @@ Class: reference
 | `scope.py` | Repo-scoping policy shared by every harness adapter (Integration Tiers H0). | tests/test_axi_scope.py | docs/library/design/20260722_security-schema-amendment-scoped-admin-g_17c9ca.md | `AI_SETUP` |
 | `seen.py` | Per-session anti-repeat state shared by every recall surface (Integration Tiers H0). | tests/test_w162_seat_seen_family.py | docs/library/report/20260716_mcp-surface-reverse-engineering-deepseek_c79c35.md | `AKASHIC_RECALL_STATE_DIR` |
 | `trace.py` | Push display-only trace lines (tool calls) onto the Bifrost bus so the console shows what | tests/test_axi_packet_trace.py | docs/library/report/20260716_t002-ui-trace-collapse-design-pre-regist_fc22a6.md | `AKASHIC_AGENT_ID`, `AKASHIC_TRACE` |
+| `verbs.py` | The verb pushes every harness shares: the session map, the plan-time suggestion, the | GAP | docs/library/design/20260901_discord-verb-surface-taxonomy-navi-00000_1b1008.md | `AKASHIC_VERB_MAP`, `AKASHIC_VERB_NUDGE` |
 
 ## agent/  (2 modules)
 
