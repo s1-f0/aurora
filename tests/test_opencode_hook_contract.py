@@ -165,3 +165,16 @@ def test_install_opencode_preserves_foreign_config(tmp_path, monkeypatch):
     assert doc["model"] == "x/y"
     assert doc["plugins"][0] == "other-plugin"
     assert "keep" in doc["mcp"]["servers"]
+
+
+def test_reinstall_replaces_a_stale_plugin_path(tmp_path, monkeypatch):
+    """Two plugin paths register the same plugin id twice, so a reinstall from another
+    checkout must replace the old one rather than sit beside it."""
+    monkeypatch.setattr(install, "_launcher", lambda: "/opt/aurora/bin/aurora")
+    stale = "/old/checkout/agent/harness/plugins/opencode"
+    (tmp_path / "opencode.json").write_text(json.dumps({"plugins": ["other-plugin", stale]}))
+    result = install.install_opencode(scope="project", project=tmp_path)
+    doc = json.loads((tmp_path / "opencode.json").read_text())
+    assert stale not in doc["plugins"]
+    assert doc["plugins"] == ["other-plugin", install.opencode_plugin_path()]
+    assert result.removed == [f"plugin:{stale}"]

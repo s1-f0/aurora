@@ -315,6 +315,19 @@ def opencode_plugin_path() -> str:
     return str(_repo() / "agent" / "harness" / "plugins" / "opencode")
 
 
+def _is_opencode_plugin(entry: object) -> bool:
+    """True for any path that names this plugin, wherever the tree it came from sits.
+
+    OpenCode loads every entry, so a stale path from another checkout would register the same
+    plugin id twice. Reinstalling must replace it, not append beside it.
+    """
+    if not isinstance(entry, str):
+        return False
+    if "://" in entry:
+        return False
+    return entry.replace("\\", "/").rstrip("/").endswith("agent/harness/plugins/opencode")
+
+
 def install_opencode(scope: str = "user", project=None, dry_run: bool = False) -> Result:
     """Install the OpenCode surface: the plugin path plus the akashic-aurora MCP server.
 
@@ -335,10 +348,16 @@ def install_opencode(scope: str = "user", project=None, dry_run: bool = False) -
     plugin = opencode_plugin_path()
     plugins = doc.get("plugins")
     plugins = plugins if isinstance(plugins, list) else []
-    if plugin not in plugins:
-        plugins.append(plugin)
+    kept = []
+    for entry in plugins:
+        if _is_opencode_plugin(entry) and entry != plugin:
+            res.removed.append(f"plugin:{entry}")
+            continue
+        kept.append(entry)
+    if plugin not in kept:
+        kept.append(plugin)
         res.added.append(f"plugin:{plugin}")
-    doc["plugins"] = plugins
+    doc["plugins"] = kept
 
     mcp = doc.get("mcp")
     mcp = mcp if isinstance(mcp, dict) else {}
