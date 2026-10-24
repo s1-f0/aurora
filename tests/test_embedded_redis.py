@@ -276,3 +276,24 @@ def test_incomplete_range_end_covers_the_whole_millisecond(server):
     assert [i for i, _ in r.xrevrange("ix", max="1000", min="1000")] == ["1000-2", "1000-1", "1000-0"]
     assert [i for i, _ in r.xrange("ix", min="1000", max="1000")] == ["1000-0", "1000-1", "1000-2"]
     assert [i for i, _ in r.xrange("ix", min="1000-1", max="1001-0")] == ["1000-1", "1000-2", "1001-0"]
+
+
+def test_poll_interval_is_slow_enough_for_a_fleet(monkeypatch):
+    """fakeredis polls every connection at 100 Hz to flush pushed replies. Measured on this box
+    that costs ~1.6% of a core per IDLE connection: 50 cost 83%, 100 cost 164%, and the live
+    server at 102 threads sat near 390% with 230 ms command latency. The poll interval is not on
+    the request path, so the house slows it and keeps the knob tunable."""
+    import fakeredis._tcp_server as tcp
+
+    monkeypatch.delenv("AKASHIC_REDIS_POLL_MS", raising=False)
+    E._install_poll_interval()
+    assert tcp._POLL_INTERVAL == 0.05, "default must be 50 ms, not fakeredis' 10 ms"
+
+    monkeypatch.setenv("AKASHIC_REDIS_POLL_MS", "250")
+    E._install_poll_interval()
+    assert tcp._POLL_INTERVAL == 0.25
+
+    # Never let a bad value disable the poll entirely (pushed replies would never flush).
+    monkeypatch.setenv("AKASHIC_REDIS_POLL_MS", "0")
+    E._install_poll_interval()
+    assert tcp._POLL_INTERVAL >= 0.001
