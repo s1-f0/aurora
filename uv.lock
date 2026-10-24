@@ -288,7 +288,7 @@ ml = [
 
 [[package]]
 name = "akashic-aurora-cli"
-version = "0.1.0"
+version = "0.2.1"
 source = { editable = "aurora-cli" }
 dependencies = [
     { name = "uv" },

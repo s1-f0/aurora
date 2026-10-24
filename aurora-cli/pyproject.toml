@@ -9,7 +9,7 @@
 # and the release tag in step (`releases.py bump X.Y.Z`, then tag vX.Y.Z).
 [project]
 name = "akashic-aurora-cli"
-version = "0.1.0"
+version = "0.2.1"
 description = "The aurora command: Akashic Aurora's shared agent memory and coordination CLI, without a checkout."
 readme = "README.md"
 license = "Apache-2.0"
