@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import io
 import logging
 import os
 import pickle
@@ -278,11 +279,115 @@ class _Persistence:
 _PERSIST: _Persistence | None = None
 
 
+# ------------------------------------------------------------------------------ sandboxing
+
+# Lua globals that reach out of the script: lupa's Python bridge (`python.eval`,
+# `python.builtins`), Lua's host-facing libraries (`os`, `io`), and every way to load more
+# code (`require`/`package.loadlib`, `loadstring`/`load`, `dofile`/`loadfile`). fakeredis builds
+# its runtime with lupa's defaults, so without this an EVAL from any local client -- or any
+# Docker Desktop container, whose host traffic arrives from 127.0.0.1 -- runs arbitrary Python
+# in the bus owner's process. None of the house's own Lua scripts touch any of these (they use
+# only redis.call, tonumber and the string/table libraries), so stripping them costs nothing.
+_LUA_NEUTER = b"python=nil os=nil io=nil require=nil loadstring=nil load=nil dofile=nil loadfile=nil package=nil"
+
+# Pickle modules a legitimate fakeredis value is built from: its own value classes
+# (strings, hashes, streams, sorted sets, sets) and the sortedcontainers they lean on. RESTORE
+# `pickle.loads` is otherwise a second arbitrary-code path; a restricted unpickler keeps
+# core/world_seed.copy_prefix (DUMP -> RESTORE of exactly these types) working while refusing a
+# payload that reaches any other module -- which is where a reduce-based code payload must go.
+_RESTORE_ALLOWED_ROOTS = ("fakeredis", "sortedcontainers")
+
+
+class _RestoreUnpickler(pickle.Unpickler):
+    """Only resolves classes from fakeredis's own value types; everything else is refused before
+    the pickle machinery can act on it."""
+
+    def find_class(self, module: str, name: str):
+        root = module.split(".", 1)[0]
+        if root in _RESTORE_ALLOWED_ROOTS:
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(f"RESTORE refused: {module}.{name} is not a fakeredis value type")
+
+
+def _harden_lua() -> None:
+    """Build fakeredis's Lua runtime without lupa's Python bridge (register_eval=False,
+    register_builtins=False) and strip the escape-hatch globals, through the one seam that
+    constructs it. Never edits site-packages: it wraps the module-level LuaRuntime the mixin
+    reads at call time."""
+    try:
+        from fakeredis.commands_mixins import scripting_mixin as sm
+    except Exception:  # pragma: no cover - fakeredis without Lua support
+        return
+    if getattr(sm, "_aurora_lua_hardened", False):
+        return
+    real_module = sm.LUA_MODULE
+    real_runtime = real_module.LuaRuntime
+
+    def _sandboxed_runtime(*args: Any, **kwargs: Any):
+        kwargs["register_eval"] = False
+        kwargs["register_builtins"] = False
+        rt = real_runtime(*args, **kwargs)
+        # Belt and braces: even were a future lupa to ignore the flags, these globals are gone
+        # before fakeredis captures its expected-globals set, so the strip raises no false alarm.
+        with contextlib.suppress(Exception):
+            rt.execute(_LUA_NEUTER)
+        return rt
+
+    class _ModuleProxy:
+        # fakeredis reads LUA_MODULE.LuaRuntime / .lua_type / .LuaError by attribute; only the
+        # constructor is swapped, the rest delegates to the genuine lupa module.
+        LuaRuntime = staticmethod(_sandboxed_runtime)
+
+        def __getattr__(self, attr: str) -> Any:
+            return getattr(real_module, attr)
+
+    sm.LUA_MODULE = _ModuleProxy()
+    sm._aurora_lua_hardened = True  # ty: ignore[unresolved-attribute]  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def _harden_restore() -> None:
+    """Make fakeredis's DUMP/RESTORE unpickle through the restricted unpickler, so a crafted
+    RESTORE payload cannot resolve a class outside fakeredis's own value types. Scoped to the
+    generic-commands module's pickle reference, so the server's trusted SQLite loader (its own
+    pickle import) is untouched."""
+    try:
+        from fakeredis._helpers import SimpleError
+        from fakeredis.commands_mixins import generic_mixin as gm
+    except Exception:  # pragma: no cover - fakeredis layout drift
+        return
+    if getattr(gm, "_aurora_restore_hardened", False):
+        return
+    # gm.pickle is the submodule's own `import pickle`; the type checker calls that a private
+    # re-import, which it is not for a monkeypatch seam -- suppressed, not worked around.
+    real_pickle = gm.pickle  # pyright: ignore[reportPrivateImportUsage]
+
+    def _safe_loads(data: bytes, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return _RestoreUnpickler(io.BytesIO(data)).load()
+        except Exception:
+            # Real Redis answers a payload it will not accept with exactly this.
+            raise SimpleError("ERR Bad data format") from None
+
+    class _PickleProxy:
+        loads = staticmethod(_safe_loads)
+
+        def __getattr__(self, attr: str) -> Any:
+            return getattr(real_pickle, attr)
+
+    gm.pickle = _PickleProxy()  # pyright: ignore[reportPrivateImportUsage]
+    gm._aurora_restore_hardened = True  # ty: ignore[unresolved-attribute]  # pyright: ignore[reportAttributeAccessIssue]
+
+
 def _install_hooks() -> None:
     """Teach fakeredis to report what each command touched, and add the commands it lacks."""
     import fakeredis._basefakesocket as bfs
     import fakeredis._commands as cmds
     from fakeredis._commands import command
+
+    # Close the code-execution doors first: EVAL's Lua escape hatches and RESTORE's pickle path
+    # (each idempotent), so every fakeredis server this process serves is sandboxed from boot.
+    _harden_lua()
+    _harden_restore()
 
     if getattr(bfs.BaseFakeSocket, "_aurora_hooked", False):
         return
