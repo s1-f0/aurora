@@ -4,12 +4,12 @@ Status: current
 Class: reference
 
 > Do NOT edit by hand. Regenerate with `py scripts/generators/gen_physics_sheet.py`.
-> Derived at 5f6434e47. A bound you discover by collision is not awareness -- this sheet
+> Derived at 01b1c1126. A bound you discover by collision is not awareness -- this sheet
 > exists so every clip, cap, timeout and flag is READABLE before it is HIT.
 > Dynamic envelopes (throughput, latency, limits-under-load) are NOT here: they require
 > measurement, not grep -- see the master-map charter M2b (benchmark half).
 
-## Configuration flags (314 names)
+## Configuration flags (315 names)
 
 | Flag | Default (as written) | Read sites |
 |---|---|---|
@@ -114,6 +114,7 @@ Class: reference
 | `AKASHIC_REDIS_BACKEND` | `` | core/foundation/embedded_redis.py |
 | `AKASHIC_REDIS_HEALTH_CHECK_SEC` | `"30"` | core/foundation/redis_connection.py |
 | `AKASHIC_REDIS_HOST` | `"localhost"` | scripts/checkers/check_field_parity.py |
+| `AKASHIC_REDIS_MAX_CONNECTIONS` | `"16"` | core/foundation/redis_connection.py |
 | `AKASHIC_REDIS_POLL_MS` | `` | core/foundation/embedded_redis.py |
 | `AKASHIC_REDIS_PORT` | `16379` | scripts/checkers/check_field_parity.py |
 | `AKASHIC_RELEVANCE_BUDGET` | `"1"` | core/context/learning_loader.py, research/in-flight/t342/dead-modules/context__learning_loader.py |

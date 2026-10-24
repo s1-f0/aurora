@@ -21,13 +21,42 @@ This is the canonical connector. All backends and stores build on it so the
 fail-fast guarantee lives in exactly one place.
 """
 
+import contextlib
 import logging
 import os
 import socket
+import threading
 import time
 from typing import Any
 
 logger = logging.getLogger("redis_connection")
+
+#: One client per (host, port, db, decode, timeout) per PROCESS.
+#:
+#: THE MEASUREMENT THIS EXISTS FOR. Every call used to build a fresh redis.Redis -- its own
+#: pool -- after a raw-socket reachability probe. The converter is called from 73 sites, many
+#: on hot paths (hooks, bus reads, mail counts), and the old clients were left to garbage
+#: collection. Measured on this box: three OpenCode hook workers alone held 72 of the server's
+#: 105 ESTABLISHED sockets and ~25% CPU, and the embedded server's command latency sat at
+#: 250 ms. A client is thread-safe and its pool reconnects after disconnect(), so one shared
+#: client per shape is both correct and enough.
+_CLIENTS: dict[tuple, Any] = {}
+_CLIENTS_LOCK = threading.Lock()
+
+
+def _client_key(host: str, port: int, db: int, decode_responses: bool, timeout_seconds: float) -> tuple:
+    return (str(host), int(port), int(db), bool(decode_responses), float(timeout_seconds))
+
+
+def reset_clients() -> None:
+    """Drop every cached client (tests, and a deliberate reconnect after a backend switch)."""
+    with _CLIENTS_LOCK:
+        clients = list(_CLIENTS.values())
+        _CLIENTS.clear()
+    for client in clients:
+        with contextlib.suppress(Exception):
+            client.close()
+
 
 # Short-lived cache of reachability probes, keyed by (host, port). Without this,
 # a startup that builds several Store/Ledger instances probes Redis once PER
@@ -266,6 +295,15 @@ def connect_to_redis_with_fail_fast(
         logger.debug("redis library not installed; skipping connection")
         return None
 
+    key = _client_key(host, port, db, decode_responses, timeout_seconds)
+    with _CLIENTS_LOCK:
+        cached = _CLIENTS.get(key)
+    if cached is not None:
+        # No probe and no PING: health_check_interval re-PINGs an idle pooled connection, and
+        # redis-py reconnects when that fails. Paying two round trips per call (probe + PING)
+        # is what the hook hot path could least afford.
+        return cached
+
     if not probe_redis_reachable(host, port, probe_timeout_seconds):
         # No Redis answering. If this checkout runs on the EMBEDDED backend (no Redis server
         # installed; see core/foundation/embedded_redis.py), start it and carry on -- every
@@ -297,9 +335,18 @@ def connect_to_redis_with_fail_fast(
             # blocked in xread for 12+ hours. Keepalive cannot see this; only an
             # application-level PING can, because only Redis can answer it.
             health_check_interval=int(os.getenv("AKASHIC_REDIS_HEALTH_CHECK_SEC", "30") or 30),
+            # Bound one shared pool per process. Unbounded, a busy runner opens as many sockets
+            # as it has concurrent operations and the server pays a thread (and a poll loop) for
+            # each. 16 is well above this house's per-process concurrency.
+            max_connections=int(os.getenv("AKASHIC_REDIS_MAX_CONNECTIONS", "16") or 16),
         )
         client.ping()
-        return client
+        with _CLIENTS_LOCK:
+            existing = _CLIENTS.setdefault(key, client)
+        if existing is not client:
+            with contextlib.suppress(Exception):
+                client.close()
+        return existing
     except Exception as e:
         logger.warning("Redis reachable but PING failed at %s:%s: %s", host, port, e)
         return None
