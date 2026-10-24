@@ -87,6 +87,12 @@ def target_file(harness: str, scope: str, project: str | os.PathLike | None = No
         if scope == "user":
             return base / ".claude" / "settings.json"
         return base / ".claude" / ("settings.json" if shared else "settings.local.json")
+    if harness == "opencode":
+        # OpenCode has no hooks.json: the surface is the plugin path in opencode.json, so this
+        # is the file `hooks install --harness opencode` edits.
+        if scope == "user":
+            return _home() / ".config" / "opencode" / "opencode.json"
+        return base / "opencode.json"
     return base / f".{harness}" / "hooks.json"
 
 
@@ -304,8 +310,61 @@ def _label(rec_event: str, entry: dict) -> str:
     return f"{rec_event}:{script_of(entry.get('command', '')) or '?'}"
 
 
+def opencode_plugin_path() -> str:
+    """The plugin directory OpenCode loads (config `plugins` accepts an absolute path)."""
+    return str(_repo() / "agent" / "harness" / "plugins" / "opencode")
+
+
+def install_opencode(scope: str = "user", project=None, dry_run: bool = False) -> Result:
+    """Install the OpenCode surface: the plugin path plus the akashic-aurora MCP server.
+
+    OpenCode reads `plugins` and `mcp.servers` from opencode.json instead of a hooks file, so
+    there is no event registry to merge. Idempotent; foreign plugins and MCP servers untouched.
+    """
+    path = target_file("opencode", scope, project)
+    res = Result(path, "install")
+    try:
+        doc = read_config(path)
+    except Exception as e:
+        res.notes.append(f"unreadable {path}: {type(e).__name__}: {e} -- not overwritten")
+        return res
+    if not isinstance(doc, dict):
+        doc = {}
+    before = json.dumps(doc, sort_keys=True)
+
+    plugin = opencode_plugin_path()
+    plugins = doc.get("plugins")
+    plugins = plugins if isinstance(plugins, list) else []
+    if plugin not in plugins:
+        plugins.append(plugin)
+        res.added.append(f"plugin:{plugin}")
+    doc["plugins"] = plugins
+
+    mcp = doc.get("mcp")
+    mcp = mcp if isinstance(mcp, dict) else {}
+    servers = mcp.get("servers")
+    servers = servers if isinstance(servers, dict) else {}
+    if "akashic-aurora" not in servers:
+        servers["akashic-aurora"] = {
+            "type": "local",
+            "command": [_launcher() or os.path.expanduser("~/.local/bin/aurora"), "mcp"],
+            "environment": {"AKASHIC_AGENT_ID": "opencode"},
+        }
+        res.added.append("mcp:akashic-aurora")
+    mcp["servers"] = servers
+    doc["mcp"] = mcp
+
+    res.changed = json.dumps(doc, sort_keys=True) != before
+    if res.changed and not dry_run:
+        write_config(path, doc)
+    res.notes.append("restart the OpenCode service (or `/reload`) to load the plugin and MCP server")
+    return res
+
+
 def install(harness, scope, project=None, shared=False, dry_run=False) -> Result:
     """(Re)write our hooks into one file. Idempotent; foreign hooks untouched."""
+    if harness == "opencode":
+        return install_opencode(scope, project, dry_run)
     path = target_file(harness, scope, project, shared)
     res = Result(path, "install")
     doc = read_config(path)
@@ -523,6 +582,15 @@ def status(project=None) -> list[dict[str, Any]]:
             doc = read_config(path)
         except Exception as e:  # report, never crash the status view
             row["error"] = f"{type(e).__name__}: {e}"
+            rows.append(row)
+            continue
+        if harness == "opencode":
+            plugins = doc.get("plugins") if isinstance(doc, dict) else None
+            pinned = opencode_plugin_path()
+            if isinstance(plugins, list) and pinned in plugins:
+                row["installed"].append(f"plugin:{pinned}")
+            else:
+                row["missing"].append(f"plugin:{pinned}")
             rows.append(row)
             continue
         for ev, _, e in _entries(doc, harness):

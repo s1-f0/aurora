@@ -24,11 +24,16 @@ from agent.harness import install as inst
 from agent.harness.registry import HARNESSES
 
 #: installer harness -> registry harness (for its default agent id)
-_REGISTRY_NAME = {"claude": "claude-code", "codex": "codex-desktop", "cursor": "cursor"}
+_REGISTRY_NAME = {"claude": "claude-code", "codex": "codex-desktop", "cursor": "cursor", "opencode": "opencode"}
 #: default hook scope per harness. Claude: user-level fires for every launch cwd (the ledger's
 #: routing, C8-3); Codex and Cursor have always been wired per project.
-_DEFAULT_SCOPE = {"claude": "user", "codex": "project", "cursor": "project"}
-_BINARIES = {"claude": ("claude",), "codex": ("codex",), "cursor": ("cursor", "cursor-agent")}
+_DEFAULT_SCOPE = {"claude": "user", "codex": "project", "cursor": "project", "opencode": "user"}
+_BINARIES = {
+    "claude": ("claude",),
+    "codex": ("codex",),
+    "cursor": ("cursor", "cursor-agent"),
+    "opencode": ("opencode",),
+}
 
 
 #: While collect() runs (agent mode), the steps land here instead of on stdout, so the whole run

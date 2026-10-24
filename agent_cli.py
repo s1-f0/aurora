@@ -15927,7 +15927,9 @@ def build_parser(only: str | None = None):
         "hooks", help="register / remove / switch off-on / inspect the harness hooks (user or project scope)"
     )
     hk.add_argument("action", choices=["status", "install", "uninstall", "enable", "disable", "enroll", "unenroll"])
-    hk.add_argument("--harness", choices=["claude", "codex", "cursor"], default="claude", help="default: claude")
+    hk.add_argument(
+        "--harness", choices=["claude", "codex", "cursor", "opencode"], default="claude", help="default: claude"
+    )
     hk.add_argument("--scope", choices=["user", "project"], default="user", help="default: user (every project)")
     hk.add_argument("--project", default=None, help="project dir for --scope project and enroll (default: cwd)")
     hk.add_argument("--everywhere", action="store_true", help="enroll/unenroll: every directory, not one project")
@@ -15997,7 +15999,7 @@ def build_parser(only: str | None = None):
 
     su = sub.add_parser("setup", help="onboarding: hooks, agent id, MCP and git hooks, teaching the CLI as it goes")
     su.add_argument("--yes", action="store_true", help="non-interactive: take every default (or the flags below)")
-    su.add_argument("--harness", action="append", choices=["claude", "codex", "cursor"], help="repeatable")
+    su.add_argument("--harness", action="append", choices=["claude", "codex", "cursor", "opencode"], help="repeatable")
     su.add_argument("--scope", choices=["user", "project", "skip"], default=None)
     su.add_argument("--project", default=None)
     su.add_argument("--agent-id", default=None)

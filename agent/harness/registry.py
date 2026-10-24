@@ -124,6 +124,24 @@ HARNESSES: dict[str, dict[str, Any]] = {
             "T6": "yes -- sessionEnd -> chronicles/last-session-draft.md",
         },
     },
+    "opencode": {
+        "default_agent_id": "opencode",
+        "adapters": "agent/harness/plugins/opencode/index.ts (OpenCode plugin: session + tool hooks) "
+        "-> agent/harness/hooks/opencode_hook.py (the explicit OpenCode boundary); "
+        "MCP `akashic-aurora` (`aurora mcp`) for T0",
+        "tiers": {
+            "T0": "yes -- shell + the akashic-aurora MCP server (`aurora mcp`, 77 tools)",
+            "T1": "yes -- MCP server env AKASHIC_AGENT_ID=opencode; the first context call declares "
+            "the session binding (core/comm/seat_identity.declare)",
+            "T2": "yes -- session context hook injects the boot whisper once, on the first model call",
+            "T3": "one-beat-late -- tool.execute.before cannot inject; recall rides the next context "
+            "call (the same honest tier as Cursor). House vetoes (git staging) still block",
+            "T4": "yes, DIRECT -- tool.execute.after carries completed/error, so no transcript synthesis",
+            "T5": "yes -- the prompt hook captures the prompt and the next context call injects plan recall",
+            "T6": "yes, debounced -- session.idle after a 10-minute quiet window writes "
+            "chronicles/last-session-draft.md; OpenCode has no session-end event and no transcript fold",
+        },
+    },
     "bare-cli": {
         "default_agent_id": None,  # any agent id; set AKASHIC_AGENT_ID yourself
         "adapters": "none -- the AGENTS.md contract, followed manually",
@@ -200,6 +218,10 @@ HOOK_SPECS = {
         ("postToolUseFailure", "Shell|Read|Write", "cursor_posttooluse.py --event postToolUseFailure"),
         ("sessionEnd", None, "cursor_sessionend.py"),
     ],
+    # OpenCode has no hooks.json at all: its surface is a plugin path plus the MCP server in
+    # opencode.json. install.install_opencode() edits that file; there is no
+    # (event, matcher, script) spec to register, so this list is deliberately empty.
+    "opencode": [],
 }
 
 #: Cursor entries that must block on hook failure (the commit guard).
