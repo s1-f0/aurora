@@ -82,6 +82,44 @@ def test_p2_heartbeat_states():
     assert _snap(c)["heartbeat"] == "idle", "P2: 15m-stale presence -> idle"
 
 
+def test_p2b_presence_ts_offset_is_authoritative():
+    """P2b (2026-10-24, live: rail showed "0 of 2 beating" while both seats beat).
+
+    The presence writers stamp ISO-8601 in UTC WITH an offset
+    ("2026-10-24T18:25:21.986977+00:00"). `_heartbeat` used to slice off the offset and
+    feed the wall clock to `time.mktime`, which reads it as LOCAL time. On this host
+    (CEST, UTC+2) every card therefore read two hours stale, so a freshly beating seat
+    rendered `idle` forever and the console's "seats beating" tile was pinned at 0/N.
+
+    The round-trip is the point: `now` is an exact epoch, the card stamp denotes the
+    same instant with an explicit offset, so the age must be ~0 no matter what the host
+    clock's own offset is. A negative-offset twin keeps the pin RED on UTC hosts too --
+    there the buggy local parse reads the wall clock as 5h in the past.
+    """
+    _built()
+    now = 1792000000.0  # fixed epoch: independent of the host's clock and zone
+    from datetime import UTC, datetime, timedelta
+
+    stamp = datetime.fromtimestamp(now, UTC).isoformat()  # +00:00, the writer's shape
+    c = FakeRedis()
+    c.set(f"bifrost:presence:{AGENT}", json.dumps({"ts": stamp}))
+    assert _snap(c, now=now)["heartbeat"] == "active", (
+        f"P2b: a fresh UTC-stamped card must read active, not local time (stamp={stamp})"
+    )
+
+    from datetime import timezone
+
+    west = datetime.fromtimestamp(now, timezone(timedelta(hours=-5)))  # the SAME instant, -05:00
+    c.set(f"bifrost:presence:{AGENT}", json.dumps({"ts": west.isoformat()}))
+    assert _snap(c, now=now)["heartbeat"] == "active", (
+        f"P2b: an explicit offset is authoritative on any host zone (stamp={west.isoformat()})"
+    )
+
+    stale = (datetime.fromtimestamp(now, UTC) - timedelta(minutes=15)).isoformat()
+    c.set(f"bifrost:presence:{AGENT}", json.dumps({"ts": stale}))
+    assert _snap(c, now=now)["heartbeat"] == "idle", "P2b: 15m-old UTC stamp still reads idle"
+
+
 def test_p3_runtimes_passthrough():
     _built()
     c = FakeRedis()
