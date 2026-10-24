@@ -63,7 +63,7 @@ Class: reference
 |---|---|---|---|---|
 | `accel.py` | accel -- optional Rust implementations of hot paths, with Python as the reference. | tests/test_accel_parity.py | GAP | `AURORA_NO_RUST` |
 | `durable_reconcile.py` | Per-family authority reconcile: make the durable source COMPLETE before migrating. | GAP | GAP | `AI_SETUP` |
-| `embedded_redis.py` | embedded_redis -- a Redis-compatible server in pure Python, persisted to SQLite. | tests/test_embedded_redis.py | GAP | `AKASHIC_EMBEDDED_REDIS_DIR`, `AKASHIC_EMBEDDED_REDIS_FLUSH_SEC`, `AKASHIC_REDIS_BACKEND` |
+| `embedded_redis.py` | embedded_redis -- a Redis-compatible server in pure Python, persisted to SQLite. | tests/test_embedded_redis.py | GAP | `AKASHIC_EMBEDDED_REDIS_DIR`, `AKASHIC_EMBEDDED_REDIS_FLUSH_SEC`, `AKASHIC_REDIS_BACKEND`, `AKASHIC_REDIS_POLL_MS` |
 | `filelock.py` | A cross-process exclusive file lock. | GAP | GAP |  |
 | `ledger.py` | Ledger: Swappable event-record interface (append-and-replay) | tests/test_charter_p0_gap_ledger.py | docs/failure-ledger-2026-07.md |  |
 | `migrate_to_sqlite.py` | JSON FileStore -> SqliteStore migration: shadow-build, census law, honest verify. | GAP | GAP | `AI_SETUP` |

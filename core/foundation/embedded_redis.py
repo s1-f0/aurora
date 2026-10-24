@@ -581,12 +581,38 @@ def _no_delay_handler(base: Any) -> Any:
     return _NoDelay
 
 
+def _install_poll_interval() -> None:
+    """Slow fakeredis' per-connection poll to something a fleet can afford.
+
+    THE MEASUREMENT THIS EXISTS FOR. fakeredis' TCP handler busy-polls every client socket at
+    100 Hz (`_POLL_INTERVAL = 0.01`) to pick up replies the server pushes without a request --
+    pub/sub and blocking-command wakeups. That is fine for one client and ruinous for a fleet:
+    measured on this box, 20 idle connections cost 33% of a core, 50 cost 83%, 100 cost 164%,
+    and the live server at 102 threads sat at ~390% idle with 230 ms command latency. A fresh
+    server with one client answered in 0.3 ms.
+
+    The poll interval only bounds how long a PUSHED reply waits; it is not on the request path
+    (select() returns the moment bytes arrive), so raising it costs a little pub/sub latency and
+    almost nothing else. 50 ms is imperceptible for the bus and cuts the idle cost five-fold.
+    Tune with AKASHIC_REDIS_POLL_MS; set 10 to restore fakeredis' own default.
+    """
+    try:
+        import fakeredis._tcp_server as tcp
+
+        ms = float((os.getenv("AKASHIC_REDIS_POLL_MS") or "50").strip() or 50)
+        tcp._POLL_INTERVAL = max(0.001, ms / 1000.0)
+        logger.info("embedded redis polls each connection every %.0f ms", tcp._POLL_INTERVAL * 1000)
+    except Exception:
+        pass  # a missing knob must never stop the server
+
+
 def serve(port: int, host: str = "127.0.0.1", path: Path | None = None) -> int:
     """Run the server in this process until SIGTERM/SIGINT or SHUTDOWN. Returns an exit code."""
     global _PERSIST
     from fakeredis import TcpFakeServer
 
     _install_hooks()
+    _install_poll_interval()
     path = path or data_file(port)
     try:
         srv = TcpFakeServer((host, int(port)), server_type="redis")
