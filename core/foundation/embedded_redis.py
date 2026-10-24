@@ -699,6 +699,12 @@ def ensure_running(host: str, port: int, timeout: float = 10.0) -> bool:
         if record_backend(reachable=False) != "embedded":
             return False
         _spawn(port)
+        # A NEW server means every client this process cached points at the old one. Drop them
+        # so the next connector call builds a pool against the server that actually answers.
+        with contextlib.suppress(Exception):
+            from core.foundation.redis_connection import reset_clients
+
+            reset_clients()
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if _reachable(host, port):

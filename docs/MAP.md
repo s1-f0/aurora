@@ -67,7 +67,7 @@ Class: reference
 | `filelock.py` | A cross-process exclusive file lock. | GAP | GAP |  |
 | `ledger.py` | Ledger: Swappable event-record interface (append-and-replay) | tests/test_charter_p0_gap_ledger.py | docs/failure-ledger-2026-07.md |  |
 | `migrate_to_sqlite.py` | JSON FileStore -> SqliteStore migration: shadow-build, census law, honest verify. | GAP | GAP | `AI_SETUP` |
-| `redis_connection.py` | Redis Connection: Fail-fast connectivity primitive | GAP | GAP | `AKASHIC_REDIS_HEALTH_CHECK_SEC`, `REDIS_DB`, `REDIS_HOST`, `REDIS_PORT` |
+| `redis_connection.py` | Redis Connection: Fail-fast connectivity primitive | GAP | GAP | `AKASHIC_REDIS_HEALTH_CHECK_SEC`, `AKASHIC_REDIS_MAX_CONNECTIONS`, `REDIS_DB`, `REDIS_HOST`, `REDIS_PORT` |
 | `relationship_types.py` | Comprehensive Relationship Type Framework for Knowledge Graphs | tests/test_relationship_types.py | GAP |  |
 | `sqlite_store.py` | SqliteStore -- the durable Store backend with real cross-process safety. | tests/test_sqlite_store.py | GAP | `AI_SETUP` |
 | `store.py` | Store: Swappable persistence interface (full Redis-mirror) | tests/test_arsenal_jam_store.py | docs/filestore-coherence-design-2026-07.md | `AI_SETUP`, `AKASHIC_STORE_BACKEND` |
