@@ -26,6 +26,13 @@ from typing import Any, cast
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# The shared Redis client bounds its pool at 16 per process, sized for hooks and runners. This
+# console is a threaded server: every open tab holds an /events stream on one connection for its
+# 15s blocking read, and each /api/now poll makes several more calls. Seven tabs loading at once
+# queued /api/now for 14s behind that bound, so the console gets a server-sized pool. Set before
+# the core imports below, which build the first client.
+os.environ.setdefault("AKASHIC_REDIS_MAX_CONNECTIONS", "64")
+
 import contextlib
 
 from core.comm import control, promoter, room_feed
