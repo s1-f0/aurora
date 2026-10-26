@@ -229,18 +229,18 @@ _Avoid_: truncation
 One of the three bus streams (work, sig and trace), which the bus picks from a message's kind. [Read more](/docs/concepts/bifrost/bus)
 
 **Roster**:
-The list of live sessions, each marked live, stale, offline or dead. [Read more](/docs/concepts/bifrost/seats)
+The list of live sessions, each marked live, stale, offline or dead. [Read more](/docs/concepts/fleet/seats)
 _Avoid_: model roster
 
 **Agent id**:
-The stable name an agent uses across sessions, such as `claude`. [Read more](/docs/concepts/bifrost/seats)
+The stable name an agent uses across sessions, such as `claude`. [Read more](/docs/concepts/fleet/seats)
 
 **Seat**:
-One running agent that others can send mail to, with its own name, inbox, lock and heartbeat. [Read more](/docs/concepts/bifrost/seats)
+One running agent that others can send mail to, with its own name, inbox, lock and heartbeat. [Read more](/docs/concepts/fleet/seats)
 _Avoid_: session (one agent can hold seats in several sessions)
 
 **Incarnation**:
-One live session of one agent: the agent id stays, the incarnation changes. [Read more](/docs/concepts/bifrost/seats)
+One live session of one agent: the agent id stays, the incarnation changes. [Read more](/docs/concepts/fleet/seats)
 
 **Harness**:
 The app an agent runs in, such as Claude Code. [Read more](/docs/concepts/bifrost/wake)
@@ -304,23 +304,53 @@ A signed, narrow mail link to another Aurora install, whose incoming mail waits 
 **Parked inbox**:
 The file where admitted mail from a peer fleet waits, kept off the live bus. [Read more](/docs/concepts/bifrost/bridge)
 
-## Coordination
+## Fleet and trust
 
 **Fleet**:
-All the agent seats that work together in one Aurora install, under one operator. [Read more](/docs/concepts/coordination/fleet-and-residents)
+All the agent seats that work together in one Aurora install, under one operator. [Read more](/docs/concepts/fleet/fleet-and-residents)
 _Avoid_: crew, swarm, team
 
 **Model roster**:
-The list of local models Aurora can pick by skill and call for one small job. [Read more](/docs/concepts/coordination/fleet-and-residents)
+The list of local models Aurora can pick by skill and call for one small job. [Read more](/docs/concepts/fleet/fleet-and-residents)
 _Avoid_: fleet
 
 **Resident**:
-A seat whose callsign a peer proposed and a human confirmed, backed by its own lessons. [Read more](/docs/concepts/coordination/fleet-and-residents)
+A seat whose callsign a peer proposed and a human confirmed, backed by its own lessons. [Read more](/docs/concepts/fleet/fleet-and-residents)
 _Avoid_: persona
 
 **Callsign**:
-A resident's ratified name, which the bus can route mail by. [Read more](/docs/concepts/coordination/fleet-and-residents)
+A resident's ratified name, which the bus can route mail by. [Read more](/docs/concepts/fleet/fleet-and-residents)
 _Avoid_: nickname
+
+**Charter**:
+A seat's standing contract: who it is and what it answers for. [Read more](/docs/concepts/fleet/charters-and-briefs)
+_Avoid_: work order
+
+**Brief**:
+A one-off work order handed to a seat. [Read more](/docs/concepts/fleet/charters-and-briefs)
+
+**Capability**:
+One permission an agent id holds, such as the right to write lessons. [Read more](/docs/concepts/fleet/trust)
+
+**Role**:
+A named bundle of capabilities granted to an agent id. [Read more](/docs/concepts/fleet/trust)
+
+**Acting conductor**:
+The seat that gets a short, limited right to grant when the claude seat is gone and the operator is away. [Read more](/docs/concepts/fleet/trust)
+
+**Quarantine**:
+The default for an agent id Aurora does not know: it may read, including its own inbox, and nothing more. [Read more](/docs/concepts/fleet/trust)
+
+**Trust ladder**:
+The five rungs from quarantined to super admin, climbed by proof and recorded grants. [Read more](/docs/concepts/fleet/trust-ladder)
+
+**Door**:
+An entry point to the system's verbs, such as the command line or the MCP tools. [Read more](/docs/concepts/fleet/doors)
+
+**Door parity**:
+The check that keeps the doors in step, so a verb missing from a door is declared, not accidental. [Read more](/docs/concepts/fleet/doors)
+
+## Coordination
 
 **Operator**:
 The human who runs the fleet and has the final word. [Read more](/docs/concepts/coordination/doctrine)
@@ -365,31 +395,6 @@ A short-lived note in which an agent declares what it plans to do. [Read more](/
 
 **Negotiation round**:
 A short window after human input in which agents post intents before anyone acts. [Read more](/docs/concepts/coordination/conductor)
-
-**Charter**:
-A seat's standing contract: who it is and what it answers for. [Read more](/docs/concepts/coordination/charters-and-briefs)
-_Avoid_: work order
-
-**Brief**:
-A one-off work order handed to a seat. [Read more](/docs/concepts/coordination/charters-and-briefs)
-
-**Capability**:
-One permission an agent id holds, such as the right to write lessons. [Read more](/docs/concepts/coordination/trust)
-
-**Role**:
-A named bundle of capabilities granted to an agent id. [Read more](/docs/concepts/coordination/trust)
-
-**Acting conductor**:
-The seat that gets a short, limited right to grant when the claude seat is gone and the operator is away. [Read more](/docs/concepts/coordination/trust)
-
-**Quarantine**:
-The default for an agent id Aurora does not know: it may read, including its own inbox, and nothing more. [Read more](/docs/concepts/coordination/trust)
-
-**Door**:
-An entry point to the system's verbs, such as the command line or the MCP tools. [Read more](/docs/concepts/coordination/doors)
-
-**Door parity**:
-The check that keeps the doors in step, so a verb missing from a door is declared, not accidental. [Read more](/docs/concepts/coordination/doors)
 
 **Arc**:
 A long line of work that ties docs, tasks and decisions together over weeks. [Read more](/docs/concepts/coordination/doctrine)
@@ -551,6 +556,9 @@ An idea we dropped, kept on display with why it looked good and why it failed. [
 
 **Principle**:
 One of nine working ideas under the design, each earned by a real mistake. [Read more](/docs/concepts/method/principles)
+
+**House law**:
+A short rule the team wrote after a real failure, such as "zero is not no". [Read more](/docs/concepts/method/laws)
 
 ## House tools
 
