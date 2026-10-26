@@ -29,7 +29,8 @@ def test_ephemeral_rejects_durable_knowledge_families():
         "mem:decisions:x",
         "events:raw:9",
         "recall:use:q",
-        "knowledge_map:nodes:n",
+        # not knowledge_map:* -- T118's ratified roster made it ephemeral: a graph regenerated
+        # by use, never archived (research/in-flight/t118-roster-proposal-2026-07-28.md)
     ):
         assert not is_ephemeral_key(k), k
 
