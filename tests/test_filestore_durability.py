@@ -180,3 +180,18 @@ def test_concurrent_writers_unique_temps_always_parse(tmp_path):
 
     assert not errors, f"writes raised: {errors}"
     json.loads(p.read_text(encoding="utf-8"))  # must parse
+
+
+def test_construction_defers_the_parse_until_first_use(tmp_path, monkeypatch):
+    """HybridStore builds a FileStore per create_store(); an 18MB mirror parsed per call
+    made every console poll slow. Construction must not read the file; first use must."""
+    p = tmp_path / "store_state.json"
+    _seed(p, n=3)
+    reads = []
+    real = Path.read_text
+    monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: reads.append(self) or real(self, *a, **k))
+
+    s = FileStore(path=str(p))
+    assert reads == []
+    assert s.get("lesson:1") == "x" * 100
+    assert reads == [p]
