@@ -319,7 +319,7 @@ def connect_to_redis_with_fail_fast(
     try:
         import redis
 
-        client = redis.Redis(
+        pool = redis.BlockingConnectionPool(
             host=host,
             port=port,
             db=db,
@@ -341,9 +341,17 @@ def connect_to_redis_with_fail_fast(
             health_check_interval=int(os.getenv("AKASHIC_REDIS_HEALTH_CHECK_SEC", "30") or 30),
             # Bound one shared pool per process. Unbounded, a busy runner opens as many sockets
             # as it has concurrent operations and the server pays a thread (and a poll loop) for
-            # each. 16 is well above this house's per-process concurrency.
+            # each.
             max_connections=int(os.getenv("AKASHIC_REDIS_MAX_CONNECTIONS", "16") or 16),
+            # BLOCKING, not the default pool: a caller past the bound waits for a free connection
+            # instead of getting MaxConnectionsError at once. The default pool raised whenever the
+            # console's threaded server (a thread per request, plus every open /events stream)
+            # went past 16 -- two polling tabs were enough -- and Bus.presence() turned the error
+            # into "nobody online". The wait is bounded by the same timeout as a socket read.
+            timeout=max(1, round(timeout_seconds)),
         )
+        # from_pool hands the pool to the client, so close() (reset_clients) disconnects it too.
+        client = redis.Redis.from_pool(pool)
         client.ping()
         with _CLIENTS_LOCK:
             existing = _CLIENTS.setdefault(key, client)

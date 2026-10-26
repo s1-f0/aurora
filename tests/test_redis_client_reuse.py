@@ -29,6 +29,10 @@ class _FakeClient:
         self.closed = False
         _FakeClient.made.append(self)
 
+    @classmethod
+    def from_pool(cls, pool):
+        return cls(connection_pool=pool)
+
     def ping(self):
         return True
 
@@ -70,13 +74,49 @@ def test_reset_drops_the_cache(monkeypatch):
     _patch(monkeypatch)
     a = rc.connect_to_redis_with_fail_fast(host="127.0.0.1", port=16379)
     rc.reset_clients()
+    assert a is not None
     assert a.closed
     b = rc.connect_to_redis_with_fail_fast(host="127.0.0.1", port=16379)
     assert b is not a
     assert len(_FakeClient.made) == 2
 
 
-def test_pool_is_bounded(monkeypatch):
+def test_pool_is_bounded_and_waits_instead_of_raising(monkeypatch):
     _patch(monkeypatch)
     client = rc.connect_to_redis_with_fail_fast(host="127.0.0.1", port=16379)
-    assert client.kwargs["max_connections"] == 16
+    assert client is not None
+    pool = client.kwargs["connection_pool"]
+    assert pool.max_connections == 16
+    # The default pool raises MaxConnectionsError past the bound; the console's threaded server
+    # crossed it with two polling tabs, and Bus.presence() turned the error into "nobody online".
+    assert isinstance(pool, redis_mod.BlockingConnectionPool)
+
+
+def test_callers_past_the_bound_wait_for_a_connection(monkeypatch):
+    """Live pin: 24 threads sharing a 4-connection client all get answers and no errors."""
+    import threading
+
+    import pytest
+
+    rc.reset_clients()
+    monkeypatch.setenv("AKASHIC_REDIS_MAX_CONNECTIONS", "4")
+    client = rc.connect_to_redis_with_fail_fast(timeout_seconds=3)
+    if client is None:
+        pytest.skip("Redis unreachable; this pin needs a live server")
+    errors: list[str] = []
+
+    def work():
+        for _ in range(5):
+            try:
+                client.ping()
+                client.keys("akashic-test-nonexistent:*")
+            except Exception as e:
+                errors.append(type(e).__name__)
+
+    threads = [threading.Thread(target=work) for _ in range(24)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    rc.reset_clients()
+    assert errors == []
