@@ -342,7 +342,7 @@ def _harden_lua() -> None:
             return getattr(real_module, attr)
 
     sm.LUA_MODULE = _ModuleProxy()
-    sm._aurora_lua_hardened = True  # ty: ignore[unresolved-attribute]  # pyright: ignore[reportAttributeAccessIssue]
+    sm._aurora_lua_hardened = True  # ty: ignore[unresolved-attribute]  # pyright: ignore[reportAttributeAccessIssue]  # the idempotence marker
 
 
 def _harden_restore() -> None:
@@ -359,7 +359,7 @@ def _harden_restore() -> None:
         return
     # gm.pickle is the submodule's own `import pickle`; the type checker calls that a private
     # re-import, which it is not for a monkeypatch seam -- suppressed, not worked around.
-    real_pickle = gm.pickle  # pyright: ignore[reportPrivateImportUsage]
+    real_pickle = gm.pickle  # pyright: ignore[reportPrivateImportUsage]  # guarded by the hardening below
 
     def _safe_loads(data: bytes, *args: Any, **kwargs: Any) -> Any:
         try:
@@ -374,8 +374,8 @@ def _harden_restore() -> None:
         def __getattr__(self, attr: str) -> Any:
             return getattr(real_pickle, attr)
 
-    gm.pickle = _PickleProxy()  # pyright: ignore[reportPrivateImportUsage]
-    gm._aurora_restore_hardened = True  # ty: ignore[unresolved-attribute]  # pyright: ignore[reportAttributeAccessIssue]
+    gm.pickle = _PickleProxy()  # pyright: ignore[reportPrivateImportUsage]  # the sandboxed restore path
+    gm._aurora_restore_hardened = True  # ty: ignore[unresolved-attribute]  # pyright: ignore[reportAttributeAccessIssue]  # the idempotence marker
 
 
 def _install_hooks() -> None:

@@ -15,6 +15,7 @@ per event:
 tests/vj_core.test.mjs replays the events through the page's PedalDetector; tests/test_keylab_vj.py checks they are
 still exactly what the engine produces from the notes (rerun this script when the engine's chord naming changes).
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[2]))
 
-from arsenal.keylab import vj as V  # noqa: E402
+from arsenal.keylab import vj as V  # noqa: E402  # imported after the path and feature checks above
 
 # the take is Daniel's own playing: written to the gitignored state/ folder, never into the public repo
 OUT = HERE.parents[2] / "state" / "arsenal" / "keylab" / "joy_take_events.json"
@@ -58,7 +59,7 @@ def main(argv) -> int:
     rp = V.load_replay(argv[0])
     doc = {
         "what": "Daniel's Joy to the World take (Worship Grandeur Piano.flp score log, pattern 7, stretch 2) as the VJ "
-                "page receives it from `vj --replay-midi`: arsenal.keylab.vj.replay_events on a simulated clock",
+        "page receives it from `vj --replay-midi`: arsenal.keylab.vj.replay_events on a simulated clock",
         "replay": rp.label,
         "notes": len(rp.notes),
         "seconds": round(rp.seconds, 3),

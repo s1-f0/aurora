@@ -11,6 +11,7 @@ these are banned outright: importlib, __import__, sys.modules, open(), os / path
 gc, inspect, subprocess, socket, ctypes; and with them the obvious ways around the list (builtins, eval, exec,
 compile, globals(), the dunder escapes, numpy's and scipy's own file readers and writers).
 """
+
 from __future__ import annotations
 
 import ast
@@ -23,20 +24,86 @@ STDLIB = set(getattr(sys, "stdlib_module_names", ())) | {"__future__"}
 
 # modules a tracker may not import at all, even though they are stdlib: the ten the review named, then the other
 # stdlib doors to the same places (loading code, reading files, spawning processes, the network)
-BANNED_MODULES = {"importlib", "os", "pathlib", "io", "shutil", "gc", "inspect", "subprocess", "socket", "ctypes",
-                  "builtins", "runpy", "pkgutil", "zipimport", "code", "codeop", "pdb", "trace",
-                  "tempfile", "glob", "fileinput", "linecache", "tokenize", "codecs", "mmap", "pickle", "marshal",
-                  "shelve", "dbm", "sqlite3", "zipfile", "tarfile", "gzip", "bz2", "lzma",
-                  "multiprocessing", "concurrent", "urllib", "http", "ftplib", "ssl", "asyncio", "select",
-                  "selectors"}
+BANNED_MODULES = {
+    "importlib",
+    "os",
+    "pathlib",
+    "io",
+    "shutil",
+    "gc",
+    "inspect",
+    "subprocess",
+    "socket",
+    "ctypes",
+    "builtins",
+    "runpy",
+    "pkgutil",
+    "zipimport",
+    "code",
+    "codeop",
+    "pdb",
+    "trace",
+    "tempfile",
+    "glob",
+    "fileinput",
+    "linecache",
+    "tokenize",
+    "codecs",
+    "mmap",
+    "pickle",
+    "marshal",
+    "shelve",
+    "dbm",
+    "sqlite3",
+    "zipfile",
+    "tarfile",
+    "gzip",
+    "bz2",
+    "lzma",
+    "multiprocessing",
+    "concurrent",
+    "urllib",
+    "http",
+    "ftplib",
+    "ssl",
+    "asyncio",
+    "select",
+    "selectors",
+}
 BANNED_SUBMODULES = {"scipy.io", "numpy.lib.format", "numpy.lib.npyio", "numpy.ctypeslib", "scipy.datasets"}
 BANNED_CALLS = {"open", "__import__", "eval", "exec", "compile", "globals", "breakpoint"}
 BANNED_NAMES = {"__builtins__", "__loader__", "__spec__"}
-BANNED_ATTRS = {"__subclasses__", "__globals__", "__builtins__", "__code__", "__closure__", "__import__",
-                "__loader__", "__spec__", "f_globals", "f_locals", "f_back", "gi_frame", "tb_frame"}
-NUMPY_FILE_ATTRS = {"load", "save", "savez", "savez_compressed", "fromfile", "loadtxt", "savetxt", "genfromtxt",
-                    "memmap", "fromregex", "DataSource", "ctypeslib", "lib"}
-ANY_FILE_ATTRS = {"tofile", "dump"}                           # ndarray.tofile / ndarray.dump write to disk
+BANNED_ATTRS = {
+    "__subclasses__",
+    "__globals__",
+    "__builtins__",
+    "__code__",
+    "__closure__",
+    "__import__",
+    "__loader__",
+    "__spec__",
+    "f_globals",
+    "f_locals",
+    "f_back",
+    "gi_frame",
+    "tb_frame",
+}
+NUMPY_FILE_ATTRS = {
+    "load",
+    "save",
+    "savez",
+    "savez_compressed",
+    "fromfile",
+    "loadtxt",
+    "savetxt",
+    "genfromtxt",
+    "memmap",
+    "fromregex",
+    "DataSource",
+    "ctypeslib",
+    "lib",
+}
+ANY_FILE_ATTRS = {"tofile", "dump"}  # ndarray.tofile / ndarray.dump write to disk
 
 
 def imported_roots(src: str) -> set:
@@ -45,7 +112,7 @@ def imported_roots(src: str) -> set:
         if isinstance(node, ast.Import):
             roots |= {a.name.split(".")[0] for a in node.names}
         elif isinstance(node, ast.ImportFrom):
-            if node.level:                                    # relative import = something inside arsenal.keylab
+            if node.level:  # relative import = something inside arsenal.keylab
                 roots.add("." + (node.module or ""))
             elif node.module:
                 roots.add(node.module.split(".")[0])
@@ -103,7 +170,7 @@ def reach_violations(src: str) -> set:
             if node.attr in ANY_FILE_ATTRS:
                 found.add(f"attr {node.attr}")
         elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in BANNED_ATTRS:
-            found.add(f"string {node.value}")                 # getattr(x, "__globals__") and friends
+            found.add(f"string {node.value}")  # getattr(x, "__globals__") and friends
     return found
 
 
@@ -123,9 +190,11 @@ def test_beat_trackers_cannot_reach_past_the_audio():
 
 
 def test_the_scanner_catches_every_forbidden_shape():
-    probe = ("import aubio\nfrom madmom.features import beats\nfrom . import winmidi\nimport numpy as np\n"
-             "def f():\n    import librosa\n")
-    assert violations(probe) == {"aubio", "madmom", "librosa", "."}   # "." = any relative import into keylab
+    probe = (
+        "import aubio\nfrom madmom.features import beats\nfrom . import winmidi\nimport numpy as np\n"
+        "def f():\n    import librosa\n"
+    )
+    assert violations(probe) == {"aubio", "madmom", "librosa", "."}  # "." = any relative import into keylab
     assert violations("import numpy\nfrom scipy.signal import lfilter\nimport math\n") == set()
 
 
@@ -166,8 +235,10 @@ def test_the_reach_scanner_catches_every_banned_door():
     }
     for src, label in probes.items():
         assert label in reach_violations(src), f"the scanner missed {label!r} in {src!r}"
-    clean = ("from __future__ import annotations\nimport math\nfrom collections import deque\n"
-             "from typing import List, Optional\nimport numpy as np\nfrom scipy.signal import lfilter\n"
-             "class Tracker:\n    def __init__(self, rate, hop, seed_bpm=None):\n        self.x = np.zeros(4)\n"
-             "    def feed(self, block):\n        return [float(np.mean(block))]\n")
+    clean = (
+        "from __future__ import annotations\nimport math\nfrom collections import deque\n"
+        "from typing import List, Optional\nimport numpy as np\nfrom scipy.signal import lfilter\n"
+        "class Tracker:\n    def __init__(self, rate, hop, seed_bpm=None):\n        self.x = np.zeros(4)\n"
+        "    def feed(self, block):\n        return [float(np.mean(block))]\n"
+    )
     assert reach_violations(clean) == set()

@@ -19,21 +19,27 @@ because the licence call is still open with the operator. ``numpy`` and ``pyaudi
 optional at import time -- this module imports cleanly with no heavy deps present, and only the functions
 that need them pull them in.
 """
+
 from __future__ import annotations
 
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    import numpy as np
 
 # --- constants ------------------------------------------------------------------------------------
 
-DEFAULT_HOP = 512          # samples per analysis block
-DEFAULT_WIN = 1024         # aubio tempo window
+DEFAULT_HOP = 512  # samples per analysis block
+DEFAULT_WIN = 1024  # aubio tempo window
 # Band into which tempo values are octave-folded before clustering (a "normal" dance-music BPM range).
 FOLD_LO, FOLD_HI = 70.0, 140.0
 # snap_to_octave factors: allow 1/2, 2/3, 1, 3/2 and 2x multiples of the detected tempo.
-OCTAVE_FACTORS: Tuple[float, ...] = (0.5, 2.0 / 3.0, 1.0, 1.5, 2.0)
+OCTAVE_FACTORS: tuple[float, ...] = (0.5, 2.0 / 3.0, 1.0, 1.5, 2.0)
 BPM_MIN, BPM_MAX = 40.0, 300.0
 # A lone value further than this (fraction) from the cluster median is discarded as an outlier.
 OUTLIER_FRAC = 0.08
@@ -43,13 +49,15 @@ WARMUP_SECONDS = 15.0
 
 # --- the per-beat event record -------------------------------------------------------------------
 
+
 @dataclass
 class SourceBpm:
     """One BPM answer from one database, before fusion."""
-    name: str              # e.g. "getsongbpm", "acousticbrainz", "deezer"
-    bpm: float             # raw reported tempo (may be an octave off)
-    weight: float = 1.0     # relative weight of this source in the cluster
-    confidence: float = 0.5 # how much we trust this source alone
+
+    name: str  # e.g. "getsongbpm", "acousticbrainz", "deezer"
+    bpm: float  # raw reported tempo (may be an octave off)
+    weight: float = 1.0  # relative weight of this source in the cluster
+    confidence: float = 0.5  # how much we trust this source alone
 
     def __post_init__(self) -> None:
         self.bpm = float(self.bpm)
@@ -58,10 +66,11 @@ class SourceBpm:
 @dataclass
 class SeedResult:
     """The fused seed: the cluster median, its confidence, and how many sources agreed."""
+
     bpm: float
-    confidence: float          # 0..1 -- how many sources agreed within tolerance
-    source_count: int          # how many sources answered at all
-    sources: List[SourceBpm] = field(default_factory=list)
+    confidence: float  # 0..1 -- how many sources agreed within tolerance
+    source_count: int  # how many sources answered at all
+    sources: list[SourceBpm] = field(default_factory=list)
 
     @property
     def is_strong(self) -> bool:
@@ -69,6 +78,7 @@ class SeedResult:
 
 
 # --- pure analysis primitives (no external deps) -------------------------------------------------
+
 
 def fold_to_band(bpm: float, lo: float = FOLD_LO, hi: float = FOLD_HI) -> float:
     """Fold a tempo into [lo, hi) by doubling/halving, so half/double collapse to the same octave."""
@@ -82,8 +92,7 @@ def fold_to_band(bpm: float, lo: float = FOLD_LO, hi: float = FOLD_HI) -> float:
     return bpm
 
 
-def snap_to_octave(detected: float, anchor: float,
-                   factors: Sequence[float] = OCTAVE_FACTORS) -> float:
+def snap_to_octave(detected: float, anchor: float, factors: Sequence[float] = OCTAVE_FACTORS) -> float:
     """Return the multiple of `detected` nearest `anchor` in log2 space, clamped to [BPM_MIN, BPM_MAX].
 
     This is the deterministic half/double fix: if the live detector locked to 2x (or 1/2, 3/2, 2/3)
@@ -122,17 +131,17 @@ def median(values: Sequence[float]) -> float:
     return (s[mid - 1] + s[mid]) / 2.0
 
 
-def fuse_bpm(sources: Sequence[SourceBpm],
-             local: Optional[float] = None,
-             outlier_frac: float = OUTLIER_FRAC) -> SeedResult:
+def fuse_bpm(
+    sources: Sequence[SourceBpm], local: float | None = None, outlier_frac: float = OUTLIER_FRAC
+) -> SeedResult:
     """Octave-fold every DB value (plus the optional local measurement) into one band, drop a lone
     outlier, and return the cluster median as the seed with a confidence = agreement strength.
 
     Per the fusion design: do NOT naive-average. Fold, cluster, median. A single-source seed is
     "weak"; 2+ sources agreeing within tolerance is "trusted".
     """
-    vals: List[float] = []
-    named: List[SourceBpm] = []
+    vals: list[float] = []
+    named: list[SourceBpm] = []
     for s in sources:
         if s.bpm <= 0:
             continue
@@ -149,7 +158,7 @@ def fuse_bpm(sources: Sequence[SourceBpm],
 
     # Discard a lone outlier: a value more than outlier_frac from the median, ONLY when it is alone
     # against a cluster of >=2. A single value is never an "outlier" (it is the whole seed).
-    kept = [v for v in vals]
+    kept = list(vals)
     if len(vals) >= 2:
         if all(abs(v - med) / med > outlier_frac for v in vals):
             # everything disagrees; keep the median as-is rather than inventing a cluster
@@ -166,14 +175,14 @@ def fuse_bpm(sources: Sequence[SourceBpm],
     if source_count := len(named):
         confidence = min(1.0, (len(nearest) / source_count) * (source_count / 2.0 + 0.5))
 
-    return SeedResult(bpm=seed, confidence=min(1.0, confidence),
-                      source_count=source_count or 0, sources=named)
+    return SeedResult(bpm=seed, confidence=min(1.0, confidence), source_count=source_count or 0, sources=named)
 
 
 def normalize_title(title: str) -> str:
     """Strip dirty SMTC decorations -- remix tags, 'feat.', bracket tags -- before querying a DB."""
     import re
-    s = re.sub(r"\s*[\(\[].*?[\)\]]", "", title)      # drop (remix), [explicit], ...
+
+    s = re.sub(r"\s*[\(\[].*?[\)\]]", "", title)  # drop (remix), [explicit], ...
     s = re.sub(r"\b(feat\.?|ft\.?)\s+.*$", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\s+(remix|radio edit|acoustic|instrumental)$", "", s, flags=re.IGNORECASE)
     return " ".join(s.split())
@@ -181,17 +190,20 @@ def normalize_title(title: str) -> str:
 
 # --- database lookup (fail-soft, cached) ----------------------------------------------------------
 
+
 # Keyed sources need a key (read from env, so it never lands in the repo). Keyless sources (2+3)
 # work regardless. A key-absent run must still return whatever keyless sources answer.
-def _get_getsongbpm_key() -> Optional[str]:
+def _get_getsongbpm_key() -> str | None:
     import os
+
     return os.environ.get("GETSONGBPM_API_KEY") or os.environ.get("GET_SONG_BPM_KEY")
 
 
-def _fetch_json(url: str, headers: Optional[dict] = None, timeout: float = 8.0) -> Optional[dict]:
+def _fetch_json(url: str, headers: dict | None = None, timeout: float = 8.0) -> dict | None:
     """Best-effort JSON GET through urllib (stdlib -- no requests dep). Returns None on any failure."""
     import json
     import urllib.request
+
     req = urllib.request.Request(url, headers=headers or {})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -200,7 +212,7 @@ def _fetch_json(url: str, headers: Optional[dict] = None, timeout: float = 8.0) 
         return None
 
 
-def lookup(artist: str, title: str, offline: bool = False) -> List[SourceBpm]:
+def lookup(artist: str, title: str, offline: bool = False) -> list[SourceBpm]:
     """Fetch BPM answers from the DB chain for "Artist - Title", each fail-soft and isolated.
 
     Priority: GetSongBPM (keyed) -> MusicBrainz -> AcousticBrainz (keyless, pre-2022 catalog) ->
@@ -212,13 +224,14 @@ def lookup(artist: str, title: str, offline: bool = False) -> List[SourceBpm]:
         return []
 
     title_clean = normalize_title(title)
-    found: List[SourceBpm] = []
+    found: list[SourceBpm] = []
 
     # Source 1 -- GetSongBPM (keyed; skip if no key).
     key = _get_getsongbpm_key()
     if key:
         try:
             from urllib.parse import quote
+
             q = f"song:{title_clean} artist:{artist}"
             u = f"https://api.getsong.co/search/?api_key={key}&type=both&lookup={quote(q)}"
             data = _fetch_json(u)
@@ -237,10 +250,13 @@ def lookup(artist: str, title: str, offline: bool = False) -> List[SourceBpm]:
     # Source 2 -- MusicBrainz -> AcousticBrainz (keyless).
     try:
         from urllib.parse import quote
-        mb_query = 'query=artist:"%s" AND recording:"%s"&fmt=json&limit=3' % (artist, title_clean)
-        mb_url = "https://musicbrainz.org/ws/2/recording/?" + quote(mb_query, safe='=&\": ')
+
+        mb_query = f'query=artist:"{artist}" AND recording:"{title_clean}"&fmt=json&limit=3'
+        mb_url = "https://musicbrainz.org/ws/2/recording/?" + quote(mb_query, safe='=&": ')
         # MusicBrainz asks for a contact in the User-Agent; the project page serves, so no personal address is sent
-        mb = _fetch_json(mb_url, headers={"User-Agent": "AkashicKeyLab/1.0 ( https://github.com/balanced7/akashic-aurora )"})
+        mb = _fetch_json(
+            mb_url, headers={"User-Agent": "AkashicKeyLab/1.0 ( https://github.com/balanced7/akashic-aurora )"}
+        )
         mbid = None
         for rec in (mb or {}).get("recordings", []):
             if rec.get("id"):
@@ -257,6 +273,7 @@ def lookup(artist: str, title: str, offline: bool = False) -> List[SourceBpm]:
     # Source 3 -- Deezer (keyless, low-weight; bpm 0 == missing, vote only).
     try:
         from urllib.parse import quote
+
         dz = _fetch_json(f"https://api.deezer.com/search?q={quote(f'{artist} {title_clean}')}")
         track_id = (dz or {}).get("data", [{}])[0].get("id")
         if track_id:
@@ -272,15 +289,17 @@ def lookup(artist: str, title: str, offline: bool = False) -> List[SourceBpm]:
 
 # --- live detection (lazy heavy deps) -------------------------------------------------------------
 
+
 def _import_aubio():
     """Lazy aubio import -- GPLv3+, kept inside a function so this module never imports it at top level."""
-    import aubio  # noqa: WPS433  (deliberate: GPL dependency is opt-in at call time)
+    import aubio  # pyright: ignore[reportMissingImports]  # optional beat-tracker dependency, not in the lock
+
     return aubio
 
 
-def tempo_from_samples(samples: Sequence[float], hop: int = DEFAULT_HOP,
-                       win: int = DEFAULT_WIN, rate: int = 44100,
-                       aubio=None) -> Tuple[bool, float]:
+def tempo_from_samples(
+    samples: Sequence[float], hop: int = DEFAULT_HOP, win: int = DEFAULT_WIN, rate: int = 44100, aubio=None
+) -> tuple[bool, float]:
     """Run one aubio.tempo block over a float buffer. Returns (beat_occurred, current_bpm_estimate).
 
     ``aubio`` may be passed in (already imported) to avoid the lazy import on every block.
@@ -289,13 +308,15 @@ def tempo_from_samples(samples: Sequence[float], hop: int = DEFAULT_HOP,
         aubio = _import_aubio()
     tempo = _tempo_obj(aubio, hop, win, rate)
     import numpy as np
+
     arr = np.ascontiguousarray(np.asarray(samples, dtype=np.float32))
     beat = bool(tempo(arr)[0])
     return beat, float(getattr(tempo, "get_bpm", lambda: 0.0)())
 
 
 # Cache a single aubio tempo object per (hop, win, rate) so the live loop is not re-allocating it.
-_tempo_cache: Dict[Tuple[int, int, int], object] = {}
+# aubio is an optional C extension with no type stubs, so its tempo object is Any here.
+_tempo_cache: dict[tuple[int, int, int], Any] = {}
 
 
 def _tempo_obj(aubio, hop: int, win: int, rate: int):
@@ -316,7 +337,7 @@ class BeatTracker:
         tracker = BeatTracker(seed_bpm=seed, rate=48000, offline=False)
         for block in audio_blocks:
             for ev in tracker.push(block):
-                print(ev)   # {"bpm": ..., "beat_phase": ..., "confidence": ..., "source": ...}
+                print(ev)  # {"bpm": ..., "beat_phase": ..., "confidence": ..., "source": ...}
 
     When a seed is present, the raw aubio BPM is octave-snapped back to the seed's octave
     (source "snapped"); when there is no seed, the raw aubio BPM is emitted (source "refined").
@@ -324,24 +345,30 @@ class BeatTracker:
     (aubio.tempo has no start_bpm parameter).
     """
 
-    def __init__(self, seed_bpm: Optional[float] = None, rate: int = 44100,
-                 hop: int = DEFAULT_HOP, win: int = DEFAULT_WIN, offline: bool = False,
-                 now: Optional[Callable[[], float]] = None):
+    def __init__(
+        self,
+        seed_bpm: float | None = None,
+        rate: int = 44100,
+        hop: int = DEFAULT_HOP,
+        win: int = DEFAULT_WIN,
+        offline: bool = False,
+        now: Callable[[], float] | None = None,
+    ):
         self.seed_bpm = float(seed_bpm) if seed_bpm and seed_bpm > 0 else None
         self.rate = rate
         self.hop = hop
         self.win = win
         self.offline = offline
         self._now = now or time.perf_counter
-        self._last_beat_time: Optional[float] = None
-        self._aubio = None   # imported lazily on first push
+        self._last_beat_time: float | None = None
+        self._aubio = None  # imported lazily on first push
 
     def _ensure_aubio(self):
         if self._aubio is None:
             self._aubio = _import_aubio()
         return self._aubio
 
-    def push(self, samples: Sequence[float]) -> List[dict]:
+    def push(self, samples: Sequence[float] | np.ndarray) -> list[dict]:
         """Feed one analysis block. Returns the list of per-beat events emitted by this block (0 or 1)."""
         import numpy as np
 
@@ -380,24 +407,27 @@ class BeatTracker:
         # confidence: seed strength bleeds into the emitted confidence; raw refined beats are modest.
         confidence = 0.8 if (self.seed_bpm and source in ("seed", "snapped")) else 0.5
 
-        return [{
-            "bpm": round(bpm, 3),
-            "beat_phase": round(beat_phase, 4),
-            "confidence": confidence,
-            "source": source,
-        }]
+        return [
+            {
+                "bpm": round(bpm, 3),
+                "beat_phase": round(beat_phase, 4),
+                "confidence": confidence,
+                "source": source,
+            }
+        ]
 
 
-def warmup_bpm(samples: Sequence[float], seed: float, rate: int = 44100,
-               start_bpm: Optional[float] = None, std_bpm: float = 1.0) -> float:
+def warmup_bpm(
+    samples: Sequence[float], seed: float, rate: int = 44100, start_bpm: float | None = None, std_bpm: float = 1.0
+) -> float:
     """One-shot librosa tempo on a ~15s warmup buffer, seeded with the fused DB value.
 
     librosa.feature.tempo accepts a start_bpm prior, which is where the DB seed genuinely helps
     (aubio has no such prior). Returns the locked anchor BPM, snapped to the seed's octave.
     This function is the ONLY place the seed touches the librosa path; the live loop stays aubio.
     """
+    import librosa  # pyright: ignore[reportMissingImports]  # optional beat-tracker dependency, not in the lock
     import numpy as np
-    import librosa
 
     arr = np.asarray(samples, dtype=np.float32)
     if arr.ndim > 1:
@@ -406,10 +436,16 @@ def warmup_bpm(samples: Sequence[float], seed: float, rate: int = 44100,
     # onset envelope drives the tempo estimate; start_bpm is the seeded prior from the DB fusion.
     try:
         onset = librosa.onset.onset_strength(y=arr, sr=sr)
-        tempo = float(librosa.feature.tempo(
-            onset_envelope=onset, sr=sr,
-            start_bpm=float(start_bpm if start_bpm else seed),
-            std_bpm=std_bpm, aggregate=np.median, max_tempo=BPM_MAX)[0])
+        tempo = float(
+            librosa.feature.tempo(
+                onset_envelope=onset,
+                sr=sr,
+                start_bpm=float(start_bpm if start_bpm else seed),
+                std_bpm=std_bpm,
+                aggregate=np.median,
+                max_tempo=BPM_MAX,
+            )[0]
+        )
     except Exception:
         # librosa missing or failed -- fall back to the seed itself.
         return float(seed)
@@ -424,17 +460,34 @@ def _loopback_stream(pa, rate: int, ch: int, hop: int):
     try:
         dev = inst.get_default_wasapi_loopback()
     except Exception:
-        for d in inst.get_loopback_device_info_generator():  # type: ignore[attr-defined]
-            return inst, dev, inst.open(format=pa.paFloat32, channels=ch, rate=rate, input=True,
-                                        input_device_index=d["index"], frames_per_buffer=hop)
-        raise RuntimeError("no WASAPI loopback device found")
-    stream = inst.open(format=pa.paFloat32, channels=ch, rate=rate, input=True,
-                       input_device_index=dev["index"], frames_per_buffer=hop)
+        for dev in inst.get_loopback_device_info_generator():
+            return (
+                inst,
+                dev,
+                inst.open(
+                    format=pa.paFloat32,
+                    channels=ch,
+                    rate=rate,
+                    input=True,
+                    input_device_index=dev["index"],
+                    frames_per_buffer=hop,
+                ),
+            )
+        raise RuntimeError("no WASAPI loopback device found") from None
+    stream = inst.open(
+        format=pa.paFloat32, channels=ch, rate=rate, input=True, input_device_index=dev["index"], frames_per_buffer=hop
+    )
     return inst, dev, stream
 
 
-def run(artist: str = "", title: str = "", secs: Optional[float] = None,
-        rate: int = 0, offline: bool = False, seed_bpm: Optional[float] = None) -> int:
+def run(
+    artist: str = "",
+    title: str = "",
+    secs: float | None = None,
+    rate: int = 0,
+    offline: bool = False,
+    seed_bpm: float | None = None,
+) -> int:
     """Convenience entry: seed from the DB (unless offline), then stream loopback emitting beat events.
 
     This is the analysis-only analogue of beatsync.run() -- it prints per-beat events (dict) and NEVER
@@ -457,7 +510,7 @@ def run(artist: str = "", title: str = "", secs: Optional[float] = None,
         evs = []
         hop = DEFAULT_HOP
         for i in range(0, len(synth) - hop, hop):
-            evs.extend(tracker.push(synth[i:i + hop]))
+            evs.extend(tracker.push(synth[i : i + hop]))
         for ev in evs[:10]:
             print(f"  beat event {ev}")
         print(f"offline run: {len(evs)} beat events from synthetic {seed or 120.0:.2f} BPM click")
@@ -465,7 +518,7 @@ def run(artist: str = "", title: str = "", secs: Optional[float] = None,
 
     # Live: WASAPI loopback (lazy pyaudiowpatch).
     try:
-        import pyaudiowpatch as pa
+        import pyaudiowpatch as pa  # pyright: ignore[reportMissingImports]  # Windows-only audio dependency, not in the lock
     except Exception:
         print("pyaudiowpatch not available; run with --offline or install it")
         return 2
@@ -493,14 +546,16 @@ def run(artist: str = "", title: str = "", secs: Optional[float] = None,
         pass
     finally:
         try:
-            stream.stop_stream(); stream.close(); inst.terminate()
+            stream.stop_stream()
+            stream.close()
+            inst.terminate()
         except Exception:
             pass
     print(f"done -- {beats} beat events")
     return 0
 
 
-def _synthetic_click(rate: int, bpm: float, seconds: float) -> List[float]:
+def _synthetic_click(rate: int, bpm: float, seconds: float) -> list[float]:
     """Synthesize a click track at a target BPM (for offline analysis testing). No external deps."""
     period = 60.0 / bpm
     n = int(rate * seconds)

@@ -13,29 +13,38 @@ probe P24 (the sustained burst window, added by the A16 design docs) re-measures
 
 Thread-safe. The clock and sleep are injectable, so the property test runs on a fake clock and cannot flake.
 """
+
 from __future__ import annotations
 
 import threading
 import time
 from collections import deque
-from typing import Callable, Deque, List
+from typing import TYPE_CHECKING
 
-SAFE_BURST = 12      # packets: the measured safe ceiling
-WINDOW_S = 0.1       # seconds: the sliding window the ceiling applies to
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+SAFE_BURST = 12  # packets: the measured safe ceiling
+WINDOW_S = 0.1  # seconds: the sliding window the ceiling applies to
 
 
 class BurstGovernor:
-    def __init__(self, limit: int = SAFE_BURST, window: float = WINDOW_S,
-                 clock: Callable[[], float] = time.perf_counter, sleep: Callable[[float], None] = time.sleep):
+    def __init__(
+        self,
+        limit: int = SAFE_BURST,
+        window: float = WINDOW_S,
+        clock: Callable[[], float] = time.perf_counter,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
         if limit < 1 or window <= 0:
             raise ValueError("limit must be >= 1 and window > 0")
         self.limit, self.window = limit, window
         self._clock, self._sleep = clock, sleep
         self._lock = threading.Lock()
-        self._recent: Deque[float] = deque()   # admit times still inside the window
-        self.admitted = 0                      # lifetime packets let through
-        self.waited_s = 0.0                    # lifetime time spent holding callers back
-        self.log: List[float] = []             # every admit time, kept only when record=True
+        self._recent: deque[float] = deque()  # admit times still inside the window
+        self.admitted = 0  # lifetime packets let through
+        self.waited_s = 0.0  # lifetime time spent holding callers back
+        self.log: list[float] = []  # every admit time, kept only when record=True
         self.record = False
 
     def admit(self) -> float:

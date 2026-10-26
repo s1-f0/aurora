@@ -1,5 +1,6 @@
 """Pins for arsenal.keylab.probe, the guided W0 hardware session. No keyboard: fake ports, a fake clock, and a
 scripted 'Daniel' who answers on the pads whenever the LCD asks something."""
+
 from __future__ import annotations
 
 import json
@@ -7,8 +8,8 @@ import json
 from arsenal.keylab import probe as PR
 from arsenal.keylab.governor import BurstGovernor
 
-PAD_NOTE = {1: 44, 2: 45, 4: 47}          # what the pads happen to send in this test (calibration must learn it)
-PAD_STATUS = 0x99                         # note on, channel 10
+PAD_NOTE = {1: 44, 2: 45, 4: 47}  # what the pads happen to send in this test (calibration must learn it)
+PAD_STATUS = 0x99  # note on, channel 10
 
 
 class Clock:
@@ -39,6 +40,8 @@ class FakeOut:
 class FakeIn:
     """Releases scripted presses once the fake clock passes their time."""
 
+    name = "fake"
+
     def __init__(self, clock):
         self.clock, self._pending, self._ready = clock, [], []
 
@@ -53,6 +56,9 @@ class FakeIn:
             self._ready.append((p[0], p[1], "short"))
         return self._ready
 
+    def stop(self):
+        self.close()
+
     def close(self):
         pass
 
@@ -60,9 +66,11 @@ class FakeIn:
 class ScriptedRig(PR.Rig):
     """A Rig whose 'human' answers the next scripted pad 0.5 s after any prompt that waits for a pad."""
 
+    out: FakeOut
+
     def __init__(self, answers, clock, opens=None):
         self.clock_obj, self.answers, self.lcd_log, self.opens = clock, list(answers), [], opens or []
-        self.inp = None
+        self.inp: FakeIn | None = None
 
         def open_ports():
             self.opens.append(clock.t)
@@ -79,6 +87,7 @@ class ScriptedRig(PR.Rig):
         if waits and self.answers:
             pad = self.answers.pop(0)
             if pad is not None:
+                assert self.inp is not None  # set by open_ports, which super().__init__ has already called
                 self.inp.press(self.clock_obj.t + 0.5, PAD_STATUS, PAD_NOTE[pad])
 
 
@@ -95,7 +104,7 @@ def test_calibration_learns_whatever_the_pads_send(tmp_path):
 
 
 def test_calibration_without_hits_stops_cleanly(tmp_path):
-    s, rig, _ = _session(tmp_path, [None])
+    s, _rig, _ = _session(tmp_path, [None])
     assert s.calibrate() is False
     assert s.record["steps"][-1] == {**s.record["steps"][-1], "ok": False, "missing": 1}
 
@@ -103,8 +112,9 @@ def test_calibration_without_hits_stops_cleanly(tmp_path):
 def test_ask_ignores_presses_made_before_the_question(tmp_path):
     s, rig, clock = _session(tmp_path, [1, 2, 4, 2])
     s.calibrate()
-    rig.inp.press(clock.t, PAD_STATUS, 44)          # a stray YES already queued before the question
-    assert rig.ask("Is this a test?") == "no"         # the scripted answer after the prompt wins
+    assert rig.inp is not None
+    rig.inp.press(clock.t, PAD_STATUS, 44)  # a stray YES already queued before the question
+    assert rig.ask("Is this a test?") == "no"  # the scripted answer after the prompt wins
 
 
 def test_ask_times_out_to_none(tmp_path):
@@ -116,7 +126,8 @@ def test_ask_times_out_to_none(tmp_path):
 def test_run_writes_receipts_with_every_answer(tmp_path):
     s, rig, _ = _session(tmp_path, [1, 2, 4, 1, 2, 1])
     path = s.run(["p5", "screens"])
-    rec = json.load(open(path, encoding="utf-8"))
+    with open(path, encoding="utf-8") as fh:
+        rec = json.load(fh)
     steps = [(x["step"], x.get("answer")) for x in rec["steps"]]
     assert steps == [("calibrate", None), ("p5", "yes"), ("screens", "no"), ("screens", "yes")]
     assert rec["finished"]
@@ -124,7 +135,7 @@ def test_run_writes_receipts_with_every_answer(tmp_path):
 
 
 def test_a_broken_step_is_recorded_and_the_rest_still_run(tmp_path):
-    s, rig, _ = _session(tmp_path, [1, 2, 4, 1])
+    s, _rig, _ = _session(tmp_path, [1, 2, 4, 1])
 
     def boom():
         raise RuntimeError("device went away")
@@ -140,13 +151,17 @@ def test_census_summary_groups_by_port_and_control():
     evs = [{"port": "daw", "t": 1.0, "kind": "short", "data": [0xB0, 105, v]} for v in (0, 40, 127)]
     evs += [{"port": "midi", "t": 2.0, "kind": "short", "data": [0xB0, 116, 65]}]
     out = PR.summarize(evs)
-    assert out[0]["port"] == "daw" and out[0]["d1"] == 105 and out[0]["count"] == 3 and out[0]["values"] == [0, 40, 127]
-    assert out[1]["port"] == "midi" and out[1]["d1"] == 116
+    assert out[0]["port"] == "daw"
+    assert out[0]["d1"] == 105
+    assert out[0]["count"] == 3
+    assert out[0]["values"] == [0, 40, 127]
+    assert out[1]["port"] == "midi"
+    assert out[1]["d1"] == 116
 
 
 def test_burst_finds_the_freeze_reopens_the_ports_and_restores_the_governor(tmp_path):
     # calibrate, go, 120 ok, 160 ok, 200 NOT ok, then (after the reopen) 'DAW mode back' and 'rainbow back'
-    s, rig, clock = _session(tmp_path, [1, 2, 4, 1, 1, 1, 2, 1, 1])
+    s, rig, _clock = _session(tmp_path, [1, 2, 4, 1, 1, 1, 2, 1, 1])
     s.calibrate()
     gov_before = rig.out.governor
     s.burst()
@@ -155,9 +170,12 @@ def test_burst_finds_the_freeze_reopens_the_ports_and_restores_the_governor(tmp_
     assert rates == [120, 160, 200]
     assert 330 <= burst[0]["packets"] <= 400, "120/s for 3 s"
     final = burst[-1]
-    assert final["froze_at"] == 200 and final["reopened"] is True and final["restored"] == "yes"
+    assert final["froze_at"] == 200
+    assert final["reopened"] is True
+    assert final["restored"] == "yes"
     assert len(rig.opens) == 2, "the ports are reopened once after the power cycle"
-    assert gov_before is not None and rig.out.governor is not None, "the governor is back after the probe"
+    assert gov_before is not None, "the governor is back after the probe"
+    assert rig.out.governor is not None, "the governor is back after the probe"
 
 
 def test_the_same_governor_is_back_after_every_ramp_level(tmp_path):
@@ -172,7 +190,7 @@ def test_the_same_governor_is_back_after_every_ramp_level(tmp_path):
 
 
 def test_burst_is_skipped_unless_he_says_go(tmp_path):
-    s, rig, _ = _session(tmp_path, [1, 2, 4, 2])
+    s, _rig, _ = _session(tmp_path, [1, 2, 4, 2])
     s.calibrate()
     s.burst()
     assert s.record["steps"][-1] == {**s.record["steps"][-1], "step": "burst", "skipped": True}
@@ -180,7 +198,7 @@ def test_burst_is_skipped_unless_he_says_go(tmp_path):
 
 def test_every_lcd_line_fits_the_screen(tmp_path):
     s, rig, _ = _session(tmp_path, [1, 2, 4] + [1] * 80)
-    s.run([x for x in PR.STEPS if x != "calibrate"])          # the WHOLE session, burst and FL included
+    s.run([x for x in PR.STEPS if x != "calibrate"])  # the WHOLE session, burst and FL included
     assert len(rig.lcd_log) > 40
-    too_long = [l for pair in rig.lcd_log for l in pair if len(l) > 32]
+    too_long = [line for pair in rig.lcd_log for line in pair if len(line) > 32]
     assert not too_long, too_long

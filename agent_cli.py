@@ -14801,7 +14801,7 @@ def build_parser(only: str | None = None):
                 return _add_parser(name, **kwargs)
             return _UNBUILT
 
-        sub.add_parser = _add_only  # type: ignore[method-assign]
+        sub.add_parser = _add_only  # type: ignore[method-assign]  # the AXI parser wrapper replaces argparse's method
 
     b = sub.add_parser("boot", help="print an agent's startup context")
     b.add_argument("agent_id")

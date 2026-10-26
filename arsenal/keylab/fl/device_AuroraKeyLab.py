@@ -45,12 +45,13 @@ Attribution. Written for Akashic Aurora; no code was copied from anyone. Facts c
   * FL Studio 2026's own Shared/Python/Lib/midi.py for the constant values (FPT_*, SS_*, HW_Dirty_LEDs).
 """
 
-import device
-import general
-import midi
 import time
-import transport
-import ui
+
+import device  # pyright: ignore[reportMissingImports]  # FL Studio's embedded module, exists only inside FL
+import general  # pyright: ignore[reportMissingImports]  # FL Studio's embedded module, exists only inside FL
+import midi  # pyright: ignore[reportMissingImports]  # FL Studio's embedded module, exists only inside FL
+import transport  # pyright: ignore[reportMissingImports]  # FL Studio's embedded module, exists only inside FL
+import ui  # pyright: ignore[reportMissingImports]  # FL Studio's embedded module, exists only inside FL
 
 VERSION = "v0"
 
@@ -105,7 +106,7 @@ MOD_WHEEL = 1
 # Bank A-D pads (channel 10, notes 12 and up) go to FL untouched, so drum channels keep playing them. The DAW-bank pads
 # (notes 0-11 on channel 10) are always swallowed: left to FL they would play notes 0-11 on the selected channel.
 BANK_PADS_TO_FL = True
-PAD_CHANNEL = 9            # channel 10, zero-based in the status byte
+PAD_CHANNEL = 9  # channel 10, zero-based in the status byte
 DAW_PAD_NOTES = 12
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -130,11 +131,11 @@ BURST_WINDOW_S = 0.100
 LED_HEADROOM = 1
 
 _clock = time.monotonic
-_recent_writes = []        # clock readings of the SysEx this script sent inside the current window
-_led_wanted = {}           # LED id -> True / False, FL's state at the last read
-_led_shown = {}            # LED id -> True / False, what the KeyLab was last told
-_led_backlog = False       # True when the burst rule held LED packets back; OnIdle sends them later
-_scrubbing = set()         # control numbers of Rewind / Fast forward currently held
+_recent_writes = []  # clock readings of the SysEx this script sent inside the current window
+_led_wanted = {}  # LED id -> True / False, FL's state at the last read
+_led_shown = {}  # LED id -> True / False, what the KeyLab was last told
+_led_backlog = False  # True when the burst rule held LED packets back; OnIdle sends them later
+_scrubbing = set()  # control numbers of Rewind / Fast forward currently held
 
 
 # ------------------------------------------------------------------------------------------------------------------

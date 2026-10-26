@@ -8,6 +8,7 @@ inside a function -- so the boundary is a machine check, not a promise made in a
 Also pins the GPL discipline: aubio must only be imported inside a function (never module top),
 because the licence call is still open.
 """
+
 from __future__ import annotations
 
 import ast
@@ -48,8 +49,7 @@ def test_tempo_boundary_no_port_imports():
             # a dotted import like 'arsenal.keylab.protocol' -> last segment is the guilty module
             last = imported.split(".")[-1]
             assert last not in FORBIDDEN, (
-                f"{name} imports forbidden port module {imported!r}; "
-                f"the T4 lane must not touch the KeyLab port"
+                f"{name} imports forbidden port module {imported!r}; the T4 lane must not touch the KeyLab port"
             )
 
 
@@ -79,8 +79,8 @@ def _contains(outer: ast.AST, inner: ast.AST) -> bool:
 
 def test_tempo_package_reimports_cleanly():
     """The tempo module imports cleanly with no heavy deps present (aubio/numpy not yet imported)."""
-    import importlib
-    import arsenal.keylab.tempo as tempo  # noqa: F401  (proves the import itself is light)
+    import arsenal.keylab.tempo as tempo
+
     assert hasattr(tempo, "fold_to_band")
     assert hasattr(tempo, "snap_to_octave")
     assert hasattr(tempo, "fuse_bpm")

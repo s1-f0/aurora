@@ -10,10 +10,10 @@ frame rate we can sustain, because our real cost per frame is "pads that changed
 Use it with a winmidi.MidiOut (already in DAW mode). It also enforces a spacing budget so a big first frame
 (all 12 pads) still paces itself safely.
 """
+
 from __future__ import annotations
 
 import time
-from typing import List, Optional, Tuple
 
 from . import protocol as P
 
@@ -22,12 +22,12 @@ class PadRenderer:
     def __init__(self, out, bank: str = "DAW", gap: float = 0.006, burst: int = 10):
         self.out = out
         self.bank = bank
-        self.gap = gap            # spacing between packets
-        self.burst = burst        # take an extra breath after this many packets in one frame
-        self.state: List[Optional[Tuple[int, int, int]]] = [None] * 12
-        self.sent = 0             # lifetime packets actually put on the wire
-        self.frames = 0           # frames rendered
-        self.asked = 0            # pad-updates requested (sent/asked = compression ratio)
+        self.gap = gap  # spacing between packets
+        self.burst = burst  # take an extra breath after this many packets in one frame
+        self.state: list[tuple[int, int, int] | None] = [None] * 12
+        self.sent = 0  # lifetime packets actually put on the wire
+        self.frames = 0  # frames rendered
+        self.asked = 0  # pad-updates requested (sent/asked = compression ratio)
 
     def set_frame(self, colors) -> int:
         """Paint up to 12 pad colours, sending only the pads whose colour changed. Returns packets sent."""
@@ -54,8 +54,13 @@ class PadRenderer:
 
     def stats(self) -> dict:
         ratio = (self.sent / self.asked) if self.asked else 0.0
-        return {"frames": self.frames, "packets_sent": self.sent, "pad_updates_asked": self.asked,
-                "compression": round(1 - ratio, 3), "avg_packets_per_frame": round(self.sent / max(1, self.frames), 2)}
+        return {
+            "frames": self.frames,
+            "packets_sent": self.sent,
+            "pad_updates_asked": self.asked,
+            "compression": round(1 - ratio, 3),
+            "avg_packets_per_frame": round(self.sent / max(1, self.frames), 2),
+        }
 
 
 def _selftest() -> list:
@@ -63,18 +68,21 @@ def _selftest() -> list:
     fails = []
 
     class _Counter:
-        def __init__(self): self.n = 0
-        def send_sysex(self, data): self.n += 1
+        def __init__(self):
+            self.n = 0
+
+        def send_sysex(self, data):
+            self.n += 1
 
     out = _Counter()
     r = PadRenderer(out, gap=0.0)
-    r.set_frame(["red"] * 12)            # first frame: all 12 change
+    r.set_frame(["red"] * 12)  # first frame: all 12 change
     if out.n != 12:
         fails.append(f"first frame sent {out.n}, want 12")
-    r.set_frame(["red"] * 12)            # identical frame: nothing should send
+    r.set_frame(["red"] * 12)  # identical frame: nothing should send
     if out.n != 12:
         fails.append(f"identical frame sent {out.n - 12} extra, want 0")
-    r.set_frame(["red"] * 11 + ["blue"]) # one pad changes
+    r.set_frame(["red"] * 11 + ["blue"])  # one pad changes
     if out.n != 13:
         fails.append(f"one-pad change sent {out.n - 12}, want 1")
     return fails

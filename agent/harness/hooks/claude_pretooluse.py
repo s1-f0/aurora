@@ -330,7 +330,8 @@ _HTML_EXT = (".html", ".htm")
 _GPU_HTML = re.compile(
     r"webgl|webgpu|navigator\.gpu|getContext\s*\(|<canvas|three(?:\.module)?(?:\.min)?\.js|\bTHREE\."
     r"|\.frag\b|\.glsl\b|<script[^>]*\bsrc\s*=\s*[\"'](?!https?:|//)",
-    re.I)
+    re.I,
+)
 
 
 def _check_gpu_html(tool: str, data) -> str:
@@ -350,14 +351,16 @@ def _check_gpu_html(tool: str, data) -> str:
         if not _GPU_HTML.search(text):
             return ""
         name = os.path.basename(path)
-        return (f"BLOCKED: {name} looks like a GPU page (WebGL/WebGPU/three.js/canvas, or it loads a local "
-                "script), and the desktop app opens every .html that Write or Edit touches in its EMBEDDED "
-                "browser pane -- the AMD-driver crash trigger (receipt 2026-08-12; 18 near-misses on "
-                "2026-10-24/25). Create or change it through the shell instead, which the app does not "
-                f"auto-open: write {name}.txt with the Write tool and rename it (mv / Move-Item), or edit it "
-                "with a short py script. Then render it only in headless Chrome under the GPU lock.")
+        return (
+            f"BLOCKED: {name} looks like a GPU page (WebGL/WebGPU/three.js/canvas, or it loads a local "
+            "script), and the desktop app opens every .html that Write or Edit touches in its EMBEDDED "
+            "browser pane -- the AMD-driver crash trigger (receipt 2026-08-12; 18 near-misses on "
+            "2026-10-24/25). Create or change it through the shell instead, which the app does not "
+            f"auto-open: write {name}.txt with the Write tool and rename it (mv / Move-Item), or edit it "
+            "with a short py script. Then render it only in headless Chrome under the GPU lock."
+        )
     except Exception:
-        return ""   # a guard must never brick the agent
+        return ""  # a guard must never brick the agent
 
 
 def main() -> int:

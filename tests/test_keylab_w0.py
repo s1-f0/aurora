@@ -3,9 +3,11 @@
 Acceptance pre-registered in fences/a16-charter/reconciliation.md V7(b) and (d). Everything here runs
 without the keyboard: the MIDI sink is a fake, and the governor runs on a fake clock, so nothing can flake.
 """
+
 from __future__ import annotations
 
 import colorsys
+import itertools
 import threading
 
 import pytest
@@ -20,6 +22,7 @@ NOTE_ON, NOTE_OFF, CC = 0x90, 0x80, 0xB0
 
 
 # --- sustain pedal (CC 64) -----------------------------------------------------------------------
+
 
 def _play(events):
     v = CV.Voicing()
@@ -56,6 +59,7 @@ def test_pedal_on_any_channel_counts():
 
 # --- the pad grid ------------------------------------------------------------------------------
 
+
 def test_grid_matches_the_unit():
     """Daniel at the device, 2026-10-23: "your pad representation shows pad 1 on the right when its actually the top
     left most pad, and itr goes to 4, then row 2 is 5-8 and bottom row is 9-12". 4 across x 3 down, reading order,
@@ -72,8 +76,8 @@ def test_grid_has_one_copy_and_every_pad_once():
 
 
 def test_grid_derived_regions():
-    assert CV.TOP_ROW == {1, 2, 3, 4}, "split paints the TOP row, pads 1-4 (it was lighting the left column 9 5 1)"
-    assert CV.BORDER == set(range(1, 13)) - {6, 7}
+    assert {1, 2, 3, 4} == CV.TOP_ROW, "split paints the TOP row, pads 1-4 (it was lighting the left column 9 5 1)"
+    assert set(range(1, 13)) - {6, 7} == CV.BORDER
 
 
 def test_grid_agrees_with_the_mpc_note_rows():
@@ -82,10 +86,12 @@ def test_grid_agrees_with_the_mpc_note_rows():
     notes = [[P.PAD_NOTE[pad] for pad in row] for row in P.GRID]
     for row in notes:
         assert row == list(range(row[0], row[0] + len(row))), f"a row's notes ascend by a semitone left to right: {row}"
-    for upper, lower in zip(notes, notes[1:]):
+    for upper, lower in itertools.pairwise(notes):
         assert upper[0] - lower[0] == 4, f"each row sits 4 semitones above the row below it: {upper} over {lower}"
-    assert P.GRID[-1][0] == 9 and P.PAD_NOTE[P.GRID[-1][0]] == 36 == min(P.PAD_NOTE.values()), \
+    assert P.GRID[-1][0] == 9, "the bottom-left pad (9) plays the lowest note, 36"
+    assert P.PAD_NOTE[P.GRID[-1][0]] == 36 == min(P.PAD_NOTE.values()), (
         "the bottom-left pad (9) plays the lowest note, 36"
+    )
 
 
 def test_the_page_mirror_equals_protocol_grid():
@@ -94,7 +100,10 @@ def test_the_page_mirror_equals_protocol_grid():
     import json
     import pathlib
     import re
-    js = (pathlib.Path(__file__).resolve().parents[1] / "arsenal" / "web" / "lib" / "keylab-client.js").read_text(encoding="utf-8")
+
+    js = (pathlib.Path(__file__).resolve().parents[1] / "arsenal" / "web" / "lib" / "keylab-client.js").read_text(
+        encoding="utf-8"
+    )
     found = re.findall(r"export const PAD_GRID = Object\.freeze\((\[.*?\])\);", js)
     assert len(found) == 1, "exactly one PAD_GRID declaration in keylab-client.js"
     assert json.loads(found[0]) == P.GRID
@@ -105,6 +114,7 @@ def test_daw_bank_led_ids():
 
 
 # --- the burst ceiling -------------------------------------------------------------------------
+
 
 class FakeClock:
     def __init__(self):
@@ -126,9 +136,9 @@ def _governor(clock):
 def test_interleaved_producers_never_exceed_the_ceiling():
     clock = FakeClock()
     g = _governor(clock)
-    for i in range(3 * 40):                     # three producers, round-robin, 40 packets each, no pacing
+    for i in range(3 * 40):  # three producers, round-robin, 40 packets each, no pacing
         g.admit()
-        clock.t += 0.0003 * (i % 3)             # producers jitter a little between sends
+        clock.t += 0.0003 * (i % 3)  # producers jitter a little between sends
     assert g.admitted == 120
     assert max_in_window(g.log, g.window) <= SAFE_BURST
     assert g.waited_s > 0, "an unpaced 120-packet flood must have been held back"
@@ -165,7 +175,7 @@ def test_two_renderers_on_one_port_stay_under_the_ceiling():
     clock = FakeClock()
     sink = GovernedSink(_governor(clock))
     chords, beat = PadRenderer(sink, gap=0.0), PadRenderer(sink, gap=0.0)
-    for i in range(6):                          # a chord view and a beat march repaint every pad, alternately
+    for i in range(6):  # a chord view and a beat march repaint every pad, alternately
         chords.set_frame([(i * 20 % 128, 0, 127)] * 12)
         beat.set_frame([(0, i * 20 % 128, 127)] * 12)
     times = [t for t, _ in sink.packets]
@@ -181,7 +191,7 @@ def test_midiout_admits_before_touching_the_driver():
         def admit(self):
             raise Refuse
 
-    out = object.__new__(W.MidiOut)             # no device: the gate must fire before any WinMM call
+    out = object.__new__(W.MidiOut)  # no device: the gate must fire before any WinMM call
     out.governor = Gate()
     with pytest.raises(Refuse):
         out.send_sysex(P.set_led(P.pad_led(1, "DAW"), (127, 0, 0)))
@@ -194,7 +204,7 @@ def test_max_in_window_counts_half_open_windows():
 
 # --- colours stay out of the wash zone -----------------------------------------------------------
 
-WASH_ZONE = (15.0, 100.0)   # hue degrees: orange through lime, which this device renders close to white
+WASH_ZONE = (15.0, 100.0)  # hue degrees: orange through lime, which this device renders close to white
 
 
 def _hue(rgb):

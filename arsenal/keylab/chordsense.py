@@ -95,14 +95,22 @@ non-finite sample is heard as silence; the keys path jumps an idle gap, or a hel
 time is refused). At 48 kHz with hop 512 it
 runs far over 20x real time on one core (pinned by tests/test_keylab_chordsense.py).
 """
+
 from __future__ import annotations
 
 import math
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
-from scipy.ndimage import median_filter
-from scipy.signal import firwin
+from scipy.ndimage import (  # pyright: ignore[reportMissingImports]  # optional analysis dependency, not in the lock
+    median_filter,
+)
+from scipy.signal import (  # pyright: ignore[reportMissingImports]  # optional analysis dependency, not in the lock
+    firwin,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
 
 # --- names and vocabulary ----------------------------------------------------------------------------------
 
@@ -115,7 +123,7 @@ MINOR_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"]
 DIM_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "Bb", "B"]
 
 # quality -> (intervals from the root, display suffix, per-tone weight). The order is the scoring order.
-QUALITIES: Dict[str, Tuple[Tuple[int, ...], str, Tuple[float, ...]]] = {
+QUALITIES: dict[str, tuple[tuple[int, ...], str, tuple[float, ...]]] = {
     "maj": ((0, 4, 7), "", (1.0, 1.0, 0.9)),
     "min": ((0, 3, 7), "m", (1.0, 1.0, 0.9)),
     "7": ((0, 4, 7, 10), "7", (1.0, 1.0, 0.8, 0.9)),
@@ -130,18 +138,40 @@ QUALITIES: Dict[str, Tuple[Tuple[int, ...], str, Tuple[float, ...]]] = {
 }
 QUALITY_NAMES = list(QUALITIES)
 # a small log-prior: the plain triads are the default reading, richer chords must earn their extra tone
-PRIOR = {"maj": 0.0, "min": 0.0, "7": -0.010, "maj7": -0.015, "m7": -0.015, "sus2": -0.020, "sus4": -0.015,
-         "dim": -0.015, "aug": -0.030, "add9": -0.020, "5": -0.040}
+PRIOR = {
+    "maj": 0.0,
+    "min": 0.0,
+    "7": -0.010,
+    "maj7": -0.015,
+    "m7": -0.015,
+    "sus2": -0.020,
+    "sus4": -0.015,
+    "dim": -0.015,
+    "aug": -0.030,
+    "add9": -0.020,
+    "5": -0.040,
+}
 # the tension a chord's own colour carries (a dominant 7th's tritone, a suspension waiting to fall)
-QUALITY_TENSION = {"maj": 0.0, "min": 0.05, "5": 0.0, "add9": 0.06, "maj7": 0.10, "m7": 0.08, "sus2": 0.14,
-                   "sus4": 0.22, "7": 0.25, "dim": 0.38, "aug": 0.40}
+QUALITY_TENSION = {
+    "maj": 0.0,
+    "min": 0.05,
+    "5": 0.0,
+    "add9": 0.06,
+    "maj7": 0.10,
+    "m7": 0.08,
+    "sus2": 0.14,
+    "sus4": 0.22,
+    "7": 0.25,
+    "dim": 0.38,
+    "aug": 0.40,
+}
 
 # Krumhansl-Kessler probe-tone profiles (Krumhansl 1990); index 0 = the tonic
 KK_MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
 KK_MINOR = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
 KEYS = [(t, "major") for t in range(12)] + [(t, "minor") for t in range(12)]
-FLAT_KEYS_MAJOR = {5, 10, 3, 8, 1, 6}           # F Bb Eb Ab Db Gb
-FLAT_KEYS_MINOR = {2, 7, 0, 5, 10, 3}           # d g c f bb eb
+FLAT_KEYS_MAJOR = {5, 10, 3, 8, 1, 6}  # F Bb Eb Ab Db Gb
+FLAT_KEYS_MINOR = {2, 7, 0, 5, 10, 3}  # d g c f bb eb
 
 
 def _kk_matrix() -> np.ndarray:
@@ -155,20 +185,20 @@ def _kk_matrix() -> np.ndarray:
 
 
 _KK = _kk_matrix()
-_REF_DT = 512 / 48000.0                         # the frame p_stay and kappa are stated for
+_REF_DT = 512 / 48000.0  # the frame p_stay and kappa are stated for
 _DB_PER_NEPER = 20.0 / math.log(10.0)
-_FIFTH_BELOW = (np.arange(12) - 7) % 12         # x[_FIFTH_BELOW][p] = x[p - 7]: the note whose 12th lands on p
+_FIFTH_BELOW = (np.arange(12) - 7) % 12  # x[_FIFTH_BELOW][p] = x[p - 7]: the note whose 12th lands on p
 
 # the overtone series folded to pitch classes: harmonic h of a tone lands this many semitones (mod 12) above it
-_HARM_PC = (0, 0, 7, 0, 4, 7, 10, 0)            # h = 1..8: unison, octave, 12th, 2 oct, 17th, 19th, b21st, 3 oct
-_HARM_DECAY = 0.6                               # amplitude of harmonic h ~ 0.6^(h-1) (Gomez 2006)
+_HARM_PC = (0, 0, 7, 0, 4, 7, 10, 0)  # h = 1..8: unison, octave, 12th, 2 oct, 17th, 19th, b21st, 3 oct
+_HARM_DECAY = 0.6  # amplitude of harmonic h ~ 0.6^(h-1) (Gomez 2006)
 
 # interval-class roughness for the dissonance term: index = interval class 0..6 (ic1 = m2/M7, ic6 = tritone)
 _IC_ROUGH = np.array([0.0, 1.0, 0.45, 0.12, 0.08, 0.02, 0.65])
 _ROUGH = np.array([[_IC_ROUGH[min((i - j) % 12, (j - i) % 12)] for j in range(12)] for i in range(12)])
 
 
-def note_names_for(key: Optional[Tuple[int, str]], quality: Optional[str] = None) -> List[str]:
+def note_names_for(key: tuple[int, str] | None, quality: str | None = None) -> list[str]:
     """Spell pitch classes with flats in flat keys, sharps in sharp keys; with no key, the common spellings for a
     chord of this quality (C#m, G#m, D#dim but Db, Ab, Eb)."""
     if key is None:
@@ -190,9 +220,9 @@ _NATURAL = (0, 2, 4, 5, 7, 9, 11)
 _STEP_MAJOR = (0, 1, 1, 2, 2, 3, 3, 4, 5, 5, 6, 6)
 _STEP_MINOR = (0, 1, 1, 2, 2, 3, 3, 4, 5, 5, 6, 6)
 _STEP_DIM = {1: 0, 3: 1, 6: 3, 8: 4, 10: 5}
-_NO_FLAT_MINOR = {4: 2, 9: 5}                    # minor: the raised 3rd / 6th are sharps (C#, F# in A minor)
+_NO_FLAT_MINOR = {4: 2, 9: 5}  # minor: the raised 3rd / 6th are sharps (C#, F# in A minor)
 _ODD = {"Cb", "Fb", "E#", "B#"}
-_STEP_OF_INTERVAL = (0, 1, 1, 2, 2, 3, 4, 4, 5, 5, 6, 6)   # a chord tone's letter above its root (b5 for 6)
+_STEP_OF_INTERVAL = (0, 1, 1, 2, 2, 3, 4, 4, 5, 5, 6, 6)  # a chord tone's letter above its root (b5 for 6)
 
 
 def _spell(pc: int, letter_idx: int, sharp_context: bool) -> str:
@@ -205,11 +235,11 @@ def _spell(pc: int, letter_idx: int, sharp_context: bool) -> str:
     return name
 
 
-def _tonic_letter(key: Tuple[int, str]) -> int:
+def _tonic_letter(key: tuple[int, str]) -> int:
     return _LETTERS.index(note_names_for(key)[key[0]][0])
 
 
-def spell_root(root: int, quality: Optional[str], key: Tuple[int, str]) -> Tuple[str, int]:
+def spell_root(root: int, quality: str | None, key: tuple[int, str]) -> tuple[str, int]:
     """(name, letter index) of a chord root in a key, by the scale degree it sits on (see _STEP_MAJOR)."""
     tonic, mode = key
     degree = (root - tonic) % 12
@@ -219,13 +249,13 @@ def spell_root(root: int, quality: Optional[str], key: Tuple[int, str]) -> Tuple
     elif mode == "minor" and degree in _NO_FLAT_MINOR:
         step = _NO_FLAT_MINOR[degree]
     elif degree == 6 and quality in ("maj", "7", "aug", "5", "maj7", "add9", "sus2", "sus4"):
-        step = 4                                 # the tritone substitute is bV (Gb7 in C); #iv (F#m, F#dim) stays
+        step = 4  # the tritone substitute is bV (Gb7 in C); #iv (F#m, F#dim) stays
     li = (_tonic_letter(key) + step) % 7
     sharp = (root - _NATURAL[li]) % 12 in (1, 2)
     return _spell(root, li, sharp), li
 
 
-def chord_name(root: int, quality: str, bass: Optional[int] = None, key: Optional[Tuple[int, str]] = None) -> str:
+def chord_name(root: int, quality: str, bass: int | None = None, key: tuple[int, str] | None = None) -> str:
     """The chord's name: in a key by the key's spelling rules (borrowed and chromatic roots as lowered degrees: Bb,
     Eb, Ab in C major; leading-tone diminished chords sharp: G#dim in A minor), the bass by its interval above the
     root (D/F#, Ab/C); with no key, the common chart spellings (C#m, Db, D#dim)."""
@@ -239,18 +269,15 @@ def chord_name(root: int, quality: str, bass: Optional[int] = None, key: Optiona
     s = name + QUALITIES[quality][1]
     if bass is not None and bass != root:
         iv = (bass - root) % 12
-        if iv in (8,) and quality == "aug":
-            bl = (li + 4) % 7                    # the augmented 5th
-        else:
-            bl = (li + _STEP_OF_INTERVAL[iv]) % 7
-        if iv not in [i for i in QUALITIES[quality][0]]:
-            s += "/" + spell_note(bass, key)     # a foreign bass (G/C): spelled in the key
+        bl = (li + 4) % 7 if iv in (8,) and quality == "aug" else (li + _STEP_OF_INTERVAL[iv]) % 7
+        if iv not in list(QUALITIES[quality][0]):
+            s += "/" + spell_note(bass, key)  # a foreign bass (G/C): spelled in the key
         else:
             s += "/" + _spell(bass, bl, "#" in name or (bass - _NATURAL[bl]) % 12 in (1, 2))
     return s
 
 
-def spell_note(pc: int, key: Optional[Tuple[int, str]]) -> str:
+def spell_note(pc: int, key: tuple[int, str] | None) -> str:
     """A single pitch class (a pedal, a bass) in a key: diatonic degrees by the key's letters, the others as a
     lowered degree (or raised 3rd / 6th / 7th in minor)."""
     if key is None:
@@ -262,7 +289,7 @@ def key_name(tonic: int, mode: str) -> str:
     return note_names_for((tonic, mode))[tonic] + (" major" if mode == "major" else " minor")
 
 
-def chord_tones(root: int, quality: str) -> List[int]:
+def chord_tones(root: int, quality: str) -> list[int]:
     return [(root + i) % 12 for i in QUALITIES[quality][0]]
 
 
@@ -277,36 +304,93 @@ def _templates(harmonics: bool, gamma: float) -> np.ndarray:
                 pc = (root + i) % 12
                 if harmonics:
                     for h, off in enumerate(_HARM_PC):
-                        t[(pc + off) % 12] += w[k] * _HARM_DECAY ** h
+                        t[(pc + off) % 12] += w[k] * _HARM_DECAY**h
                 else:
                     t[pc] += w[k]
-            rows.append(t ** gamma)
+            rows.append(t**gamma)
     return np.array(rows)
 
 
 # --- roman numerals ----------------------------------------------------------------------------------------
 
 _MAJOR_SCALE = frozenset((0, 2, 4, 5, 7, 9, 11))
-_MINOR_SCALE = frozenset((0, 2, 3, 5, 7, 8, 10, 11))   # natural minor plus the raised 7th (harmonic minor: V, vii°)
-_DEGREE_MAJOR = {0: "I", 1: "bII", 2: "II", 3: "bIII", 4: "III", 5: "IV", 6: "#IV", 7: "V", 8: "bVI", 9: "VI",
-                 10: "bVII", 11: "VII"}
-_DEGREE_MINOR = {0: "I", 1: "bII", 2: "II", 3: "III", 4: "#III", 5: "IV", 6: "#IV", 7: "V", 8: "VI", 9: "#VI",
-                 10: "VII", 11: "VII"}
+_MINOR_SCALE = frozenset((0, 2, 3, 5, 7, 8, 10, 11))  # natural minor plus the raised 7th (harmonic minor: V, vii°)
+_DEGREE_MAJOR = {
+    0: "I",
+    1: "bII",
+    2: "II",
+    3: "bIII",
+    4: "III",
+    5: "IV",
+    6: "#IV",
+    7: "V",
+    8: "bVI",
+    9: "VI",
+    10: "bVII",
+    11: "VII",
+}
+_DEGREE_MINOR = {
+    0: "I",
+    1: "bII",
+    2: "II",
+    3: "III",
+    4: "#III",
+    5: "IV",
+    6: "#IV",
+    7: "V",
+    8: "VI",
+    9: "#VI",
+    10: "VII",
+    11: "VII",
+}
 # the triad each degree carries in the key: a secondary dominant's target is named by it (never a diminished one)
 _TRIAD_MAJOR = {0: "maj", 2: "min", 4: "min", 5: "maj", 7: "maj", 9: "min", 11: "dim"}
 _TRIAD_MINOR = {0: "min", 2: "dim", 3: "maj", 5: "min", 7: "maj", 8: "maj", 10: "maj", 11: "dim"}
 # the function of a chord whose tones all belong to the key, by the degree of its root
-_FUNCTION_MAJOR = {0: "tonic", 2: "subdominant", 4: "tonic", 5: "subdominant", 7: "dominant", 9: "tonic",
-                   11: "dominant"}
-_FUNCTION_MINOR = {0: "tonic", 2: "subdominant", 3: "tonic", 5: "subdominant", 7: "dominant", 8: "subdominant",
-                   10: "dominant", 11: "dominant"}
+_FUNCTION_MAJOR = {
+    0: "tonic",
+    2: "subdominant",
+    4: "tonic",
+    5: "subdominant",
+    7: "dominant",
+    9: "tonic",
+    11: "dominant",
+}
+_FUNCTION_MINOR = {
+    0: "tonic",
+    2: "subdominant",
+    3: "tonic",
+    5: "subdominant",
+    7: "dominant",
+    8: "subdominant",
+    10: "dominant",
+    11: "dominant",
+}
 _LOWER = {"min", "m7", "dim"}
-_NUM_SUFFIX = {"maj": "", "min": "", "7": "7", "maj7": "maj7", "m7": "7", "sus2": "sus2", "sus4": "sus4",
-               "dim": "\u00b0", "aug": "+", "add9": "add9", "5": "5"}
-_EXTENSION = {"add9": 2, "7": 10, "maj7": 11, "m7": 10}      # the tone a four-note chord adds to its triad
+_NUM_SUFFIX = {
+    "maj": "",
+    "min": "",
+    "7": "7",
+    "maj7": "maj7",
+    "m7": "7",
+    "sus2": "sus2",
+    "sus4": "sus4",
+    "dim": "\u00b0",
+    "aug": "+",
+    "add9": "add9",
+    "5": "5",
+}
+_EXTENSION = {"add9": 2, "7": 10, "maj7": 11, "m7": 10}  # the tone a four-note chord adds to its triad
 _COLOUR = {"7": (10,), "maj7": (11,), "m7": (10,), "sus4": (5,)}
-_FUNCTION_TENSION = {"tonic": 0.0, "subdominant": 0.10, "dominant": 0.28, "secondary dominant": 0.30,
-                     "borrowed": 0.20, "neapolitan": 0.30, "chromatic": 0.30}
+_FUNCTION_TENSION = {
+    "tonic": 0.0,
+    "subdominant": 0.10,
+    "dominant": 0.28,
+    "secondary dominant": 0.30,
+    "borrowed": 0.20,
+    "neapolitan": 0.30,
+    "chromatic": 0.30,
+}
 
 
 def _plain_numeral(degree: int, quality: str, mode: str) -> str:
@@ -320,7 +404,7 @@ def _plain_numeral(degree: int, quality: str, mode: str) -> str:
     return base + _NUM_SUFFIX[quality]
 
 
-def _figure(root: int, quality: str, bass: Optional[int]) -> str:
+def _figure(root: int, quality: str, bass: int | None) -> str:
     """Figured-bass inversion mark: triads 6 / 64, sevenths 65 / 43 / 42; '' in root position or with no bass."""
     if bass is None or bass == root:
         return ""
@@ -332,7 +416,7 @@ def _figure(root: int, quality: str, bass: Optional[int]) -> str:
     return ""
 
 
-def roman(root: int, quality: str, bass: Optional[int], tonic: int, mode: str) -> Tuple[str, str, str]:
+def roman(root: int, quality: str, bass: int | None, tonic: int, mode: str) -> tuple[str, str, str]:
     """(numeral, figure, function) of a chord in a key. numeral is the root-position reading ('V7', 'vi', 'bVII',
     'V/V', 'V7/IV'); figure is the inversion ('6', '64', '65', '43', '42' or ''); function is one of tonic,
     subdominant, dominant, secondary dominant, borrowed, neapolitan, chromatic.
@@ -357,14 +441,13 @@ def roman(root: int, quality: str, bass: Optional[int], tonic: int, mode: str) -
         target = (degree - 7) % 12
         tq = (_TRIAD_MAJOR if major else _TRIAD_MINOR).get(target)
         if target != 0 and tq in ("maj", "min"):
-            return ("V7" if quality == "7" else "V") + "/" + _plain_numeral(target, tq, mode), fig, \
-                "secondary dominant"
+            return ("V7" if quality == "7" else "V") + "/" + _plain_numeral(target, tq, mode), fig, "secondary dominant"
     if degree == 1 and quality == "maj":
         return num, fig, "neapolitan"
     return num, fig, "chromatic"
 
 
-def full_roman(numeral: Optional[str], figure: str) -> Optional[str]:
+def full_roman(numeral: str | None, figure: str) -> str | None:
     """numeral + inversion the way an analysis writes it: I + 6 = I6, V7 + 65 = V65, V7/V + 43 = V43/V,
     IVmaj7 + 42 = IVmaj42 (a seventh chord's figure replaces its 7)."""
     if numeral is None or not figure:
@@ -388,6 +471,7 @@ def _cof_distance(a: int, b: int) -> int:
 
 # --- the engine --------------------------------------------------------------------------------------------
 
+
 class ChordSense:
     """Streaming chord / key / tension analysis of audio blocks (`feed`) or played notes (`feed_notes`).
 
@@ -396,45 +480,45 @@ class ChordSense:
     """
 
     # audio: chroma pitch range (MIDI), the bass band, and where the long FFT hands over to the short one
-    LO_MIDI, HI_MIDI = 27, 100                  # D#1 (39 Hz) .. E7 (2.6 kHz)
-    BASS_LO, BASS_HI = 27, 59                   # D#1 (39 Hz) .. B3 (247 Hz): a sub bass's fundamental is heard
-    HARM_LO = 36                                # C2 (65 Hz): below it is the bass's register, never a chord voice
-    SPLIT_MIDI = 57                             # below: the long FFT's peaks; at and above: the short FFT's
+    LO_MIDI, HI_MIDI = 27, 100  # D#1 (39 Hz) .. E7 (2.6 kHz)
+    BASS_LO, BASS_HI = 27, 59  # D#1 (39 Hz) .. B3 (247 Hz): a sub bass's fundamental is heard
+    HARM_LO = 36  # C2 (65 Hz): below it is the bass's register, never a chord voice
+    SPLIT_MIDI = 57  # below: the long FFT's peaks; at and above: the short FFT's
     BINS_PER_SEMI = 3
-    MAX_SAMPLE = 1e5                            # a sample beyond this (or NaN / Inf) is not audio: silence
-    PROM_HALF, PROM_DB = 12, (10.0, 20.0)       # a peak's sinusoidality: 0 at 10 dB over the local level, 1 at 20
-    TONAL_ON, TONAL_OFF = 0.08, 0.04            # tonality hysteresis: chords are heard above ON, N below OFF
-    REGISTER = (0.6, 0.1)                       # tonality counts in full with this share of the voices below C6
-    N_BOOST = (0.25, 1.5)                       # below this tonality N gains this much per unit of tonality short
-    CLEAR_TONALITY = 0.6                        # ... and at full confidence from this tonality up
+    MAX_SAMPLE = 1e5  # a sample beyond this (or NaN / Inf) is not audio: silence
+    PROM_HALF, PROM_DB = 12, (10.0, 20.0)  # a peak's sinusoidality: 0 at 10 dB over the local level, 1 at 20
+    TONAL_ON, TONAL_OFF = 0.08, 0.04  # tonality hysteresis: chords are heard above ON, N below OFF
+    REGISTER = (0.6, 0.1)  # tonality counts in full with this share of the voices below C6
+    N_BOOST = (0.25, 1.5)  # below this tonality N gains this much per unit of tonality short
+    CLEAR_TONALITY = 0.6  # ... and at full confidence from this tonality up
     # the overtones a note explains in the semitones above it (offset, share): harmonics 2-8 of a bright tone
     _OVERTONES = ((12, 0.55), (19, 0.35), (24, 0.25), (28, 0.2), (31, 0.17), (34, 0.14), (36, 0.13))
-    NOTE_ON, FEW_NOTES = 0.2, 1.0               # a pitch class sounds as a note above NOTE_ON; fewer than two of
+    NOTE_ON, FEW_NOTES = 0.2, 1.0  # a pitch class sounds as a note above NOTE_ON; fewer than two of
     #                                             a chord's tones sounding costs it FEW_NOTES (it cannot win)
     LAW_FLOOR, LAW_MAX_H, LAW_Q = 0.02, 12, 0.8
-    TWELFTH_SHARE = 0.5                         # a bass's 12ths give up this share of what its law predicts
-    LOW_VOICE = 2.5                             # audio: a voice below C3 sounds only from 2.5 x NOTE_ON of the bass
-    FADE_S, FADE = 0.2, (0.45, 0.8)              # audio: a note under 0.7 of its level of FADE_S ago is fading; a
+    TWELFTH_SHARE = 0.5  # a bass's 12ths give up this share of what its law predicts
+    LOW_VOICE = 2.5  # audio: a voice below C3 sounds only from 2.5 x NOTE_ON of the bass
+    FADE_S, FADE = 0.2, (0.45, 0.8)  # audio: a note under 0.7 of its level of FADE_S ago is fading; a
     #                                             line's fading tail builds no new chord unless above 0.8 of the loudest
     TAILS_FROM_N_ONLY = True
-    RISE, SYNC_S = 1.5, 0.15                    # a pitch class rising 1.5 times over FADE_S is being struck; notes
+    RISE, SYNC_S = 1.5, 0.15  # a pitch class rising 1.5 times over FADE_S is being struck; notes
     #                                             struck within SYNC_S of each other are one attack
-    VOICE_FLOOR = 0.10                          # voices quieter than this share of the bass note are its residue
-    LONE_HOLD_S = 6.0                           # a chord holds through a lone note of its own this long (see _step)
-    LONE_MIN_S = 0.3                            # ... once it has sounded in full this long
-    DYAD_HOLD_S = 0.20                          # extra hold for a chord with only two of its tones sounding
-    FOREIGN_BASS = (0.10, 0.03)                 # score cost of a bass outside the chord: normally / under a lone bass
-    UNEXPLAINED = 0.10                          # a chord claiming a lone bass pays this per voice it leaves out
-    CONF_MASK = (0.8, 0.12, 0.7)                # ... and lower (by up to 0.7) as the bass note dwarfs the voices: a
+    VOICE_FLOOR = 0.10  # voices quieter than this share of the bass note are its residue
+    LONE_HOLD_S = 6.0  # a chord holds through a lone note of its own this long (see _step)
+    LONE_MIN_S = 0.3  # ... once it has sounded in full this long
+    DYAD_HOLD_S = 0.20  # extra hold for a chord with only two of its tones sounding
+    FOREIGN_BASS = (0.10, 0.03)  # score cost of a bass outside the chord: normally / under a lone bass
+    UNEXPLAINED = 0.10  # a chord claiming a lone bass pays this per voice it leaves out
+    CONF_MASK = (0.8, 0.12, 0.7)  # ... and lower (by up to 0.7) as the bass note dwarfs the voices: a
     #                                             bass share of 0.8 -> 0.92 is where a chord's colour gets lost
-    CONF_MARGIN, CONF_TAU_S = 0.15, 0.25        # confidence: 1.0 needs this score lead over the best rival (and
+    CONF_MARGIN, CONF_TAU_S = 0.15, 0.25  # confidence: 1.0 needs this score lead over the best rival (and
     #                                             every tone sounding, in clear tonal sound), averaged over TAU
-    BASS_SIG, BASS_TAU_S = 0.3, 0.12            # the lowest bass peak above this share of the loudest = the bass
-    BASS_MIN = 0.1                              # ... when the bass band's loudest is this share of the loudest at all
-    ONSET_LAG_S = 0.065                         # how late the short window shows an attack (calibrated)
-    TAIL_HOLD_S = 0.20                          # extra hold for a chord that may be the last one's ringing tail
-    SAME_ROOT_HOLD_S = 0.25                     # extra hold when only the quality would change, not the root
-    DOWNGRADE_HOLD_S = 1.0                      # ... and when it would only drop a tone of the chord held
+    BASS_SIG, BASS_TAU_S = 0.3, 0.12  # the lowest bass peak above this share of the loudest = the bass
+    BASS_MIN = 0.1  # ... when the bass band's loudest is this share of the loudest at all
+    ONSET_LAG_S = 0.065  # how late the short window shows an attack (calibrated)
+    TAIL_HOLD_S = 0.20  # extra hold for a chord that may be the last one's ringing tail
+    SAME_ROOT_HOLD_S = 0.25  # extra hold when only the quality would change, not the root
+    DOWNGRADE_HOLD_S = 1.0  # ... and when it would only drop a tone of the chord held
     # pedal: audio counts a pitch class as sounding above PEDAL_ON_AUDIO of the loudest note, and as HELD when it is
     # not a line's tail (struck before the newest note and fading); notes count it while its key is down or it was
     # struck within PEDAL_STRIKE_S, and as held while down, sustained, or struck again since the chord began. A run
@@ -446,15 +530,15 @@ class ChordSense:
     # chord or two: it is no pedal
     PEDAL_ON_AUDIO = 0.15
     PEDAL_STRIKE_S = 1.2
-    PEDAL_GAP_S = {"audio": 1.2, "notes": 0.6}
+    PEDAL_GAP_S: ClassVar[dict[str, float]] = {"audio": 1.2, "notes": 0.6}
     PEDAL_CHORDS, PEDAL_CLASH = 3, 0.15
-    PEDAL_HELD = {"audio": 0.7, "notes": 0.85}
+    PEDAL_HELD: ClassVar[dict[str, float]] = {"audio": 0.7, "notes": 0.85}
     PEDAL_MISS, SPAN_SKIP_S = 0.15, 0.35
     PEDAL_DRONE_S, PEDAL_DRONE_ROOTS = 16.0, 4
-    RING_NOTE_ON = 0.5                          # notes: a released note ringing out counts as sounding above this
-    RING_OUT_S = 0.6                            # notes: a released key (no sustain pedal) fades over this...
-    DAMP_S = 0.12                               # ...and much faster once a new chord is struck:
-    CHORD_NOTES, CHORD_SPREAD_S = 3, 0.06       # this many keys within this long
+    RING_NOTE_ON = 0.5  # notes: a released note ringing out counts as sounding above this
+    RING_OUT_S = 0.6  # notes: a released key (no sustain pedal) fades over this...
+    DAMP_S = 0.12  # ...and much faster once a new chord is struck:
+    CHORD_NOTES, CHORD_SPREAD_S = 3, 0.06  # this many keys within this long
     # key: announced after KEY_FIRST_S of tonal time (with KEY_FIRST_CONF of the belief); changed when a rival leads
     # by KEY_MARGIN for KEY_DWELL_S in the long memory (key_tau), or by KEY_FAST_MARGIN for KEY_FAST_DWELL_S in the
     # last few seconds (KEY_FAST_TAU) -- the fast way only once the first key has stood KEY_SETTLE_S, when the
@@ -469,10 +553,24 @@ class ChordSense:
     KEY_SHARPNESS, KEY_FIRST_CONF = 12.0, 0.12
     DOMINANT_PULL = 0.5
 
-    def __init__(self, rate: int = 48000, hop: int = 512, *, frame_s: float = 0.02, p_stay: float = 0.985,
-                 kappa: float = 40.0, n_floor: float = 0.50, min_hold_s: float = 0.12, bass_hold_s: float = 0.30,
-                 hpss_s: float = 0.30, key_tau: float = 18.0, pedal_min_s: float = 8.0, pedal_ramp_s: float = 30.0,
-                 gamma: float = 0.6, sim: str = "pearson"):
+    def __init__(
+        self,
+        rate: int = 48000,
+        hop: int = 512,
+        *,
+        frame_s: float = 0.02,
+        p_stay: float = 0.985,
+        kappa: float = 40.0,
+        n_floor: float = 0.50,
+        min_hold_s: float = 0.12,
+        bass_hold_s: float = 0.30,
+        hpss_s: float = 0.30,
+        key_tau: float = 18.0,
+        pedal_min_s: float = 8.0,
+        pedal_ramp_s: float = 30.0,
+        gamma: float = 0.6,
+        sim: str = "pearson",
+    ):
         """rate / hop: the audio clock (feed may still be given any block length). frame_s: the analysis period
         (audio frames are whole hops: at 48 kHz / 512 that is every second hop). p_stay / kappa: the HMM's
         stickiness and evidence sharpness, per 512-sample frame at 48 kHz (scaled to the actual clock). n_floor:
@@ -490,20 +588,20 @@ class ChordSense:
         self.min_hold_s, self.bass_hold_s, self.hpss_s = min_hold_s, bass_hold_s, hpss_s
         self.key_tau, self.pedal_min_s, self.pedal_ramp_s = key_tau, pedal_min_s, pedal_ramp_s
         self.gamma, self.sim = gamma, sim
-        self._source: Optional[str] = None
+        self._source: str | None = None
         templates = {True: _templates(True, gamma), False: _templates(False, gamma)}
         if sim == "pearson":
             templates = {k: v - v.mean(axis=1, keepdims=True) for k, v in templates.items()}
         self._templates = templates
         self._tnorm = {k: np.linalg.norm(v, axis=1) for k, v in templates.items()}
         nq = len(QUALITY_NAMES)
-        self._tone_mask = np.zeros((12 * nq + 1, 12), dtype=bool)   # the last row is N: no tones
+        self._tone_mask = np.zeros((12 * nq + 1, 12), dtype=bool)  # the last row is N: no tones
         for r in range(12):
             for qi, q in enumerate(QUALITY_NAMES):
                 self._tone_mask[r * nq + qi, chord_tones(r, q)] = True
         self._tone_count = np.maximum(self._tone_mask.sum(axis=1), 1)
         self._tone_f = self._tone_mask[:-1].astype(float)
-        self._not_tone = (~self._tone_mask[:-1]).astype(float).T   # (12, states): the pitch classes a chord lacks
+        self._not_tone = (~self._tone_mask[:-1]).astype(float).T  # (12, states): the pitch classes a chord lacks
         self._roots = np.repeat(np.arange(12), nq)
         # colours of one chord: the same root, one's tones containing the other's (C, C5, Cmaj7, Cadd9); N is a
         # rival of everything and everything of N
@@ -534,86 +632,86 @@ class ChordSense:
             self._key_chord[r * nq + QUALITY_NAMES.index("7"), (r + 5) % 12] += self.DOMINANT_PULL
         self._support = np.full(12 * nq, 3.0)  # sounding tones per chord state, as of the last frame
         self._prior = np.tile(np.array([PRIOR[q] for q in QUALITY_NAMES]), 12)
-        self._nstates = 12 * nq + 1             # the last state is N
+        self._nstates = 12 * nq + 1  # the last state is N
         self._N = self._nstates - 1
         self._post = np.full(self._nstates, 1.0 / self._nstates)
-        self._t = 0.0                           # seconds of input consumed
+        self._t = 0.0  # seconds of input consumed
         self._frames = 0
         self._dt = 0.0
         # the decided chord (it starts at N, silently), the candidates waiting to replace it
         self._label = self._N
-        self._label_bass: Optional[int] = None
+        self._label_bass: int | None = None
         self._label_conf = 1.0
-        self._cand: Optional[int] = None
+        self._cand: int | None = None
         self._cand_since = 0.0
         self._cand_hold = min_hold_s
         self._cand_conf = 0.0
-        self._clarity = 1.0                     # how clearly tonal the sound is (audio: from the tonality), 0..1
-        self._unmasked = 1.0                    # ... and how little the bass note dwarfs the voices (audio)
-        self._lone: Optional[int] = None
-        self._full_t = 0.0                      # when the chord held last had two or more of its tones sounding
-        self._label_t = 0.0                     # when the chord held was named
-        self._bass_cand: Optional[int] = None
+        self._clarity = 1.0  # how clearly tonal the sound is (audio: from the tonality), 0..1
+        self._unmasked = 1.0  # ... and how little the bass note dwarfs the voices (audio)
+        self._lone: int | None = None
+        self._full_t = 0.0  # when the chord held last had two or more of its tones sounding
+        self._label_t = 0.0  # when the chord held was named
+        self._bass_cand: int | None = None
         self._bass_since = 0.0
-        self._inst: Optional[int] = None        # what each frame says on its own, and since when
+        self._inst: int | None = None  # what each frame says on its own, and since when
         self._inst_since = 0.0
         # key
         self._key_acc = np.zeros(12)
         self._key_fast = np.zeros(12)
         self._key_ever = np.zeros(12)
-        self._key_decay: Optional[float] = None
-        self._key: Optional[Tuple[int, str]] = None
+        self._key_decay: float | None = None
+        self._key: tuple[int, str] | None = None
         self._key_conf = 0.0
-        self._key_rival: Optional[Tuple[int, str]] = None
+        self._key_rival: tuple[int, str] | None = None
         self._key_rival_since = 0.0
-        self._tonic_acc = np.zeros(24)          # how much each key's tonic chord has been heard lately
-        self._key_first_t = 0.0                 # when the first key was named
+        self._tonic_acc = np.zeros(24)  # how much each key's tonic chord has been heard lately
+        self._key_first_t = 0.0  # when the first key was named
         self._tonal_s = 0.0
         self._pending_key_event = False
         # tension, pedal, resolution
         self.tension = 0.0
         self._tension_peak = 0.0
-        self._tt_memo: Tuple[object, float] = (None, 0.0)
-        self._run_start = np.full(12, -1.0)     # pedal runs: start time per pitch class (-1 = none)
+        self._tt_memo: tuple[object, float] = (None, 0.0)
+        self._run_start = np.full(12, -1.0)  # pedal runs: start time per pitch class (-1 = none)
         self._last_seen = np.full(12, -1e9)
-        self._run_roots = np.zeros((12, 12), dtype=bool)   # the chord roots each run was heard over
-        self._run_over = np.zeros(12)           # seconds each run has sounded over a chord ...
-        self._run_clash = np.zeros(12)          # ... and of those, clashed with it (not one of its tones)
-        self._run_held = np.zeros(12)           # seconds each run was really held (struck, or sounding fresh)
-        self._held_since = np.full(12, -1.0)    # when each pitch class's current held streak began (-1 = none)
+        self._run_roots = np.zeros((12, 12), dtype=bool)  # the chord roots each run was heard over
+        self._run_over = np.zeros(12)  # seconds each run has sounded over a chord ...
+        self._run_clash = np.zeros(12)  # ... and of those, clashed with it (not one of its tones)
+        self._run_held = np.zeros(12)  # seconds each run was really held (struck, or sounding fresh)
+        self._held_since = np.full(12, -1.0)  # when each pitch class's current held streak began (-1 = none)
         self._held_last = np.full(12, -1e9)
-        self._acc_held = np.zeros(12)           # seconds each pitch class has been held, ever (for span lookups)
-        self._acc_ring = np.zeros((96, 12))     # ... its last ~2 s of frames
+        self._acc_held = np.zeros(12)  # seconds each pitch class has been held, ever (for span lookups)
+        self._acc_ring = np.zeros((96, 12))  # ... its last ~2 s of frames
         self._acc_ring_t = np.full(96, -1e9)
         self._acc_pos = 0
-        self._run_spans = np.zeros(12)          # chord spans each run has run through ...
-        self._run_missed = np.zeros(12)         # ... and of those, the ones its note did not sound in
-        self._span_onset: Optional[float] = None
-        self._span_change: Optional[float] = None   # a chord change's onset, not yet accounted
-        self._pedal: Optional[int] = None
+        self._run_spans = np.zeros(12)  # chord spans each run has run through ...
+        self._run_missed = np.zeros(12)  # ... and of those, the ones its note did not sound in
+        self._span_onset: float | None = None
+        self._span_change: float | None = None  # a chord change's onset, not yet accounted
+        self._pedal: int | None = None
         self._pedal_strength = 0.0
-        self._last_held: Optional[np.ndarray] = None        # the last frame's held pitch classes (pedal)
-        self._last_key_ev: Optional[np.ndarray] = None      # ... and its key evidence (a held chord's, repeated)
+        self._last_held: np.ndarray | None = None  # the last frame's held pitch classes (pedal)
+        self._last_key_ev: np.ndarray | None = None  # ... and its key evidence (a held chord's, repeated)
         # what the renderer reads
         self._chroma = np.zeros(12)
         self._bass = np.zeros(12)
-        self._present = np.zeros(12)            # the pitch classes sounding as NOTES, 0..1
+        self._present = np.zeros(12)  # the pitch classes sounding as NOTES, 0..1
         self._energy = 0.0
         self._diss = 0.0
         self._pulse = 0.0
         self._pulse_ref = 1e-9
-        self.tuning = 0.0                       # semitones off A440 (+ = sharp); audio only
+        self.tuning = 0.0  # semitones off A440 (+ = sharp); audio only
         # notes front end
-        self._held: Dict[int, list] = {}        # note -> [velocity 0..1, t_on, key_down, t_released, t_damped]
+        self._held: dict[int, list] = {}  # note -> [velocity 0..1, t_on, key_down, t_released, t_damped]
         self._sustain = False
         self._last_strike = np.full(12, -1e9)
         self._strike_energy = 0.0
-        self._onsets: List[float] = []
-        self._fe_ready = False                  # the audio front end is built on the first feed()
+        self._onsets: list[float] = []
+        self._fe_ready = False  # the audio front end is built on the first feed()
 
     # ---------------------------------------------------------------------------------------------- audio
     def _build_audio(self) -> None:
-        self._decim = max(1, int(round(self.rate / 11500.0)))
+        self._decim = max(1, round(self.rate / 11500.0))
         self._wrate = self.rate / self._decim
         if self._decim > 1:
             # a linear-phase FIR anti-alias filter: flat over the analysis band (up to 2.6 kHz), and whatever it
@@ -622,9 +720,9 @@ class ChordSense:
             self._fir = firwin(12 * self._decim + 1, 0.80 / self._decim)
             self._fir_hist = np.zeros(len(self._fir) - 1)
         self._dphase = 0
-        self._stride = max(1, int(round(self.frame_s * self.rate / self.hop)))
+        self._stride = max(1, round(self.frame_s * self.rate / self.hop))
         self._dt = self.hop * self._stride / self.rate
-        n_long = 1 << int(round(math.log2(self._wrate * 0.36)))     # 4096 at 11-12 kHz (~0.35 s)
+        n_long = 1 << round(math.log2(self._wrate * 0.36))  # 4096 at 11-12 kHz (~0.35 s)
         n_short = n_long // 2
         self._ns = n_short
         self._ring = np.zeros(n_long)
@@ -642,18 +740,18 @@ class ChordSense:
         self._f_split = f_split
         self._nb = (self.HI_MIDI - self.LO_MIDI + 1) * self.BINS_PER_SEMI
         bin_midi = np.round(self.LO_MIDI + (np.arange(self._nb) - 1) / self.BINS_PER_SEMI).astype(int)
-        self._bin_midi = bin_midi               # fine bin i is centred on MIDI LO + (i - 1) / BINS_PER_SEMI
+        self._bin_midi = bin_midi  # fine bin i is centred on MIDI LO + (i - 1) / BINS_PER_SEMI
         self._bin_pc = bin_midi % 12
         self._bass_bins = (bin_midi >= self.BASS_LO) & (bin_midi <= self.BASS_HI)
         bb = np.flatnonzero(self._bass_bins)
-        self._bb = (int(bb[0]), int(bb[-1]) + 1)                   # the bass band, a contiguous run of fine bins
-        self._hs = int(np.argmax(bin_midi >= self.HARM_LO))       # fine bins below this are the sub band
-        self._c6 = int(np.argmax(bin_midi >= 84))                 # ... and from this one up, above the voices
+        self._bb = (int(bb[0]), int(bb[-1]) + 1)  # the bass band, a contiguous run of fine bins
+        self._hs = int(np.argmax(bin_midi >= self.HARM_LO))  # fine bins below this are the sub band
+        self._c6 = int(np.argmax(bin_midi >= 84))  # ... and from this one up, above the voices
         self._low_s = 1.0
-        self._series_cache: Dict[int, tuple] = {}
+        self._series_cache: dict[int, tuple] = {}
         self._semi_pc = (self.LO_MIDI + np.arange(self._nb // self.BINS_PER_SEMI)) % 12
-        self._semi_low = self.LO_MIDI + np.arange(self._nb // self.BINS_PER_SEMI) < 48     # below C3
-        self._hk = max(5, int(round(self.hpss_s / self._dt))) | 1
+        self._semi_low = self.LO_MIDI + np.arange(self._nb // self.BINS_PER_SEMI) < 48  # below C3
+        self._hk = max(5, round(self.hpss_s / self._dt)) | 1
         self._hring = np.zeros((self._hk, self._nb))
         self._hpos = 0
         self._tune_z = 0j
@@ -661,17 +759,17 @@ class ChordSense:
         self._bass_s = np.zeros(12)
         self._salience_s = np.zeros(12)
         self._sal_lo_s = np.zeros(12)
-        self._sal_ring = np.zeros((max(1, int(round(self.FADE_S / self._dt))), 12))
+        self._sal_ring = np.zeros((max(1, round(self.FADE_S / self._dt)), 12))
         self._sal_pos = 0
-        self._att_t = np.full(12, -1e9)                             # when each pitch class was last struck
+        self._att_t = np.full(12, -1e9)  # when each pitch class was last struck
         self._tonality = 0.0
         self._ref_energy = 1e-6
-        nf = int(math.ceil(0.8 / self._dt)) + 1
+        nf = math.ceil(0.8 / self._dt) + 1
         self._flux = np.zeros((nf, 12))
         self._flux_t = np.full(nf, -1e9)
         self._fpos = 0
         self._raw_prev = np.zeros(12)
-        self._bflux = np.zeros((nf, 12))        # the same rise, in the bass band only
+        self._bflux = np.zeros((nf, 12))  # the same rise, in the bass band only
         self._braw_prev = np.zeros(12)
         self._a_chroma = 1.0 - math.exp(-self._dt / 0.06)
         self._a_bass = 1.0 - math.exp(-self._dt / self.BASS_TAU_S)
@@ -681,18 +779,18 @@ class ChordSense:
         self._tonal = False
         self._a1_s = 0.0
         self._hc_prev = np.zeros(12)
-        hn = np.arange(2, 49)                                       # the bass's harmonics 2..48, as fine-bin offsets
+        hn = np.arange(2, 49)  # the bass's harmonics 2..48, as fine-bin offsets
         self._h_num = hn.astype(float)
         self._h_log = np.log(self._h_num)
         self._h_off = np.round(self.BINS_PER_SEMI * 12.0 * np.log2(hn)).astype(int)
         # the bass's 12ths (h = 3, 6, 12 ..) land on the fifth of the chord it usually carries, and a chord tone
         # there cannot be told from a brighter bass: they give up only half of what the law predicts
         self._h_share = np.where(np.round(12.0 * np.log2(hn)).astype(int) % 12 == 7, self.TWELFTH_SHARE, 1.0)
-        offs = np.arange(-1, 5)[:, None]                            # search window: 1 bin flat .. 1-4 bins sharp
+        offs = np.arange(-1, 5)[:, None]  # search window: 1 bin flat .. 1-4 bins sharp
         self._h_win = (offs, offs <= 1 + (hn[None, :] >= 13) + (hn[None, :] >= 25) + (hn[None, :] >= 37))
         self._fe_ready = True
 
-    def feed(self, block) -> List[dict]:
+    def feed(self, block) -> list[dict]:
         """Feed audio: float samples in -1..1, mono (n,) or (n, channels), any length. Returns the events
         decided inside this block (usually none). A NaN, an Inf or an absurd sample is heard as silence."""
         if self._source not in (None, "audio"):
@@ -705,16 +803,16 @@ class ChordSense:
             x = x.mean(axis=1)
         elif x.ndim != 1:
             raise ValueError("audio must be (n,) mono or (n, channels)")
-        if x.size and not float(np.abs(x).max()) <= self.MAX_SAMPLE:          # NaN fails this comparison too
+        if x.size and not float(np.abs(x).max()) <= self.MAX_SAMPLE:  # NaN fails this comparison too
             # one NaN or Inf (a driver glitch, a bad plugin) must not silence the analysis for good, and nor may
             # an absurd value poison the loudness reference: a sample that is not audio is heard as silence
             x = np.where(np.abs(x) <= self.MAX_SAMPLE, x, 0.0)
-        out: List[dict] = []
+        out: list[dict] = []
         period = self.hop * self._stride
         i, n = 0, len(x)
         while i < n:
             take = min(n - i, period - self._pending)
-            self._push(x[i:i + take])
+            self._push(x[i : i + take])
             i += take
             self._pending += take
             if self._pending >= period:
@@ -727,8 +825,8 @@ class ChordSense:
         """Anti-alias, decimate (keeping the global sample grid across blocks) and append to the ring."""
         if self._decim > 1:
             xx = np.concatenate((self._fir_hist, chunk))
-            self._fir_hist = xx[len(chunk):]
-            y = np.convolve(xx, self._fir, mode="valid")[self._dphase::self._decim]
+            self._fir_hist = xx[len(chunk) :]
+            y = np.convolve(xx, self._fir, mode="valid")[self._dphase :: self._decim]
             self._dphase = (self._dphase - len(chunk)) % self._decim
         else:
             y = chunk
@@ -736,7 +834,7 @@ class ChordSense:
         if m == 0:
             return
         if m >= len(self._ring):
-            self._ring[:] = y[-len(self._ring):]
+            self._ring[:] = y[-len(self._ring) :]
         else:
             self._ring[:-m] = self._ring[m:]
             self._ring[-m:] = y
@@ -752,15 +850,16 @@ class ChordSense:
         return np.bincount(self._bin_pc, weights=band * wts, minlength=12)
 
     @classmethod
-    def _peaks(cls, x: np.ndarray, win: np.ndarray, norm: float, df: float, k0: int, k1: int,
-               sinusoidality: bool = True):
+    def _peaks(
+        cls, x: np.ndarray, win: np.ndarray, norm: float, df: float, k0: int, k1: int, sinusoidality: bool = True
+    ):
         """Spectral peaks between bins k0..k1: (frequency, amplitude, sinusoidality 0..1), parabolic interpolation
         on log magnitude. Sinusoidality is how far a peak stands above the local level of the spectrum around it
         (the mean LOG magnitude over +-PROM_HALF bins, which a few strong partials barely move): a partial stands
         20-60 dB clear, while the peaks of noise (hiss, applause, a riser, a shaker) are mostly within ~10 dB of
         it, so noise never reads as tonal however long it lasts (see the tonality in _audio_frame)."""
         mag = np.abs(np.fft.rfft(x * win)) * norm
-        seg = mag[k0 - 1:k1 + 1]
+        seg = mag[k0 - 1 : k1 + 1]
         mid = seg[1:-1]
         floor = max(1e-5, 0.003 * float(mid.max(initial=0.0)))
         k = np.flatnonzero((mid > seg[:-2]) & (mid >= seg[2:]) & (mid > floor))
@@ -769,11 +868,12 @@ class ChordSense:
         w = cls.PROM_HALF if sinusoidality else 0
         lo, hi = max(0, k0 - 1 - w), min(len(mag), k1 + 1 + w)
         logm = np.log(mag[lo:hi] + 1e-12)
-        kk = k + k0 - lo                                            # the peaks, in logm
+        kk = k + k0 - lo  # the peaks, in logm
         a, b, c = logm[kk - 1], logm[kk], logm[kk + 1]
         den = a - 2 * b + c
-        p = np.minimum(np.maximum(np.where(den < -1e-12, 0.5 * (a - c) / np.where(den < -1e-12, den, -1.0), 0.0),
-                                  -0.5), 0.5)
+        p = np.minimum(
+            np.maximum(np.where(den < -1e-12, 0.5 * (a - c) / np.where(den < -1e-12, den, -1.0), 0.0), -0.5), 0.5
+        )
         if not sinusoidality:
             return (k + k0 + p) * df, np.exp(b - 0.25 * (a - c) * p), np.zeros(0)
         # the local level: a running mean of log magnitude (cumsum), centred on each peak
@@ -781,14 +881,13 @@ class ChordSense:
         a0 = np.maximum(kk - w, 0)
         a1 = np.minimum(kk + w + 1, hi - lo)
         prom_db = (b - (cs[a1] - cs[a0]) / (a1 - a0)) * _DB_PER_NEPER
-        sinus = np.minimum(np.maximum((prom_db - cls.PROM_DB[0]) * (1.0 / (cls.PROM_DB[1] - cls.PROM_DB[0])), 0.0),
-                           1.0)
+        sinus = np.minimum(np.maximum((prom_db - cls.PROM_DB[0]) * (1.0 / (cls.PROM_DB[1] - cls.PROM_DB[0])), 0.0), 1.0)
         return (k + k0 + p) * df, np.exp(b - 0.25 * (a - c) * p), sinus
 
-    def _audio_frame(self) -> List[dict]:
+    def _audio_frame(self) -> list[dict]:
         ring = self._ring
         fl, al, _ = self._peaks(ring, self._win_l, self._norm_l, self._df_l, *self._kl, sinusoidality=False)
-        fs, as_, ws = self._peaks(ring[-self._ns:], self._win_s, self._norm_s, self._df_s, *self._ks)
+        fs, as_, ws = self._peaks(ring[-self._ns :], self._win_s, self._norm_s, self._df_s, *self._ks)
         keep_l, keep_s = fl < self._f_split, fs >= self._f_split
         f = np.concatenate((fl[keep_l], fs[keep_s]))
         amp = np.concatenate((al[keep_l], as_[keep_s]))
@@ -857,7 +956,7 @@ class ChordSense:
         # 808 hat's metallic partials, a cymbal) must be that much more clearly tonal to be heard as chords
         utot = float(upper.sum())
         if utot > 1e-12:
-            self._low_s += self._a_tonal * (float(upper[:self._c6].sum()) / utot - self._low_s)
+            self._low_s += self._a_tonal * (float(upper[: self._c6].sum()) / utot - self._low_s)
         reg = min(1.0, max(self.REGISTER[1], self._low_s / self.REGISTER[0])) ** 2
         self._tonality += self._a_tonal * (sinus_share * steady * reg - self._tonality)
         if self._tonal and self._tonality < self.TONAL_OFF:
@@ -892,7 +991,7 @@ class ChordSense:
         # the notes sounding (0..1): the upper voices against the loudest of them, counted only when they are
         # more than a residue of the bass's own overtones; and the bass note itself
         smax = max(float(self._salience_s.max()), self.VOICE_FLOOR * self._a1_s, 1e-12)
-        dom = self._a1_s / (float(self._salience_s.max()) + self._a1_s + 1e-12)   # how much the bass dwarfs the voices
+        dom = self._a1_s / (float(self._salience_s.max()) + self._a1_s + 1e-12)  # how much the bass dwarfs the voices
         self._unmasked = 1.0 - self.CONF_MASK[2] * _unit((dom - self.CONF_MASK[0]) / self.CONF_MASK[1])
         present = self._salience_s / smax
         # a voice in the bass's register (below C3) beside the bass note is mostly the last bass note ringing on: it
@@ -903,7 +1002,7 @@ class ChordSense:
         # fading (it kept under FADE of its level of FADE_S ago) -- the previous note of a melody or a bass line
         # ringing into the next. A new chord is not built from it unless it is still loud. Notes struck together
         # fade together and stay one chord (a Rhodes chord decays); a held or sustained note does not fade
-        level = self._raw_prev * self._raw_prev                     # each pitch class's level (the plain spectrum)
+        level = self._raw_prev * self._raw_prev  # each pitch class's level (the plain spectrum)
         then = self._sal_ring[self._sal_pos].copy()
         self._sal_ring[self._sal_pos] = level
         self._sal_pos = (self._sal_pos + 1) % len(self._sal_ring)
@@ -913,7 +1012,7 @@ class ChordSense:
         fading = level < self.FADE[0] * then
         sounding = present > self.NOTE_ON
         newest = float(self._att_t[sounding].max()) if sounding.any() else -1e9
-        loud = self._salience_s >= self.FADE[1] * max(smax, self._a1_s)     # against the bass note too
+        loud = self._salience_s >= self.FADE[1] * max(smax, self._a1_s)  # against the bass note too
         old = fading & (self._att_t < newest - self.SYNC_S)
         tail = old & ~loud
         fresh = np.where(tail, np.minimum(present, 0.5 * self.NOTE_ON), present)
@@ -921,15 +1020,25 @@ class ChordSense:
         if bnote is not None:
             present[bnote] = 1.0
             if not fading[bnote]:
-                fresh[bnote] = 1.0                                  # (a bass note fading out is the line moving on)
+                fresh[bnote] = 1.0  # (a bass note fading out is the line moving on)
         # when little of the energy is harmonic (drums, noise, applause), 'N' gets the benefit of the doubt
         n_boost = self.N_BOOST[1] * max(0.0, self.N_BOOST[0] - self._tonality) if self._tonal else 2.0
-        return self._step(self._harmony(self._chroma_s, bnote), self._bass_s.copy(), energy, quiet, True, present,
-                          present > self.PEDAL_ON_AUDIO, n_boost, lone,
-                          None if lone is None else self._harmony(self._chroma_s, None), fresh,
-                          (present > self.PEDAL_ON_AUDIO) & ~old)
+        return self._step(
+            self._harmony(self._chroma_s, bnote),
+            self._bass_s.copy(),
+            energy,
+            quiet,
+            True,
+            present,
+            present > self.PEDAL_ON_AUDIO,
+            n_boost,
+            lone,
+            None if lone is None else self._harmony(self._chroma_s, None),
+            fresh,
+            (present > self.PEDAL_ON_AUDIO) & ~old,
+        )
 
-    def _bass_note(self, bass: np.ndarray, upper: np.ndarray) -> Tuple[Optional[int], Optional[int]]:
+    def _bass_note(self, bass: np.ndarray, upper: np.ndarray) -> tuple[int | None, int | None]:
         """(the bass note's pitch class or None, the same when it is LONE: the voices above do not carry it)."""
         bsum = float(bass.sum())
         if bsum <= 1e-12:
@@ -939,16 +1048,16 @@ class ChordSense:
             return None, None
         return bp, (bp if upper[bp] < 0.25 * float(upper.max()) else None)
 
-    def _harmony(self, upper: np.ndarray, bnote: Optional[int]) -> np.ndarray:
+    def _harmony(self, upper: np.ndarray, bnote: int | None) -> np.ndarray:
         """The chroma the chords are scored on: the upper voices, and the bass note counted as a chord tone at half
         the strongest voice's weight (unless the voices already carry it more), compressed by gamma."""
         c = np.maximum(upper, 0.0)
         if bnote is not None:
             c = c.copy()
             c[bnote] = max(c[bnote], 0.5 * float(c.max()))
-        return c ** self.gamma
+        return c**self.gamma
 
-    def _split_bass(self, harm: np.ndarray, med: np.ndarray) -> Tuple[np.ndarray, Optional[int], float, np.ndarray]:
+    def _split_bass(self, harm: np.ndarray, med: np.ndarray) -> tuple[np.ndarray, int | None, float, np.ndarray]:
         """(upper, bass pitch class, fundamental amplitude, voices): the harmonic spectrum with the bass note's own
         harmonic series taken out (see _series_take). The bass note is the lowest significant peak of the bass band
         in `harm` (where the sub band holds only what held through the past window: a kick's tail is not the bass);
@@ -960,7 +1069,7 @@ class ChordSense:
         bmax = float(band.max())
         if bmax <= self.BASS_MIN * float(harm.max()):
             upper = harm.copy()
-            upper[:hs] = 0.0                                        # nothing in the bass band worth the name
+            upper[:hs] = 0.0  # nothing in the bass band worth the name
             return upper, None, 0.0, upper
         i0 = self._lowest_peak(harm, band, bmax)
         a1 = float(med[i0])
@@ -978,7 +1087,7 @@ class ChordSense:
                 full, half = full + f1, half + h1
         voices = np.maximum(upper - full, 0.0)
         np.maximum(upper - half, 0.0, out=upper)
-        upper[:hs] = 0.0                                            # the sub band is the bass's alone
+        upper[:hs] = 0.0  # the sub band is the bass's alone
         voices[:hs] = 0.0
         return upper, int(self._bin_pc[i0]), a1, voices
 
@@ -986,10 +1095,10 @@ class ChordSense:
         """The fine bin of the lowest significant peak of a band starting at the bass band's first bin."""
         i0 = self._bb[0] + int(np.argmax(band > self.BASS_SIG * bmax))
         if i0 + 1 < self._nb and x[i0 + 1] > x[i0]:
-            i0 += 1                                                 # the peak, not its shoulder
+            i0 += 1  # the peak, not its shoulder
         return i0
 
-    def _series_take(self, i0: int, a1: float, src: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def _series_take(self, i0: int, a1: float, src: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """What the harmonic series of a bass note at fine bin i0 (fundamental a1) takes from the spectrum src: (all
         of it, with its 12ths giving up only TWELFTH_SHARE). Its partials' strength follows a power law a1 * h^-p,
         one law for the odd partials and one for the even (a square bass has no even partials at all: one law for
@@ -1011,21 +1120,25 @@ class ChordSense:
             return zero, zero
         if p_odd is None:
             p_odd = p_even
-        p_even = p_odd if p_even is None else max(p_even, p_odd)
+        assert p_even is not None  # both None returned above; a lone odd law borrows the even one
+        assert p_odd is not None
+        p_even = max(p_even, p_odd)
         take = np.minimum(obs, a1 * np.exp(-np.where(odd, p_odd, p_even) * hlog))
         idx = cand[j, cols]
-        return (np.bincount(idx, weights=take, minlength=self._nb),
-                np.bincount(idx, weights=take * share, minlength=self._nb))
+        return (
+            np.bincount(idx, weights=take, minlength=self._nb),
+            np.bincount(idx, weights=take * share, minlength=self._nb),
+        )
 
     @staticmethod
-    def _law(a1: float, obs: np.ndarray, hlog: np.ndarray, m: np.ndarray, quantile: float = 0.8) -> Optional[float]:
+    def _law(a1: float, obs: np.ndarray, hlog: np.ndarray, m: np.ndarray, quantile: float = 0.8) -> float | None:
         """The power-law exponent p (a1 * h^-p) read from the CLEANEST of the partials m: the 80th percentile of their
         exponents (a chord tone landing on a partial only makes that one look brighter); None with fewer than two."""
         if int(m.sum()) < 2:
             return None
         ph = np.log(a1 / obs[m]) / hlog[m]
         ph.sort()
-        q = quantile * (ph.size - 1)                                # the 80th percentile, interpolated
+        q = quantile * (ph.size - 1)  # the 80th percentile, interpolated
         i = int(q)
         p = float(ph[i] + (ph[min(i + 1, ph.size - 1)] - ph[i]) * (q - i))
         return min(max(p, 0.5), 4.0)
@@ -1040,13 +1153,20 @@ class ChordSense:
             ok = idx < self._nb
             cand = idx[ok][None, :] + self._h_win[0]
             valid = self._h_win[1][:, ok] & (cand < self._nb)
-            c = (np.minimum(cand, self._nb - 1), valid, np.arange(int(ok.sum())), self._h_log[ok],
-                 self._h_share[ok], self._h_num[ok] <= self.LAW_MAX_H, self._h_num[ok] % 2 == 1)
+            c = (
+                np.minimum(cand, self._nb - 1),
+                valid,
+                np.arange(int(ok.sum())),
+                self._h_log[ok],
+                self._h_share[ok],
+                self._h_num[ok] <= self.LAW_MAX_H,
+                self._h_num[ok] % 2 == 1,
+            )
             self._series_cache[i0] = c
         return c
 
     # ---------------------------------------------------------------------------------------------- notes
-    def feed_notes(self, events: Iterable, now: Optional[float] = None) -> List[dict]:
+    def feed_notes(self, events: Iterable, now: float | None = None) -> list[dict]:
         """Feed played notes. Each event is a dict {t, note, vel} (vel 0 = note off, or give `on`: bool), a dict
         {t, sustain: 0..127} for the sustain pedal (CC64), or a tuple (t, note, vel); times in seconds, in
         order. `now` advances the clock past the last event: call feed_notes([], now=t) to let time pass."""
@@ -1055,7 +1175,7 @@ class ChordSense:
         self._source = "notes"
         if self._dt == 0.0:
             self._dt = self.frame_s
-        out: List[dict] = []
+        out: list[dict] = []
         for ev in events:
             t = float(ev["t"] if isinstance(ev, dict) else ev[0])
             if not math.isfinite(t):
@@ -1068,20 +1188,20 @@ class ChordSense:
             self._advance(float(now), out)
         return out
 
-    def _advance(self, until: float, out: List[dict]) -> None:
+    def _advance(self, until: float, out: list[dict]) -> None:
         """Step the notes clock to `until`, one frame at a time while anything sounds. Once nothing does and the
         state has settled (no chord, no pedal run, nothing pending), the rest of an idle gap is one analytic jump:
         a call after half an hour of silence costs what a call after a second does."""
         while self._t + self._dt <= until:
             if not self._held and self._settled():
-                n = int(math.floor((until - self._t) / self._dt + 1e-9))
+                n = math.floor((until - self._t) / self._dt + 1e-9)
                 if n > 0:
                     self._jump(n)
                 return
             if self._held and self._steady_held():
                 # keys held down and nothing else moving (a stuck note, a held organ chord): every frame would be
                 # the same frame, so the gap is jumped too, all but its last frame, which runs as usual
-                n = int(math.floor((until - self._t) / self._dt + 1e-9)) - 1
+                n = math.floor((until - self._t) / self._dt + 1e-9) - 1
                 if n > 50:
                     self._steady_jump(n)
                     continue
@@ -1090,20 +1210,32 @@ class ChordSense:
 
     def _settled(self) -> bool:
         """True when a silent frame can no longer change anything but the clock and the decays."""
-        return (self._label == self._N and self._cand is None and self._pedal is None
-                and not self._pending_key_event and self._strike_energy == 0.0
-                and bool((self._run_start < 0).all()) and self._post[self._N] > 0.999)
+        return (
+            self._label == self._N
+            and self._cand is None
+            and self._pedal is None
+            and not self._pending_key_event
+            and self._strike_energy == 0.0
+            and bool((self._run_start < 0).all())
+            and self._post[self._N] > 0.999
+        )
 
     def _steady_held(self) -> bool:
         """True when the held notes can no longer change: every one of them down, struck more than 3 s ago (its
         level at the floor a held key keeps), no chord, bass or key change pending, the chord held a second."""
         t = self._t
-        for vel, t_on, key_down, t_off, t_damp in self._held.values():
+        for _vel, t_on, key_down, t_off, _t_damp in self._held.values():
             if not key_down or t_off is not None or t - t_on < 3.0:
                 return False
-        return (self._cand is None and self._bass_cand is None and not self._pending_key_event
-                and self._strike_energy == 0.0 and t - self._label_t >= 1.0 and self._last_held is not None
-                and (self._label == self._N or self._key is not None))      # (a first key is still to come)
+        return (
+            self._cand is None
+            and self._bass_cand is None
+            and not self._pending_key_event
+            and self._strike_energy == 0.0
+            and t - self._label_t >= 1.0
+            and self._last_held is not None
+            and (self._label == self._N or self._key is not None)
+        )  # (a first key is still to come)
 
     def _steady_jump(self, n: int) -> None:
         """n identical frames with keys held: the clock moves, the key memories take n more of the same evidence
@@ -1114,13 +1246,19 @@ class ChordSense:
         self._frames += n
         t = self._t
         if self._key_decay is not None and self._last_key_ev is not None and self._label != self._N:
-            for name, d in (("_key_acc", self._key_decay), ("_key_fast", self._key_fast_decay),
-                            ("_key_ever", self._key_decay)):
-                dn = d ** n
+            for name, d in (
+                ("_key_acc", self._key_decay),
+                ("_key_fast", self._key_fast_decay),
+                ("_key_ever", self._key_decay),
+            ):
+                dn = d**n
                 setattr(self, name, dn * getattr(self, name) + self._last_key_ev * (1.0 - dn) / (1.0 - d))
-            dn = self._key_fast_decay ** n
-            self._tonic_acc = dn * self._tonic_acc + dt * self._tonic_of[self._label] * (1.0 - dn) / (1.0 - self._key_fast_decay)
+            dn = self._key_fast_decay**n
+            self._tonic_acc = dn * self._tonic_acc + dt * self._tonic_of[self._label] * (1.0 - dn) / (
+                1.0 - self._key_fast_decay
+            )
             self._tonal_s += span
+        assert self._last_held is not None  # set on the first frame and kept
         held = self._last_held
         live = self._run_start >= 0
         self._last_seen[held] = t
@@ -1130,7 +1268,7 @@ class ChordSense:
         self._acc_ring[self._acc_pos] = self._acc_held
         self._acc_ring_t[self._acc_pos] = t
         self._acc_pos = (self._acc_pos + 1) % len(self._acc_ring_t)
-        if self._label != self._N:
+        if self._label != self._N and self._label is not None:
             self._run_over[held] += span
             through = (self._held_since >= 0) & (self._held_since <= self._label_t)
             self._run_clash[held & through & self._clash_mask[self._label]] += span
@@ -1157,7 +1295,7 @@ class ChordSense:
             if "sustain" in ev:
                 self._sustain = float(ev["sustain"]) >= 64
                 if not self._sustain:
-                    for v in self._held.values():                  # pedal up: released keys start to ring out
+                    for v in self._held.values():  # pedal up: released keys start to ring out
                         if not v[2] and v[3] is None:
                             v[3] = t
                 return
@@ -1182,16 +1320,16 @@ class ChordSense:
         elif note in self._held:
             self._held[note][2] = False
             if not self._sustain:
-                self._held[note][3] = t                            # released: it rings out, never cut dead
+                self._held[note][3] = t  # released: it rings out, never cut dead
 
-    def _notes_frame(self) -> List[dict]:
+    def _notes_frame(self) -> list[dict]:
         t = self._t
         chroma = np.zeros(12)
         down = np.zeros(12, dtype=bool)
-        holding = np.zeros(12, dtype=bool)      # a key down or on the sustain pedal (not only ringing out)
+        holding = np.zeros(12, dtype=bool)  # a key down or on the sustain pedal (not only ringing out)
         lowest = lowest_ringing = None
         dead = []
-        for note, (vel, t_on, key_down, t_off, t_damp) in self._held.items():
+        for note, (_vel, _t_on, key_down, t_off, _t_damp) in self._held.items():
             level = self._level_of(note, t)
             if key_down:
                 down[note % 12] = True
@@ -1202,7 +1340,7 @@ class ChordSense:
             if t_off is None:
                 holding[note % 12] = True
             if level > 0.12:
-                if t_off is None and (lowest is None or note < lowest):           # held, or on the pedal
+                if t_off is None and (lowest is None or note < lowest):  # held, or on the pedal
                     lowest = note
                 elif t_off is not None and (lowest_ringing is None or note < lowest_ringing):
                     lowest_ringing = note
@@ -1237,8 +1375,20 @@ class ChordSense:
         held = down | holding | (self._last_strike >= max(self._label_t, t - self.PEDAL_STRIKE_S))
         self._set_pulse(self._strike_energy)
         self._strike_energy = 0.0
-        return self._step(self._harmony(upper, bnote), bass, energy, energy < 0.05, False, present, pedal_on,
-                          0.0, lone, None if lone is None else self._harmony(upper, None), fresh, held)
+        return self._step(
+            self._harmony(upper, bnote),
+            bass,
+            energy,
+            energy < 0.05,
+            False,
+            present,
+            pedal_on,
+            0.0,
+            lone,
+            None if lone is None else self._harmony(upper, None),
+            fresh,
+            held,
+        )
 
     def _level_of(self, note: int, t: float) -> float:
         """How loud a struck note still sounds: a string fades; a held key keeps sounding (organ, pads); a released
@@ -1268,9 +1418,16 @@ class ChordSense:
             return np.zeros(self._nstates - 1)
         return (self._templates[harmonics] @ c) / (self._tnorm[harmonics] * nrm)
 
-    def _scores(self, c: np.ndarray, b: np.ndarray, harmonics: bool, present: Optional[np.ndarray] = None,
-                lone: Optional[int] = None, upper: Optional[np.ndarray] = None,
-                fresh: Optional[np.ndarray] = None) -> np.ndarray:
+    def _scores(
+        self,
+        c: np.ndarray,
+        b: np.ndarray,
+        harmonics: bool,
+        present: np.ndarray | None = None,
+        lone: int | None = None,
+        upper: np.ndarray | None = None,
+        fresh: np.ndarray | None = None,
+    ) -> np.ndarray:
         """The score of every chord state (and of N, last) for a compressed chroma c and a bass distribution b.
         present: the pitch classes sounding as notes; a chord needs at least two of its own tones among them (one
         note and its overtones is a melody note, not a power chord). lone: the bass's pitch class when the voices
@@ -1281,11 +1438,15 @@ class ChordSense:
         s = np.empty(self._nstates)
         s[:-1] = self._match(c, harmonics)
         sounding = None if present is None else (present > self.NOTE_ON).astype(float)
-        newly = sounding if (fresh is None or (self.TAILS_FROM_N_ONLY and self._label != self._N))             else (fresh > self.NOTE_ON).astype(float)
+        newly = (
+            sounding
+            if (fresh is None or (self.TAILS_FROM_N_ONLY and self._label != self._N))
+            else (fresh > self.NOTE_ON).astype(float)
+        )
         bs = float(b.sum())
         if bs > 1e-12:
             bd = b / bs
-            in_chord = self._tone_mask[:-1] @ bd                    # bass mass on the chord's own tones
+            in_chord = self._tone_mask[:-1] @ bd  # bass mass on the chord's own tones
             root_b = bd[self._roots]
             bass_term = 0.10 * root_b + 0.05 * (in_chord - root_b)
             s[:-1] += bass_term - self.FOREIGN_BASS[0] * (1.0 - in_chord)
@@ -1301,17 +1462,28 @@ class ChordSense:
                 np.maximum(s[:-1], slash, out=s[:-1])
         s[:-1] += self._prior
         if sounding is not None:
-            self._support = self._tone_f @ newly                    # how many of each chord's tones are sounding
+            self._support = self._tone_f @ newly  # how many of each chord's tones are sounding
             if self._label != self._N:
                 self._support[self._label] = float(self._tone_f[self._label] @ sounding)
             s[:-1] -= self.FEW_NOTES * (self._support < 2)
         s[-1] = self.n_floor
         return s
 
-    def _step(self, c: np.ndarray, b: np.ndarray, energy: float, quiet: bool, harmonics: bool,
-              present: np.ndarray, pedal_on: np.ndarray, n_boost: float = 0.0,
-              lone: Optional[int] = None, upper: Optional[np.ndarray] = None,
-              fresh: Optional[np.ndarray] = None, pedal_held: Optional[np.ndarray] = None) -> List[dict]:
+    def _step(
+        self,
+        c: np.ndarray,
+        b: np.ndarray,
+        energy: float,
+        quiet: bool,
+        harmonics: bool,
+        present: np.ndarray,
+        pedal_on: np.ndarray,
+        n_boost: float = 0.0,
+        lone: int | None = None,
+        upper: np.ndarray | None = None,
+        fresh: np.ndarray | None = None,
+        pedal_held: np.ndarray | None = None,
+    ) -> list[dict]:
         """One frame of the shared back end. c: compressed chroma; b: bass distribution; present: the pitch
         classes sounding as notes (0..1); pedal_on: the pitch classes the pedal detector counts as held;
         n_boost: extra weight for 'no chord' on non-tonal frames; lone / upper: a bass pitch class the voices do
@@ -1323,7 +1495,7 @@ class ChordSense:
         s = self._scores(c, b, harmonics, present, lone, upper, fresh)
         s[-1] += n_boost
         if quiet:
-            s[-1] = 10.0                                            # silence: N, decisively
+            s[-1] = 10.0  # silence: N, decisively
         elif self._label != self._N:
             # one or two notes left sounding, all of them tones of the chord being held (a melody note over the
             # chord's tail, a staccato comp's held top note, an arpeggio between its notes): that is no evidence for
@@ -1333,15 +1505,19 @@ class ChordSense:
             n_on = int(on.sum())
             if self._support[self._label] >= min(3, self._tone_count[self._label]):
                 self._full_t = t
-            elif ((not harmonics or self._tonal) and 1 <= n_on <= 2 and t - self._full_t <= self.LONE_HOLD_S
-                    and self._full_t - self._label_t >= self.LONE_MIN_S
-                    and not (on & ~self._tone_mask[self._label]).any()):
+            elif (
+                (not harmonics or self._tonal)
+                and 1 <= n_on <= 2
+                and t - self._full_t <= self.LONE_HOLD_S
+                and self._full_t - self._label_t >= self.LONE_MIN_S
+                and not (on & ~self._tone_mask[self._label]).any()
+            ):
                 s[self._label] = max(float(s[self._label]), float(s[:-1].max()) + 0.02, float(s[-1]) + 0.05)
         # online forward filter (a causal HMM): sticky self-transition, uniform jumps, emission exp(kappa * score).
         # p_stay and kappa are stated per REFERENCE frame and scaled to this clock, so they mean the same thing
         # in seconds at any rate, hop or frame_s
         k = self._dt / _REF_DT
-        p_stay = self.p_stay ** k
+        p_stay = self.p_stay**k
         n = self._nstates
         post = p_stay * self._post + (1.0 - p_stay) * (1.0 - self._post) / (n - 1)
         post = post * np.exp(self.kappa * k * (s - s.max()))
@@ -1356,7 +1532,7 @@ class ChordSense:
         # confidence = the agreement margin: how far the frames' score for a reading leads the best OTHER reading,
         # averaged over the last ~CONF_TAU_S (1.0 = a clear CONF_MARGIN lead, 0 = a coin toss or worse)
         a_conf = 1.0 - math.exp(-self._dt / self.CONF_TAU_S)
-        out: List[dict] = []
+        out: list[dict] = []
         if best != self._label:
             # a new chord must lead the posterior clearly for min_hold_s, AND be what the frame itself says right
             # now: a chord passing through on its way to the next (G7 fading into Fmaj7 reads Fadd9 for a moment)
@@ -1371,8 +1547,7 @@ class ChordSense:
             # two notes are not yet a chord: a reading with only two of its tones sounding (a power chord, a melody
             # note over the last one's tail) must hold DYAD_HOLD_S longer
             hold = self._cand_hold + (self.DYAD_HOLD_S if best != self._N and self._support[best] < 3 else 0.0)
-            if (t - self._cand_since >= hold and pb >= 0.55 and inst == best
-                    and pb > post[self._label] + 0.2):
+            if t - self._cand_since >= hold and pb >= 0.55 and inst == best and pb > post[self._label] + 0.2:
                 out.extend(self._change(best, self._new_bass(best, b), self._cand_conf))
         else:
             self._cand = None
@@ -1403,7 +1578,7 @@ class ChordSense:
             m *= self._unmasked
         return m
 
-    def _bass_of(self, state: int, b: np.ndarray) -> Optional[int]:
+    def _bass_of(self, state: int, b: np.ndarray) -> int | None:
         """The bass to name with a chord: the dominant bass pitch class when it is a chord tone, or when it is a
         LONE bass under the chord (a pedal: G/C); else the root."""
         if state == self._N:
@@ -1419,7 +1594,7 @@ class ChordSense:
         if not self._tone_mask[state, pc]:
             return pc if pc == self._lone and bd[pc] >= 0.5 else root
         if pc != root and bd[root] > 0.6 * bd[pc]:
-            return root                                             # the root nearly as loud: no slash
+            return root  # the root nearly as loud: no slash
         return pc
 
     def _extra_hold(self, state: int) -> float:
@@ -1431,6 +1606,10 @@ class ChordSense:
             return 0.0
         r, q = self._state_rq(state)
         lr, lq = self._state_rq(self._label)
+        assert r is not None  # both states are live
+        assert q is not None
+        assert lr is not None
+        assert lq is not None
         if r == lr:
             if set(chord_tones(r, q)) < set(chord_tones(lr, lq)):
                 return self.DOWNGRADE_HOLD_S
@@ -1442,11 +1621,12 @@ class ChordSense:
         ringing tail over the new one (G7 into Fmaj7 reads Fadd9 for a moment): it must hold a little longer."""
         r, q = self._state_rq(state)
         pr, pq = self._state_rq(self._label)
-        if q not in _EXTENSION or pr is None:
+        if q not in _EXTENSION or pr is None or pq is None:
             return False
+        assert r is not None  # the caller passes a live state
         return (r + _EXTENSION[q]) % 12 in chord_tones(pr, pq)
 
-    def _new_bass(self, state: int, b: np.ndarray) -> Optional[int]:
+    def _new_bass(self, state: int, b: np.ndarray) -> int | None:
         """The bass for a chord just decided. The long bass window lags the treble, so the bass chroma may still
         hold the previous chord's bass; a chord tone freshly ATTACKED in the bass band in the last 0.5 s wins."""
         bass = self._bass_of(state, b)
@@ -1474,13 +1654,13 @@ class ChordSense:
             return t_ref
         return max(0.0, float(self._flux_t[j]) - self.ONSET_LAG_S)
 
-    def _state_rq(self, state: Optional[int]) -> Tuple[Optional[int], Optional[str]]:
+    def _state_rq(self, state: int | None) -> tuple[int | None, str | None]:
         if state is None or state == self._N:
             return None, None
         nq = len(QUALITY_NAMES)
         return state // nq, QUALITY_NAMES[state % nq]
 
-    def _change(self, state: int, bass_pc: Optional[int], conf: float, bass_only: bool = False) -> List[dict]:
+    def _change(self, state: int, bass_pc: int | None, conf: float, bass_only: bool = False) -> list[dict]:
         t = self._t
         prev = self._label
         self._label, self._label_bass, self._label_conf = state, bass_pc, conf
@@ -1488,44 +1668,86 @@ class ChordSense:
             self._label_t = self._full_t = t
         self._cand = self._bass_cand = None
         root, quality = self._state_rq(state)
+        assert (root is None) == (quality is None)  # a state is either no chord or a named one
         if bass_only:
             t_change = self._bass_since
         else:
             t_change = self._inst_since if self._inst == state else self._cand_since
-            if self._source == "audio" and root is not None:
+            if self._source == "audio" and root is not None and quality is not None:
                 t_change = self._onset_before(t_change, chord_tones(root, quality))
         if not bass_only and root is not None:
             self._span_change = t_change
         ev = self._chord_event(t, t_change)
         out = [ev]
         # resolution: tension that had built up falls back onto the tonic
-        if (root is not None and not bass_only and prev != self._N and self._key is not None
-                and ev["function"] == "tonic" and root == self._key[0]):
+        if (
+            root is not None
+            and not bass_only
+            and prev != self._N
+            and self._key is not None
+            and ev["function"] == "tonic"
+            and root == self._key[0]
+        ):
             to = self._tension_now(root, quality)
             if self._tension_peak >= 0.4 and self._tension_peak - to >= 0.15:
-                out.append({"type": "resolution", "t": round(t, 4), "src": self._src_name(),
-                            "from": round(self._tension_peak, 3), "to": round(to, 3), "chord": ev["name"],
-                            "numeral": ev["numeral"], "pedal_pc": self._pedal})
+                out.append(
+                    {
+                        "type": "resolution",
+                        "t": round(t, 4),
+                        "src": self._src_name(),
+                        "from": round(self._tension_peak, 3),
+                        "to": round(to, 3),
+                        "chord": ev["name"],
+                        "numeral": ev["numeral"],
+                        "pedal_pc": self._pedal,
+                    }
+                )
                 self._tension_peak = to
         return out
 
-    def _chord_event(self, t: float, t_change: Optional[float] = None) -> dict:
+    def _chord_event(self, t: float, t_change: float | None = None) -> dict:
         root, quality = self._state_rq(self._label)
-        ev = {"type": "chord", "t": round(t, 4), "src": self._src_name(),
-              "t_change": round(t if t_change is None else t_change, 4), "changed": True,
-              "confidence": round(self._label_conf, 3)}
+        ev = {
+            "type": "chord",
+            "t": round(t, 4),
+            "src": self._src_name(),
+            "t_change": round(t if t_change is None else t_change, 4),
+            "changed": True,
+            "confidence": round(self._label_conf, 3),
+        }
         if root is None:
-            ev.update({"name": "N", "root": None, "quality": None, "bass": None, "numeral": None, "figure": "",
-                       "roman": None, "function": None})
+            ev.update(
+                {
+                    "name": "N",
+                    "root": None,
+                    "quality": None,
+                    "bass": None,
+                    "numeral": None,
+                    "figure": "",
+                    "roman": None,
+                    "function": None,
+                }
+            )
         else:
+            assert quality is not None  # a root is always named with a quality
             bass = self._label_bass if self._label_bass is not None else root
-            ev.update({"name": chord_name(root, quality, bass, self._key), "root": root, "quality": quality,
-                       "bass": bass, "numeral": None, "figure": "", "roman": None, "function": None})
+            ev.update(
+                {
+                    "name": chord_name(root, quality, bass, self._key),
+                    "root": root,
+                    "quality": quality,
+                    "bass": bass,
+                    "numeral": None,
+                    "figure": "",
+                    "roman": None,
+                    "function": None,
+                }
+            )
             if self._key is not None:
                 ev["numeral"], ev["figure"], ev["function"] = roman(root, quality, bass, *self._key)
                 ev["roman"] = full_roman(ev["numeral"], ev["figure"])
         ev["key"] = key_name(*self._key) if self._key else None
-        ev["tension"] = round(self._tension_now(root, quality), 3)     # what this chord carries, now
+        ev["tension"] = round(self._tension_now(root, quality), 3)  # what this chord carries, now
         ev["pedal_pc"] = self._pedal
         return ev
 
@@ -1546,7 +1768,7 @@ class ChordSense:
         self._tonal_s += dt
         x = c / tot
         if harmonics:
-            x = np.maximum(x - 0.15 * x[_FIFTH_BELOW], 0.0)          # the 12th must not overcount the dominant
+            x = np.maximum(x - 0.15 * x[_FIFTH_BELOW], 0.0)  # the 12th must not overcount the dominant
         # the decided chord's own tones count too: they are the cleanest read of what is sounding; a dominant 7th
         # also points at the tonic it resolves to (E7 says 'A', which A and D alone cannot)
         chord = self._key_chord[self._label]
@@ -1554,11 +1776,11 @@ class ChordSense:
         self._last_key_ev = ev
         self._key_acc = self._key_decay * self._key_acc + ev
         self._key_fast = self._key_fast_decay * self._key_fast + ev
-        self._key_ever = self._key_decay * self._key_ever + ev          # never reset: the confidence's memory
+        self._key_ever = self._key_decay * self._key_ever + ev  # never reset: the confidence's memory
         # how much each key's own TONIC chord has been heard lately (the fast memory's time constant)
         self._tonic_acc *= self._key_fast_decay
         self._tonic_acc += dt * self._tonic_of[self._label]
-        if self._tonal_s < 1.0 or self._frames % 5:                 # 24 correlations every 5th frame is plenty
+        if self._tonal_s < 1.0 or self._frames % 5:  # 24 correlations every 5th frame is plenty
             return
         (bk, br), _, rs = self._key_scores(self._key_acc)
         (fk, fr), _, frs = self._key_scores(self._key_fast)
@@ -1578,12 +1800,18 @@ class ChordSense:
         rival, dwell = None, self.KEY_DWELL_S
         if bk != cur and br - rs[cur] > self.KEY_MARGIN:
             rival = bk
-        if (fk != cur and fr - frs[cur] > self.KEY_FAST_MARGIN and (rival is None or rival == fk)
-                and self._tonic_acc[KEYS.index(fk)] >= max(self.KEY_TONIC[0],
-                                                           self.KEY_TONIC[1] * self._tonic_acc[KEYS.index(cur)])
-                and self._t - self._key_first_t >= self.KEY_SETTLE_S
-                and ((rs[fk] + fr) - (rs[cur] + frs[cur]) > 2 * self.KEY_BLEND_MARGIN
-                     or self._tonic_acc[KEYS.index(cur)] < self.KEY_GONE)):
+        if (
+            fk != cur
+            and fr - frs[cur] > self.KEY_FAST_MARGIN
+            and (rival is None or rival == fk)
+            and self._tonic_acc[KEYS.index(fk)]
+            >= max(self.KEY_TONIC[0], self.KEY_TONIC[1] * self._tonic_acc[KEYS.index(cur)])
+            and self._t - self._key_first_t >= self.KEY_SETTLE_S
+            and (
+                (rs[fk] + fr) - (rs[cur] + frs[cur]) > 2 * self.KEY_BLEND_MARGIN
+                or self._tonic_acc[KEYS.index(cur)] < self.KEY_GONE
+            )
+        ):
             rival, dwell = fk, self.KEY_FAST_DWELL_S
         if rival is not None and self._key_rival != rival:
             self._key_rival, self._key_rival_since = rival, self._t
@@ -1598,29 +1826,33 @@ class ChordSense:
         # confidence comes from the key evidence itself, never from the switching margin: how much of the belief
         # (a softmax over all 24 keys, the fast memory blended with a long one that a key change does not reset)
         # the key holds -- a key just switched to on a few seconds' evidence is not yet a confident one
-        self._key_conf = self._key_belief(self._key_scores(self._key_ever)[2], frs, self._key)
+        if self._key is not None:
+            self._key_conf = self._key_belief(self._key_scores(self._key_ever)[2], frs, self._key)
 
-    def _key_belief(self, rs: dict, frs: dict, key: Tuple[int, str]) -> float:
+    def _key_belief(self, rs: dict, frs: dict, key: tuple[int, str]) -> float:
         """The share of a softmax over the 24 keys' correlations (long and fast memory blended) that `key` holds."""
         r = np.array([0.5 * (rs[k] + frs[k]) for k in KEYS])
         e = np.exp(self.KEY_SHARPNESS * (r - r.max()))
         return float(e[KEYS.index(key)] / e.sum())
-
 
     def _key_scores(self, acc: np.ndarray):
         """((key, r) best, (key, r) second, {key: r}): Pearson r of a decayed chroma with all 24 profiles."""
         a = acc - acc.mean()
         r = _KK @ (a / (float(np.linalg.norm(a)) + 1e-12))
         order = np.argsort(-r)
-        return ((KEYS[order[0]], float(r[order[0]])), (KEYS[order[1]], float(r[order[1]])),
-                {KEYS[i]: float(r[i]) for i in range(24)})
+        return (
+            (KEYS[order[0]], float(r[order[0]])),
+            (KEYS[order[1]], float(r[order[1]])),
+            {KEYS[i]: float(r[i]) for i in range(24)},
+        )
 
     # ---------------------------------------------------------------------------------------------- tension
-    def _tension_target(self, root: Optional[int], quality: Optional[str]) -> float:
+    def _tension_target(self, root: int | None, quality: str | None) -> float:
         """A chord's harmonic tension in the current key (0..1): its circle-of-fifths distance from the tonic,
         its function and its colour. Memoized: it only changes with the chord or the key."""
         if root is None:
             return 0.0
+        assert quality is not None  # a root is always named with a quality
         memo = (root, quality, self._key)
         if memo != self._tt_memo[0]:
             qt = QUALITY_TENSION[quality]
@@ -1631,16 +1863,17 @@ class ChordSense:
                 fn = roman(root, quality, None, tonic, mode)[2]
                 func = _FUNCTION_TENSION[fn]
                 if fn == "tonic" and root != tonic:
-                    func = 0.08                                     # vi and iii: tonic-ish, not home
+                    func = 0.08  # vi and iii: tonic-ish, not home
                 v = 0.30 * _cof_distance(root, tonic) / 6.0 + func + qt
             self._tt_memo = (memo, _unit(v))
         return self._tt_memo[1]
 
-    def _tension_now(self, root: Optional[int], quality: Optional[str]) -> float:
+    def _tension_now(self, root: int | None, quality: str | None) -> float:
         """The tension a chord carries right now: its function and colour in the key, the dissonance of what is
         sounding, and the pedal's pull (a soft OR, so it stays inside 0..1)."""
         if root is None:
             return 0.0
+        assert quality is not None  # a root is always named with a quality
         base = 0.75 * self._tension_target(root, quality) + 0.35 * _unit((self._diss - 0.05) / 0.45)
         ped = 0.0
         if self._pedal is not None:
@@ -1655,10 +1888,11 @@ class ChordSense:
             return self._acc_ring[int(np.argmin(self._acc_ring_t))]
         return self._acc_ring[int(np.argmax(np.where(ok, self._acc_ring_t, -np.inf)))]
 
-    def _update_tension(self, present: np.ndarray, pedal_on: np.ndarray, quiet: bool,
-                        held: Optional[np.ndarray] = None) -> List[dict]:
+    def _update_tension(
+        self, present: np.ndarray, pedal_on: np.ndarray, quiet: bool, held: np.ndarray | None = None
+    ) -> list[dict]:
         t, dt = self._t, self._dt
-        out: List[dict] = []
+        out: list[dict] = []
         # dissonance of what is sounding: interval-class roughness between the notes, weighted by their level
         w = np.where(present > 0.25, present, 0.0)
         norm = float(w.sum() ** 2 - (w * w).sum())
@@ -1671,7 +1905,9 @@ class ChordSense:
         # Eb-Gb-Bb + Db Ebm7: judged against the chord without it, it clashes). A common tone of a plain loop (the
         # C of Am-F-C: root, third or fifth of every chord it sounds in) never clashes, and a tone the loop leaves
         # out now and then (the C of C-Am-F-Dm7-G7) is not held through it: neither is a pedal
+        assert self._source is not None  # set by the first feed(), before any pedal can be judged
         root, quality = self._state_rq(self._label)
+        assert (root is None) == (quality is None)  # a state is either no chord or a named one
         held = pedal_on if held is None else held
         self._last_held = held
         if not quiet:
@@ -1701,14 +1937,14 @@ class ChordSense:
                 onset, self._span_change = self._span_change, None
                 # (its first SPAN_SKIP_S is the last chord's tail ringing over, which is not this chord's)
                 inner = 0.0 if self._span_onset is None else onset - self._span_onset - self.SPAN_SKIP_S
-                if inner >= 0.25:
+                if inner >= 0.25 and self._span_onset is not None:
                     inside = self._acc_at(onset) - self._acc_at(self._span_onset + self.SPAN_SKIP_S)
                     live = self._run_start >= 0
                     self._run_spans[live] += 1
                     self._run_missed[live & (inside < 0.25 * inner)] += 1
                 self._span_onset = onset
             self._held_since[t - self._held_last > 0.3] = -1.0
-            if root is not None:                                    # the roots it is HEARD over, and clashes
+            if root is not None:  # the roots it is HEARD over, and clashes
                 self._run_roots[pedal_on, root] = True
                 self._run_over[held] += dt
                 through = (self._held_since >= 0) & (self._held_since <= self._label_t)
@@ -1722,57 +1958,97 @@ class ChordSense:
             share = self._run_clash / np.maximum(self._run_over, 1e-9)
             lax = np.ones(12)
             if self._pedal is not None:
-                lax[self._pedal] = 0.6                              # hysteresis: a pedal on stays on more easily
+                lax[self._pedal] = 0.6  # hysteresis: a pedal on stays on more easily
             clash = share >= self.PEDAL_CLASH * lax
             # ... or a DRONE: held through PEDAL_DRONE_S over PEDAL_DRONE_ROOTS roots or more, whether it fits the
             # chords or not. Daniel's Db under the end of Joy to the World is one: it fits most of the chords over it
             # and is struck with them, but it never stops. A loop's common tone leaves out a chord or two within a
             # few seconds (the C of C-Am-F-Dm7-G7), or runs over only three roots (the C of Am-F-C)
             drone = (dur >= self.PEDAL_DRONE_S) & (roots >= self.PEDAL_DRONE_ROOTS)
-            ok = (long_ & (roots >= self.PEDAL_CHORDS) & (clash | drone)
-                  & (self._run_held >= self.PEDAL_HELD[self._source] * lax * np.maximum(dur, 1e-9))
-                  & (self._run_missed <= self.PEDAL_MISS / lax * self._run_spans))
+            ok = (
+                long_
+                & (roots >= self.PEDAL_CHORDS)
+                & (clash | drone)
+                & (self._run_held >= self.PEDAL_HELD[self._source] * lax * np.maximum(dur, 1e-9))
+                & (self._run_missed <= self.PEDAL_MISS / lax * self._run_spans)
+            )
             if ok.any():
                 pedal = int(np.argmax(np.where(ok, dur, -1.0)))
-        pedal_events: List[dict] = []
+        pedal_events: list[dict] = []
         if pedal != self._pedal:
             names = [spell_note(pc, self._key) for pc in range(12)]
             if self._pedal is not None:
-                pedal_events.append({"type": "pedal", "t": round(t, 4), "src": self._src_name(), "pc": self._pedal,
-                                     "note": names[self._pedal], "on": False,
-                                     "strength": round(self._pedal_strength, 3)})
+                pedal_events.append(
+                    {
+                        "type": "pedal",
+                        "t": round(t, 4),
+                        "src": self._src_name(),
+                        "pc": self._pedal,
+                        "note": names[self._pedal],
+                        "on": False,
+                        "strength": round(self._pedal_strength, 3),
+                    }
+                )
             self._pedal = pedal
             if pedal is not None:
-                pedal_events.append({
-                    "type": "pedal", "t": round(t, 4), "src": self._src_name(), "pc": pedal, "note": names[pedal],
-                    "on": True, "strength": 0.3, "since": round(float(self._run_start[pedal]), 4),
-                    "chords": int(self._run_roots[pedal].sum()), "clash_s": round(float(self._run_clash[pedal]), 2),
-                    "clash": round(float(self._run_clash[pedal] / max(self._run_over[pedal], 1e-9)), 3)})
-        self._pedal_strength = 0.0 if self._pedal is None else float(
-            _unit(0.3 + (dur[self._pedal] - self.pedal_min_s) / self.pedal_ramp_s))
+                pedal_events.append(
+                    {
+                        "type": "pedal",
+                        "t": round(t, 4),
+                        "src": self._src_name(),
+                        "pc": pedal,
+                        "note": names[pedal],
+                        "on": True,
+                        "strength": 0.3,
+                        "since": round(float(self._run_start[pedal]), 4),
+                        "chords": int(self._run_roots[pedal].sum()),
+                        "clash_s": round(float(self._run_clash[pedal]), 2),
+                        "clash": round(float(self._run_clash[pedal] / max(self._run_over[pedal], 1e-9)), 3),
+                    }
+                )
+        self._pedal_strength = (
+            0.0
+            if self._pedal is None
+            else float(_unit(0.3 + (dur[self._pedal] - self.pedal_min_s) / self.pedal_ramp_s))
+        )
         # the continuous tension: rises in ~0.35 s, relaxes in ~0.8 s
         target = 0.0 if quiet else self._tension_now(root, quality)
         tau = 0.35 if target > self.tension else 0.8
         self.tension += (1.0 - math.exp(-dt / tau)) * (target - self.tension)
         # the peak a resolution falls FROM fades (~6 s), so an old climax cannot "resolve" a minute later
         self._tension_peak = max(self.tension, self._tension_peak * math.exp(-dt / 6.0))
-        for ev in pedal_events:                                     # the tension the pedal leaves, as of now
+        for ev in pedal_events:  # the tension the pedal leaves, as of now
             ev["tension"] = round(self.tension, 3)
             out.append(ev)
         if self._pending_key_event:
+            assert self._key is not None  # a key event only queues once a key is named
             self._pending_key_event = False
-            ev = {"type": "key", "t": round(t, 4), "src": self._src_name(), "key": key_name(*self._key),
-                  "tonic": self._key[0], "mode": self._key[1], "confidence": round(self._key_conf, 3)}
-            if root is not None:                                    # the chord already sounding, in the new key
+            ev = {
+                "type": "key",
+                "t": round(t, 4),
+                "src": self._src_name(),
+                "key": key_name(*self._key),
+                "tonic": self._key[0],
+                "mode": self._key[1],
+                "confidence": round(self._key_conf, 3),
+            }
+            if root is not None:  # the chord already sounding, in the new key
                 cur = self._chord_event(t)
-                ev.update({"chord": cur["name"], "numeral": cur["numeral"], "figure": cur["figure"],
-                           "roman": cur["roman"], "function": cur["function"]})
+                ev.update(
+                    {
+                        "chord": cur["name"],
+                        "numeral": cur["numeral"],
+                        "figure": cur["figure"],
+                        "roman": cur["roman"],
+                        "function": cur["function"],
+                    }
+                )
             out.append(ev)
         return out
 
     # ---------------------------------------------------------------------------------------------- state
     @property
-    def key(self) -> Optional[Tuple[int, str]]:
+    def key(self) -> tuple[int, str] | None:
         """(tonic pitch class, 'major' | 'minor'), or None before the key is known."""
         return self._key
 
@@ -1780,26 +2056,36 @@ class ChordSense:
         """The continuous state for a renderer. Cheap; call it every frame."""
         ev = self._chord_event(self._t)
         ev["changed"] = False
-        names = [spell_note(pc, self._key) for pc in range(12)] if self._pedal is not None else None
+        pedal_pc = self._pedal
+        names = [spell_note(pc, self._key) for pc in range(12)] if pedal_pc is not None else None
+        pedal_out = (
+            None
+            if pedal_pc is None or names is None
+            else {"pc": pedal_pc, "note": names[pedal_pc], "strength": round(self._pedal_strength, 3)}
+        )
         cmax = float(self._chroma.max())
         bsum = float(self._bass.sum())
-        return {"t": round(self._t, 4), "chord": ev,
-                "key": key_name(*self._key) if self._key else None,
-                "key_confidence": round(self._key_conf, 3),
-                "tension": round(self.tension, 4), "dissonance": round(self._diss, 4),
-                "pedal": None if self._pedal is None else {"pc": self._pedal, "note": names[self._pedal],
-                                                           "strength": round(self._pedal_strength, 3)},
-                "pulse": round(min(1.0, self._pulse), 4),
-                "chroma": [round(float(v) / cmax, 4) if cmax > 0 else 0.0 for v in self._chroma],
-                "notes": [round(float(v), 4) for v in self._present],
-                "bass": [round(float(v) / bsum, 4) if bsum > 0 else 0.0 for v in self._bass],
-                "energy": round(self._energy, 6),
-                "tuning_cents": round(100.0 * self.tuning, 1)}
+        return {
+            "t": round(self._t, 4),
+            "chord": ev,
+            "key": key_name(*self._key) if self._key else None,
+            "key_confidence": round(self._key_conf, 3),
+            "tension": round(self.tension, 4),
+            "dissonance": round(self._diss, 4),
+            "pedal": pedal_out,
+            "pulse": round(min(1.0, self._pulse), 4),
+            "chroma": [round(float(v) / cmax, 4) if cmax > 0 else 0.0 for v in self._chroma],
+            "notes": [round(float(v), 4) for v in self._present],
+            "bass": [round(float(v) / bsum, 4) if bsum > 0 else 0.0 for v in self._bass],
+            "energy": round(self._energy, 6),
+            "tuning_cents": round(100.0 * self.tuning, 1),
+        }
 
 
 # --- helpers -----------------------------------------------------------------------------------------------
 
-def score_to_events(notes: Sequence[dict], ppq: int, bpm: float, t0: Optional[int] = None) -> List[dict]:
+
+def score_to_events(notes: Sequence[dict], ppq: int, bpm: float, t0: int | None = None) -> list[dict]:
     """A score's notes ({pos, len, key, vel} in ticks, e.g. an FL Studio pattern) as time-ordered note events
     for `feed_notes`. Time 0 is the first note unless `t0` (a tick) is given."""
     if not notes:
@@ -1811,14 +2097,14 @@ def score_to_events(notes: Sequence[dict], ppq: int, bpm: float, t0: Optional[in
         on = (n["pos"] - start) * sec
         evs.append({"t": on, "note": int(n["key"]), "vel": int(max(1, n.get("vel", 100)))})
         evs.append({"t": on + max(1, n["len"]) * sec, "note": int(n["key"]), "vel": 0})
-    evs.sort(key=lambda e: (e["t"], e["vel"] > 0))                 # offs before ons at the same instant
+    evs.sort(key=lambda e: (e["t"], e["vel"] > 0))  # offs before ons at the same instant
     return evs
 
 
-_VJ_QUALITY = {"min": "m"}                                          # the VJ contract spells minor as theory does
+_VJ_QUALITY = {"min": "m"}  # the VJ contract spells minor as theory does
 
 
-def to_vj_events(event: dict, src: Optional[str] = None) -> List[dict]:
+def to_vj_events(event: dict, src: str | None = None) -> list[dict]:
     """One chordsense event as the VJ engine's Server-Sent Events (the contract in arsenal/keylab/vj.py), so wiring
     chordsense into the engine is `for e in cs.feed(block): for v in to_vj_events(e): hub.publish(v)`.
 
@@ -1833,10 +2119,22 @@ def to_vj_events(event: dict, src: Optional[str] = None) -> List[dict]:
     if kind == "chord":
         root, quality, bass = event["root"], event["quality"], event["bass"]
         pcs = [] if root is None else sorted(set(chord_tones(root, quality)) | ({bass} if bass is not None else set()))
-        return [{"t": "chord", "src": s, "name": event["name"], "root": root,
-                 "quality": _VJ_QUALITY.get(quality, quality), "pcs": pcs, "bass": bass, "roman": event["roman"],
-                 "key": event["key"], "conf": event["confidence"], "changed": event["changed"]},
-                {"t": "tension", "value": event["tension"], "pedal_pc": event.get("pedal_pc")}]
+        return [
+            {
+                "t": "chord",
+                "src": s,
+                "name": event["name"],
+                "root": root,
+                "quality": _VJ_QUALITY.get(quality, quality),
+                "pcs": pcs,
+                "bass": bass,
+                "roman": event["roman"],
+                "key": event["key"],
+                "conf": event["confidence"],
+                "changed": event["changed"],
+            },
+            {"t": "tension", "value": event["tension"], "pedal_pc": event.get("pedal_pc")},
+        ]
     if kind == "key":
         return [{"t": "key", "name": event["key"], "conf": event["confidence"]}]
     if kind == "pedal":

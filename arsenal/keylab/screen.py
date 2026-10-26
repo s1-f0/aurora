@@ -43,6 +43,7 @@ while FL runs) or our own FL script with a VJ hand-off mode (design D8).
 The scene name: the VJ engine contract has no scene event yet, so `--scene NAME` sets it, and a future
 {"t": "scene", "name": "...", "color": "#rrggbb"} event on the same feed is honoured (a proposed addition).
 """
+
 from __future__ import annotations
 
 import heapq
@@ -54,20 +55,23 @@ import subprocess
 import threading
 import time
 import urllib.request
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING
 
 from . import protocol as P
 from .governor import BurstGovernor
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Sequence
+
 # =====================================================================================================================
 # 1. the encoder -- byte-identical to KL3Display.py / KL3Buttons.py
 # =====================================================================================================================
-DISPLAY = bytes([0x00, P.Ctx.DAW, P.Param.DISPLAY])     # KL3Display.py:22  _data_string
-LINE_LEN = 32                                            # every _get_line_bytes(..., 32) call in KL3Display.py
-UNDEFINED = ".Undefined text."                           # KL3Display.py:42
+DISPLAY = bytes([0x00, P.Ctx.DAW, P.Param.DISPLAY])  # KL3Display.py:22  _data_string
+LINE_LEN = 32  # every _get_line_bytes(..., 32) call in KL3Display.py
+UNDEFINED = ".Undefined text."  # KL3Display.py:42
 
 
-class ScreenId:      # ScreenId.py (eScreenId), verbatim numbers
+class ScreenId:  # ScreenId.py (eScreenId), verbatim numbers
     PROPERTIES = 0
     BUTTON5, BUTTON6, BUTTON7, BUTTON8, BUTTON1, BUTTON2, BUTTON3, BUTTON4 = 1, 2, 3, 4, 5, 6, 7, 8
     BUTTONS_CLEAR = 9
@@ -88,7 +92,7 @@ class ScreenId:      # ScreenId.py (eScreenId), verbatim numbers
 NEVER_SEND = frozenset({ScreenId.BOOT, ScreenId.PEDAL_CALIBRATION, ScreenId.BOOTLOADER})
 
 
-class Icon:          # images_sub_enums.py, the ones a VJ readout is likely to want (the full list is 86 + 22)
+class Icon:  # images_sub_enums.py, the ones a VJ readout is likely to want (the full list is 86 + 22)
     ARTURIA_LOGO = 0
     TYPE_PAD = 8
     TYPE_SEQUENCE = 10
@@ -103,7 +107,7 @@ class Icon:          # images_sub_enums.py, the ones a VJ readout is likely to w
     ICON_SCALE = 80
 
 
-class SmallIcon:     # images_sub_enums.py eSmallIcon (button-label pictograms)
+class SmallIcon:  # images_sub_enums.py eSmallIcon (button-label pictograms)
     ARROW_LEFT, ARROW_RIGHT = 3, 4
     MUTE, SOLO = 10, 13
     HEART, HEART_LIKED = 17, 18
@@ -117,9 +121,9 @@ class ScreenRefused(ValueError):
 def line_src(line: str, length: int = LINE_LEN, upper: bool = False) -> str:
     """The text the script would put on the wire for one line (KL3Display.py:26-47, _get_line_src)."""
     if not isinstance(line, str):
-        raise TypeError(f"a screen line must be str, got {type(line).__name__}")   # the script iterates it too
+        raise TypeError(f"a screen line must be str, got {type(line).__name__}")  # the script iterates it too
     if all(ord(ch) < 128 for ch in line):
-        src = line[:length - 4] + "..." if len(line) > length else line
+        src = line[: length - 4] + "..." if len(line) > length else line
     else:
         src = UNDEFINED
     return src.upper() if upper else src
@@ -156,8 +160,9 @@ def frame(screen_id: int, body: bytes = b"") -> bytes:
     """One screen message: F0 00 20 6B 7F 42 | 00 02 04 | <screen id> | <tagged fields> | F7."""
     sid = int(screen_id)
     if sid in NEVER_SEND:
-        raise ScreenRefused(f"screen {sid} is a device procedure (38 boot, 43 pedal calibration, 44 bootloader); "
-                            "it is never sent")
+        raise ScreenRefused(
+            f"screen {sid} is a device procedure (38 boot, 43 pedal calibration, 44 bootloader); it is never sent"
+        )
     if not 0 <= sid <= 127:
         raise ScreenRefused(f"screen id must be 0..127, got {sid}")
     payload = DISPLAY + bytes([sid]) + bytes(body)
@@ -174,8 +179,9 @@ def screen_prop(color1) -> bytes:
 
 
 def _one_line(sid: int, line1, colortype1, color1) -> bytes:
-    return frame(sid, _field(0x00, line_bytes(line1)) + _field(0x01, _byte(colortype1, "colortype"))
-                 + _field(0x02, _col(color1)))
+    return frame(
+        sid, _field(0x00, line_bytes(line1)) + _field(0x01, _byte(colortype1, "colortype")) + _field(0x02, _col(color1))
+    )
 
 
 def f1l(line1, colortype1, color1) -> bytes:
@@ -189,9 +195,14 @@ def f1l_inv(line1, colortype1, color1) -> bytes:
 
 
 def _two_lines(line1, colortype1, color1, line2, colortype2, color2) -> bytes:
-    return (_field(0x00, line_bytes(line1)) + _field(0x01, _byte(colortype1, "colortype")) + _field(0x02, _col(color1))
-            + _field(0x03, line_bytes(line2, upper=True)) + _field(0x04, _byte(colortype2, "colortype"))
-            + _field(0x05, _col(color2)))
+    return (
+        _field(0x00, line_bytes(line1))
+        + _field(0x01, _byte(colortype1, "colortype"))
+        + _field(0x02, _col(color1))
+        + _field(0x03, line_bytes(line2, upper=True))
+        + _field(0x04, _byte(colortype2, "colortype"))
+        + _field(0x05, _col(color2))
+    )
 
 
 def f2l(line1, colortype1, color1, line2, colortype2, color2) -> bytes:
@@ -209,7 +220,7 @@ def fb2l(line1, colortype1, color1, line2, colortype2, color2) -> bytes:
     return frame(ScreenId.F2L_BIG, _two_lines(line1, colortype1, color1, line2, colortype2, color2))
 
 
-def li1l(line1, icon: Optional[int] = None) -> bytes:
+def li1l(line1, icon: int | None = None) -> bytes:
     """Screen_LI1L, KL3Display.py:184-196. Icon + one line (15). The script takes a colour and never uses it."""
     body = _field(0x00, line_bytes(line1))
     if icon is not None:
@@ -217,7 +228,7 @@ def li1l(line1, icon: Optional[int] = None) -> bytes:
     return frame(ScreenId.LI_1L, body)
 
 
-def li2l(line1, line2, icon: Optional[int] = None) -> bytes:
+def li2l(line1, line2, icon: int | None = None) -> bytes:
     """Screen_LI2L, KL3Display.py:200-213. Icon + two lines (16); line 2 upper-cased, no colours."""
     body = _field(0x00, line_bytes(line1)) + _field(0x01, line_bytes(line2, upper=True))
     if icon is not None:
@@ -238,12 +249,15 @@ def p2l(line1, colortype1, color1, line2, colortype2, color2) -> bytes:
 def p3l(line1, colortype1, color1, line2, colortype2, color2, line3, colortype3, color3) -> bytes:
     """Screen_P3L, KL3Display.py:247-265. Three-line popup (25); lines 2 and 3 upper-cased."""
     body = _two_lines(line1, colortype1, color1, line2, colortype2, color2)
-    body += (_field(0x06, line_bytes(line3, upper=True)) + _field(0x07, _byte(colortype3, "colortype"))
-             + _field(0x08, _col(color3)))
+    body += (
+        _field(0x06, line_bytes(line3, upper=True))
+        + _field(0x07, _byte(colortype3, "colortype"))
+        + _field(0x08, _col(color3))
+    )
     return frame(ScreenId.POPUP_3L, body)
 
 
-def pli1l(line1, icon: Optional[int] = None) -> bytes:
+def pli1l(line1, icon: int | None = None) -> bytes:
     """Screen_PLI1L, KL3Display.py:269-281. Icon + one line popup (26)."""
     body = _field(0x00, line_bytes(line1))
     if icon is not None:
@@ -251,7 +265,7 @@ def pli1l(line1, icon: Optional[int] = None) -> bytes:
     return frame(ScreenId.POPUP_LI_1L, body)
 
 
-def pli2l(line1, colortype1, color1, line2, colortype2, color2, icon: Optional[int] = None) -> bytes:
+def pli2l(line1, colortype1, color1, line2, colortype2, color2, icon: int | None = None) -> bytes:
     """Screen_PLI2L, KL3Display.py:285-304. Icon + two lines popup (27): FL's Metronome / Tap Tempo card."""
     body = _two_lines(line1, colortype1, color1, line2, colortype2, color2)
     if icon is not None:
@@ -282,7 +296,7 @@ def pad(line1, line2, hw_value, colortype, color) -> bytes:
     return _param(ScreenId.PAD, line1, line2, hw_value, colortype, color, pad_order=True)
 
 
-def ti2lfix(line1, colortype1, color1, line2, colortype2, color2, icon: Optional[int] = None) -> bytes:
+def ti2lfix(line1, colortype1, color1, line2, colortype2, color2, icon: int | None = None) -> bytes:
     """Screen_TI2LFIX, KL3Display.py:357-376. Full popup with icon (31): FL's "Connected" title card."""
     body = _two_lines(line1, colortype1, color1, line2, colortype2, color2)
     if icon is not None:
@@ -310,9 +324,16 @@ def _label_text(line, what: str) -> bytes:
     return data
 
 
-def button_label(slot: int, type: Optional[int] = 0, line_number: Optional[int] = 0, color_type: Optional[int] = 0,
-                 icon: Optional[int] = 0, custom_color=(0, 0, 0), line1: Optional[str] = "",
-                 line2: Optional[str] = "") -> bytes:
+def button_label(
+    slot: int,
+    type_: int | None = 0,
+    line_number: int | None = 0,
+    color_type: int | None = 0,
+    icon: int | None = 0,
+    custom_color=(0, 0, 0),
+    line1: str | None = "",
+    line2: str | None = "",
+) -> bytes:
     """One screen-button label (KL3Buttons.py:62-90 inside KL3Display.py:70-77). `slot` is the script's ID 0..7
     (see SLOT_FOR_BUTTON); the frame's screen id is slot + 1. Arguments mirror PagedDisplay.SetButton; a None argument
     leaves its field out, exactly as ButtonSysEx does. Defaults are CTXButton.__init__'s."""
@@ -344,24 +365,39 @@ def clean_button(script_id: int) -> bytes:
 
 
 # --- colour helpers --------------------------------------------------------------------------------------------------
-def rgb7(color) -> Tuple[int, int, int]:
+def rgb7(color) -> tuple[int, int, int]:
     """An 8-bit colour (name | #rrggbb | 'r,g,b' | (r, g, b) 0..255) as the 7-bit triple the screen takes, by the
     script's own rule: each channel // 2 (KL3Return.py:485-499 get_channel_color / get_track_color)."""
     r, g, b = P.parse_color(color)
     return (max(0, min(255, int(r))) // 2, max(0, min(255, int(g))) // 2, max(0, min(255, int(b))) // 2)
 
 
-WHITE7 = (127, 127, 127)            # the script's WHITE (KL3Navigation.py:31)
-ANALOG_LAB_BLUE7 = (0, 108, 122)    # the script's title colour (KL3Navigation.py:30)
+WHITE7 = (127, 127, 127)  # the script's WHITE (KL3Navigation.py:31)
+ANALOG_LAB_BLUE7 = (0, 108, 122)  # the script's title colour (KL3Navigation.py:30)
 GREY7 = (48, 48, 48)
 DIM7 = (80, 80, 80)
 RED7 = (127, 0, 20)
 
 # Characters a chord or scene name may carry that are not ASCII; anything else non-ASCII becomes "?". Without this the
 # script's rule would blank the WHOLE line to ".Undefined text.".
-_ASCII_MAP = {"\u266d": "b", "\u266f": "#", "\u266e": "", "\u00b7": "-", "\u2022": "-", "\u2013": "-", "\u2014": "-",
-              "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u00b0": "o", "\u00f8": "o", "\u0394": "maj",
-              "\u2206": "maj", "\u2026": "..."}
+_ASCII_MAP = {
+    "\u266d": "b",
+    "\u266f": "#",
+    "\u266e": "",
+    "\u00b7": "-",
+    "\u2022": "-",
+    "\u2013": "-",
+    "\u2014": "-",
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u00b0": "o",
+    "\u00f8": "o",
+    "\u0394": "maj",
+    "\u2206": "maj",
+    "\u2026": "...",
+}
 
 
 def ascii_clean(text) -> str:
@@ -390,12 +426,14 @@ def check(data: bytes) -> int:
     """Raise ScreenRefused unless `data` is one display frame for a sendable screen. Returns the screen id."""
     b = bytes(data)
     if len(b) < len(_PREFIX) + 2 or not b.startswith(_PREFIX) or b[-1] != P.EOX:
-        raise ScreenRefused("not a screen frame (F0 00 20 6B 7F 42 00 02 04 <id> ... F7); the screen writer sends "
-                            "nothing else, so it can never send the DAW connect or an LED")
+        raise ScreenRefused(
+            "not a screen frame (F0 00 20 6B 7F 42 00 02 04 <id> ... F7); the screen writer sends "
+            "nothing else, so it can never send the DAW connect or an LED"
+        )
     sid = b[len(_PREFIX)]
     if sid in NEVER_SEND:
         raise ScreenRefused(f"screen {sid} is never sent (38 boot, 43 pedal calibration, 44 bootloader)")
-    if any(x > 0x7F for x in b[len(P.HEADER):-1]):
+    if any(x > 0x7F for x in b[len(P.HEADER) : -1]):
         raise ScreenRefused("a data byte above 0x7F inside the frame")
     return sid
 
@@ -404,17 +442,24 @@ class ScreenWriter:
     """The one door from this module to the device. Change-only, newest-wins, at most one frame per `min_interval`,
     every packet through a BurstGovernor. `reassert_s` > 0 re-sends the current frame that often (FL repaints)."""
 
-    def __init__(self, out, min_interval: float = 0.1, reassert_s: float = 0.0,
-                 governor: Optional[BurstGovernor] = None, clock: Callable[[], float] = time.perf_counter,
-                 sleep: Callable[[float], None] = time.sleep, on_send: Optional[Callable[[bytes, bool], None]] = None):
+    def __init__(
+        self,
+        out,
+        min_interval: float = 0.1,
+        reassert_s: float = 0.0,
+        governor: BurstGovernor | None = None,
+        clock: Callable[[], float] = time.perf_counter,
+        sleep: Callable[[float], None] = time.sleep,
+        on_send: Callable[[bytes, bool], None] | None = None,
+    ):
         self.out = out
         self.min_interval, self.reassert_s = max(0.0, float(min_interval)), max(0.0, float(reassert_s or 0.0))
         self.clock, self.sleep, self.on_send = clock, sleep, on_send
         # Exactly one governor per packet: the sink's own (winmidi.MidiOut always has one) or ours.
         self.governor = None if getattr(out, "governor", None) is not None else (governor or BurstGovernor())
-        self.last: Optional[bytes] = None
-        self.pending: Optional[bytes] = None
-        self.t_sent: Optional[float] = None
+        self.last: bytes | None = None
+        self.pending: bytes | None = None
+        self.t_sent: float | None = None
         self.sent = self.unchanged = self.coalesced = self.reasserted = 0
 
     def offer(self, data: bytes) -> bool:
@@ -422,7 +467,7 @@ class ScreenWriter:
         check(data)
         data = bytes(data)
         if data == self.last:
-            if self.pending is not None:          # the screen already shows what we now want: drop the stale pending
+            if self.pending is not None:  # the screen already shows what we now want: drop the stale pending
                 self.pending = None
                 self.coalesced += 1
             else:
@@ -451,7 +496,12 @@ class ScreenWriter:
                 self._send(self.pending, reassert=False)
                 return True
             return False
-        if self.reassert_s and self.last is not None and self.t_sent is not None and now - self.t_sent >= self.reassert_s:
+        if (
+            self.reassert_s
+            and self.last is not None
+            and self.t_sent is not None
+            and now - self.t_sent >= self.reassert_s
+        ):
             self._send(self.last, reassert=True)
             return True
         return False
@@ -479,9 +529,13 @@ class ScreenWriter:
         if self.on_send is not None:
             self.on_send(data, reassert)
 
-    def stats(self) -> Dict[str, int]:
-        return {"sent": self.sent, "unchanged": self.unchanged, "coalesced": self.coalesced,
-                "reasserted": self.reasserted}
+    def stats(self) -> dict[str, int]:
+        return {
+            "sent": self.sent,
+            "unchanged": self.unchanged,
+            "coalesced": self.coalesced,
+            "reasserted": self.reasserted,
+        }
 
 
 # =====================================================================================================================
@@ -491,18 +545,19 @@ DEFAULT_ENGINE = "http://127.0.0.1:8794/api/events"
 LAYOUTS = {"full": ScreenId.F2L, "inverted": ScreenId.F2L_INV, "big": ScreenId.F2L_BIG}
 _TWO_LINE = {ScreenId.F2L: f2l, ScreenId.F2L_INV: f2l_inv, ScreenId.F2L_BIG: fb2l}
 
-BPM_HYSTERESIS = 0.75          # the shown BPM moves only when the tracker moves this far from it (no 127/128 flapping)
+BPM_HYSTERESIS = 0.75  # the shown BPM moves only when the tracker moves this far from it (no 127/128 flapping)
 LOCK_ON, LOCK_OFF = 0.55, 0.45  # beat confidence: line 2 turns white at LOCK_ON, back to dim below LOCK_OFF
 
 
-def _quality_color7(quality) -> Tuple[int, int, int]:
+def _quality_color7(quality) -> tuple[int, int, int]:
     """The chord's mood colour, the same one chordview paints the pads with, as 7-bit."""
-    from .chordview import QUALITY_COLORS      # one table for pads and screen
+    from .chordview import QUALITY_COLORS  # one table for pads and screen
+
     q = "" if quality in (None, "maj", "major") else str(quality)
     return rgb7(QUALITY_COLORS.get(q, (255, 255, 255)))
 
 
-def key_short(name) -> Optional[str]:
+def key_short(name) -> str | None:
     """'Db major' -> 'Db', 'Bb minor' -> 'Bbm' (the key on line 1, where the case of 'b' survives)."""
     parts = str(name or "").split()
     if len(parts) != 2 or parts[1] not in ("major", "minor") or not parts[0][:1].isalpha():
@@ -517,12 +572,12 @@ def fit_line(parts: Sequence[str], drop: Sequence[int] = (), length: int = LINE_
     for k in [None, *drop]:
         if k is not None:
             keep[k] = False
-        words = [p for p, on in zip(parts, keep) if on and p]
+        words = [p for p, on in zip(parts, keep, strict=False) if on and p]
         for sep in ("  ", " "):
             line = sep.join(words)
             if len(line) <= length:
                 return line
-    return " ".join(p for p, on in zip(parts, keep) if on and p)
+    return " ".join(p for p, on in zip(parts, keep, strict=False) if on and p)
 
 
 class Readout:
@@ -533,23 +588,23 @@ class Readout:
     events (vj --chords sense), else from the chord's own key field; the numeral is shown only while it is read in the
     key shown. An audio 'N' (no chord: drums, noise) shows '--'."""
 
-    def __init__(self, scene: Optional[str] = None, prefer_keys_s: float = 3.0, pulse: bool = False):
-        self.connected = False          # the engine has answered at least once
-        self.up = False                 # ... and is answering now
-        self.chord: Optional[str] = None
-        self.quality: Optional[str] = None
-        self.chord_src: Optional[str] = None
-        self.roman: Optional[str] = None
-        self.chord_key: Optional[str] = None     # the key the chord's numeral is read in
-        self.key: Optional[str] = None           # the engine's key event
+    def __init__(self, scene: str | None = None, prefer_keys_s: float = 3.0, pulse: bool = False):
+        self.connected = False  # the engine has answered at least once
+        self.up = False  # ... and is answering now
+        self.chord: str | None = None
+        self.quality: str | None = None
+        self.chord_src: str | None = None
+        self.roman: str | None = None
+        self.chord_key: str | None = None  # the key the chord's numeral is read in
+        self.key: str | None = None  # the engine's key event
         self.t_keys = -math.inf
         self.prefer_keys_s = prefer_keys_s
-        self.bpm_shown: Optional[int] = None
+        self.bpm_shown: int | None = None
         self.locked = False
         self.scene = ascii_clean(scene).strip() if scene else None
-        self.scene_color: Optional[Tuple[int, int, int]] = None
+        self.scene_color: tuple[int, int, int] | None = None
         self.pulse = pulse
-        self.beat_n: Optional[int] = None
+        self.beat_n: int | None = None
 
     def set_bpm(self, bpm) -> None:
         try:
@@ -559,13 +614,13 @@ class Readout:
         if not 20.0 <= v <= 400.0:
             return
         if self.bpm_shown is None or abs(v - self.bpm_shown) >= BPM_HYSTERESIS:
-            self.bpm_shown = int(round(v))
+            self.bpm_shown = round(v)
 
     def feed(self, evt: dict, now: float) -> None:
         t = evt.get("t")
         if t in ("_up", "hello"):
             if t == "hello":
-                self.key = None         # a (re)started engine: its key event follows its hello
+                self.key = None  # a (re)started engine: its key event follows its hello
             self.connected = self.up = True
         elif t == "_down":
             self.up = False
@@ -578,7 +633,7 @@ class Readout:
                 return
             src = evt.get("src") or "keys"
             if src == "audio" and now - self.t_keys < self.prefer_keys_s:
-                return                  # what you play outranks what the song is estimated to play, for a moment
+                return  # what you play outranks what the song is estimated to play, for a moment
             if src == "keys":
                 self.t_keys = now
             none = name == "N" and evt.get("root") is None
@@ -608,7 +663,7 @@ class Readout:
                 except ValueError:
                     self.scene_color = None
 
-    def view(self) -> Tuple[str, Tuple[int, int, int], str, Tuple[int, int, int]]:
+    def view(self) -> tuple[str, tuple[int, int, int], str, tuple[int, int, int]]:
         """(line 1, its 7-bit colour, line 2, its colour). Line 2 is shown upper-case by the script's rule."""
         if not self.connected:
             return ("Aurora", ANALOG_LAB_BLUE7, "waiting for the VJ engine", DIM7)
@@ -634,8 +689,15 @@ class Readout:
         key = self.key or self.chord_key
         roman = self.roman if (self.roman and (self.chord_key is None or key == self.chord_key)) else None
         short = key_short(key)
-        return fit_line([self.chord or "--", roman or "", f"in {short}" if short else "",
-                         "(song)" if self.chord_src == "audio" else ""], drop=(3, 2))
+        return fit_line(
+            [
+                self.chord or "--",
+                roman or "",
+                f"in {short}" if short else "",
+                "(song)" if self.chord_src == "audio" else "",
+            ],
+            drop=(3, 2),
+        )
 
 
 def render(view, layout: int = ScreenId.F2L) -> bytes:
@@ -648,9 +710,9 @@ class SSEParser:
     """Server-Sent Events, one line at a time: 'data:' lines gather until a blank line, then parse as JSON."""
 
     def __init__(self):
-        self._data: List[str] = []
+        self._data: list[str] = []
 
-    def feed(self, line: str) -> Optional[dict]:
+    def feed(self, line: str) -> dict | None:
         line = line.rstrip("\r\n")
         if line == "":
             if not self._data:
@@ -662,7 +724,7 @@ class SSEParser:
                 return None
             return obj if isinstance(obj, dict) else None
         if line.startswith(":"):
-            return None                 # comment / heartbeat
+            return None  # comment / heartbeat
         field, _, value = line.partition(":")
         if value.startswith(" "):
             value = value[1:]
@@ -671,10 +733,15 @@ class SSEParser:
         return None
 
 
-def sse_loop(url: str, q: "queue.Queue", stop: threading.Event, read_timeout: float = 35.0,
-             retry_s: Sequence[float] = (1.0, 2.0, 4.0, 5.0)) -> None:
+def sse_loop(
+    url: str,
+    q: queue.Queue,
+    stop: threading.Event,
+    read_timeout: float = 35.0,
+    retry_s: Sequence[float] = (1.0, 2.0, 4.0, 5.0),
+) -> None:
     """Follow the VJ engine's feed into `q` until `stop`; reconnect with backoff. Puts {'t':'_up'} / {'t':'_down'}."""
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # 127.0.0.1 never goes through a proxy
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 127.0.0.1 never goes through a proxy
     k = 0
     while not stop.is_set():
         try:
@@ -690,7 +757,7 @@ def sse_loop(url: str, q: "queue.Queue", stop: threading.Event, read_timeout: fl
                     if evt is not None:
                         q.put(evt)
         except Exception:
-            pass                        # engine not up yet, or it went away: report down and retry
+            pass  # engine not up yet, or it went away: report down and retry
         if stop.is_set():
             break
         q.put({"t": "_down"})
@@ -698,11 +765,12 @@ def sse_loop(url: str, q: "queue.Queue", stop: threading.Event, read_timeout: fl
         k += 1
 
 
-def keys_loop(port: Optional[str], q: "queue.Queue", stop: threading.Event) -> None:
+def keys_loop(port: str | None, q: queue.Queue, stop: threading.Event) -> None:
     """The chord straight from the keys (the MIDI input port), the chordview reading, when no VJ engine runs."""
     from . import winmidi as W
     from .chordview import Voicing
     from .theory import analyze
+
     listener = W.MidiIn(port=port, prefer="midi")
     listener.start()
     q.put({"t": "_up"})
@@ -736,16 +804,29 @@ def fl_running() -> bool:
     return any(n in names for n in ('"fl64.exe"', '"fl.exe"', '"fl studio'))
 
 
-def run_live(out, source: str = "vj", url: str = DEFAULT_ENGINE, scene: Optional[str] = None,
-             layout: int = ScreenId.F2L, secs: Optional[float] = None, min_interval: float = 0.1,
-             reassert_s: float = 0.0, pulse: bool = False, keys_port: Optional[str] = None,
-             bpm: Optional[float] = None, verbose: bool = True, stop: Optional[threading.Event] = None,
-             events: Optional["queue.Queue"] = None, tick: float = 0.02, goodbye: bool = True,
-             clock: Callable[[], float] = time.perf_counter) -> Dict[str, int]:
+def run_live(
+    out,
+    source: str = "vj",
+    url: str = DEFAULT_ENGINE,
+    scene: str | None = None,
+    layout: int = ScreenId.F2L,
+    secs: float | None = None,
+    min_interval: float = 0.1,
+    reassert_s: float = 0.0,
+    pulse: bool = False,
+    keys_port: str | None = None,
+    bpm: float | None = None,
+    verbose: bool = True,
+    stop: threading.Event | None = None,
+    events: queue.Queue | None = None,
+    tick: float = 0.02,
+    goodbye: bool = True,
+    clock: Callable[[], float] = time.perf_counter,
+) -> dict[str, int]:
     """Keep the screen showing chord, BPM and scene until `secs` pass, `stop` is set or Ctrl-C. Returns writer stats.
     `events` lets a caller (or a test) feed the readout directly; otherwise a feed thread fills it."""
     stop = stop or threading.Event()
-    shown: Dict[bytes, Tuple[str, str]] = {}
+    shown: dict[bytes, tuple[str, str]] = {}
 
     def on_send(data: bytes, reassert: bool) -> None:
         if verbose:
@@ -764,9 +845,9 @@ def run_live(out, source: str = "vj", url: str = DEFAULT_ENGINE, scene: Optional
         arg = keys_port if source == "keys" else url
         feeder = threading.Thread(target=target, args=(arg, q, stop), name=f"screen-{source}", daemon=True)
         feeder.start()
-    delayed: List[Tuple[float, int, dict]] = []
+    delayed: list[tuple[float, int, dict]] = []
     seq = 0
-    offered: Optional[bytes] = None
+    offered: bytes | None = None
     end = (clock() + secs) if secs else None
     try:
         while not stop.is_set() and (end is None or clock() < end):
@@ -780,7 +861,7 @@ def run_live(out, source: str = "vj", url: str = DEFAULT_ENGINE, scene: Optional
                     continue
                 due = evt.get("due_ms") if evt.get("t") == "beat" else None
                 if pulse and isinstance(due, (int, float)) and due > 0:
-                    seq += 1                     # the engine says the beat lands due_ms from now: draw it then
+                    seq += 1  # the engine says the beat lands due_ms from now: draw it then
                     heapq.heappush(delayed, (now + due / 1000.0, seq, evt))
                     continue
                 readout.feed(evt, now)
@@ -788,7 +869,7 @@ def run_live(out, source: str = "vj", url: str = DEFAULT_ENGINE, scene: Optional
                 readout.feed(heapq.heappop(delayed)[2], now)
             view = readout.view()
             data = render(view, layout)
-            if data != offered:                  # only a change is offered; the writer paces and de-duplicates
+            if data != offered:  # only a change is offered; the writer paces and de-duplicates
                 offered = data
                 shown.clear()
                 shown[data] = (view[0], view[2])
@@ -800,7 +881,7 @@ def run_live(out, source: str = "vj", url: str = DEFAULT_ENGINE, scene: Optional
     finally:
         stop.set()
         if goodbye:
-            try:                                 # leave a quiet card, not a stale chord
+            try:  # leave a quiet card, not a stale chord
                 card = ("Aurora", ANALOG_LAB_BLUE7, "live readout stopped", DIM7)
                 data = render(card, layout)
                 shown[data] = (card[0], card[2])
@@ -821,10 +902,15 @@ def write_frames(out, frames: Iterable[bytes], min_interval: float = 0.1) -> Scr
     return writer
 
 
-def default_receipt_path(now: Optional[float] = None) -> str:
+def default_receipt_path(now: float | None = None) -> str:
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
-    root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                        "state", "arsenal", "keylab", "receipts")
+    root = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "state",
+        "arsenal",
+        "keylab",
+        "receipts",
+    )
     return os.path.join(root, f"screen-{stamp}.json")
 
 

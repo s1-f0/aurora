@@ -7,13 +7,13 @@ Same approach as arsenal.midiports (which enumerates WinMM read-only); this adds
 Windows only. Ports are opened by NAME SUBSTRING (case-insensitive); the mk3 exposes several ports and which
 one accepts the DAW SysEx is a bench question, so the caller can pass an explicit --port substring.
 """
+
 from __future__ import annotations
 
 import ctypes
 import sys
 import time
 from ctypes import wintypes
-from typing import List, Optional, Tuple
 
 MMSYSERR_NOERROR = 0
 CALLBACK_NULL = 0
@@ -29,24 +29,44 @@ def _winmm():
 
 
 class _OutCaps(ctypes.Structure):
-    _fields_ = [("wMid", wintypes.WORD), ("wPid", wintypes.WORD), ("vDriverVersion", wintypes.UINT),
-                ("szPname", wintypes.WCHAR * 32), ("wTechnology", wintypes.WORD), ("wVoices", wintypes.WORD),
-                ("wNotes", wintypes.WORD), ("wChannelMask", wintypes.WORD), ("dwSupport", wintypes.DWORD)]
+    _fields_ = [
+        ("wMid", wintypes.WORD),
+        ("wPid", wintypes.WORD),
+        ("vDriverVersion", wintypes.UINT),
+        ("szPname", wintypes.WCHAR * 32),
+        ("wTechnology", wintypes.WORD),
+        ("wVoices", wintypes.WORD),
+        ("wNotes", wintypes.WORD),
+        ("wChannelMask", wintypes.WORD),
+        ("dwSupport", wintypes.DWORD),
+    ]
 
 
 class _InCaps(ctypes.Structure):
-    _fields_ = [("wMid", wintypes.WORD), ("wPid", wintypes.WORD), ("vDriverVersion", wintypes.UINT),
-                ("szPname", wintypes.WCHAR * 32), ("dwSupport", wintypes.DWORD)]
+    _fields_ = [
+        ("wMid", wintypes.WORD),
+        ("wPid", wintypes.WORD),
+        ("vDriverVersion", wintypes.UINT),
+        ("szPname", wintypes.WCHAR * 32),
+        ("dwSupport", wintypes.DWORD),
+    ]
 
 
 class MIDIHDR(ctypes.Structure):
-    _fields_ = [("lpData", ctypes.c_char_p), ("dwBufferLength", wintypes.DWORD),
-                ("dwBytesRecorded", wintypes.DWORD), ("dwUser", ctypes.c_void_p), ("dwFlags", wintypes.DWORD),
-                ("lpNext", ctypes.c_void_p), ("reserved", ctypes.c_void_p), ("dwOffset", wintypes.DWORD),
-                ("dwReserved", ctypes.c_void_p * 8)]
+    _fields_ = [
+        ("lpData", ctypes.c_char_p),
+        ("dwBufferLength", wintypes.DWORD),
+        ("dwBytesRecorded", wintypes.DWORD),
+        ("dwUser", ctypes.c_void_p),
+        ("dwFlags", wintypes.DWORD),
+        ("lpNext", ctypes.c_void_p),
+        ("reserved", ctypes.c_void_p),
+        ("dwOffset", wintypes.DWORD),
+        ("dwReserved", ctypes.c_void_p * 8),
+    ]
 
 
-def outputs() -> List[str]:
+def outputs() -> list[str]:
     """MIDI output device names in device-id order (index == device id)."""
     mm = _winmm()
     mm.midiOutGetNumDevs.restype = wintypes.UINT
@@ -60,7 +80,7 @@ def outputs() -> List[str]:
     return names
 
 
-def inputs() -> List[str]:
+def inputs() -> list[str]:
     mm = _winmm()
     mm.midiInGetNumDevs.restype = wintypes.UINT
     mm.midiInGetDevCapsW.argtypes = [ctypes.c_size_t, ctypes.c_void_p, wintypes.UINT]
@@ -73,7 +93,7 @@ def inputs() -> List[str]:
     return names
 
 
-def _match(names: List[str], substr: Optional[str], prefer: Optional[str] = None) -> int:
+def _match(names: list[str], substr: str | None, prefer: str | None = None) -> int:
     """Pick a device index. Explicit substr wins; else a KeyLab port, preferring one whose name holds `prefer`
     (the mk3 exposes '...MIDI' and '...DAW' ports -- LED/screen SysEx wants 'DAW', note triggers want 'MIDI')."""
     if substr:
@@ -92,11 +112,12 @@ def _match(names: List[str], substr: Optional[str], prefer: Optional[str] = None
 class MidiOut:
     """An open WinMM output. Use as a context manager. send_sysex() blocks until the driver accepts the buffer."""
 
-    def __init__(self, port: Optional[str] = None, prefer: Optional[str] = "daw", governor=None):
+    def __init__(self, port: str | None = None, prefer: str | None = "daw", governor=None):
         # Every SysEx from every producer sharing this output passes one BurstGovernor (the freeze ceiling as a
         # guarantee). Pass governor=False only for a deliberate limit probe such as `ledbench burst`.
         if governor is None:
             from .governor import BurstGovernor
+
             governor = BurstGovernor()
         self.governor = governor or None
         self.mm = _winmm()
@@ -106,8 +127,13 @@ class MidiOut:
             where = f"matching {port!r}" if port else "named like 'KeyLab'"
             raise RuntimeError(f"no MIDI output {where}. Available: {self.names or '(none)'}")
         self.name = self.names[self.index]
-        self.mm.midiOutOpen.argtypes = [ctypes.POINTER(ctypes.c_void_p), wintypes.UINT,
-                                        ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD]
+        self.mm.midiOutOpen.argtypes = [
+            ctypes.POINTER(ctypes.c_void_p),
+            wintypes.UINT,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        ]
         self.mm.midiOutOpen.restype = wintypes.UINT
         for fn in (self.mm.midiOutShortMsg, self.mm.midiOutClose, self.mm.midiOutReset):
             fn.argtypes = [ctypes.c_void_p] + ([wintypes.DWORD] if fn is self.mm.midiOutShortMsg else [])
@@ -161,7 +187,7 @@ class MidiOut:
         self.close()
 
 
-def monitor(port: Optional[str], seconds: float, on_msg, prefer: Optional[str] = "midi") -> int:
+def monitor(port: str | None, seconds: float, on_msg, prefer: str | None = "midi") -> int:
     """Open a MIDI input and call on_msg(status, d1, d2) for each short message for `seconds`. Returns count.
 
     NOTE: never exercised without the physical keyboard attached -- treat as needs-hardware until confirmed.
@@ -181,8 +207,13 @@ def monitor(port: Optional[str], seconds: float, on_msg, prefer: Optional[str] =
             count[0] += 1
 
     cb = proc(_cb)
-    mm.midiInOpen.argtypes = [ctypes.POINTER(ctypes.c_void_p), wintypes.UINT, ctypes.c_void_p,
-                              ctypes.c_void_p, wintypes.DWORD]
+    mm.midiInOpen.argtypes = [
+        ctypes.POINTER(ctypes.c_void_p),
+        wintypes.UINT,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
     mm.midiInOpen.restype = wintypes.UINT
     for fn in (mm.midiInStart, mm.midiInStop, mm.midiInClose):
         fn.argtypes = [ctypes.c_void_p]
@@ -218,8 +249,13 @@ class MidiIn:
         self.name = self.names[self.index]
         self.events: list = []
         self._t0 = 0.0
-        mm.midiInOpen.argtypes = [ctypes.POINTER(ctypes.c_void_p), wintypes.UINT, ctypes.c_void_p,
-                                  ctypes.c_void_p, wintypes.DWORD]
+        mm.midiInOpen.argtypes = [
+            ctypes.POINTER(ctypes.c_void_p),
+            wintypes.UINT,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        ]
         mm.midiInOpen.restype = wintypes.UINT
         for fn in (mm.midiInStart, mm.midiInStop, mm.midiInClose, mm.midiInReset):
             fn.argtypes = [ctypes.c_void_p]
@@ -227,12 +263,17 @@ class MidiIn:
         for fn in (mm.midiInPrepareHeader, mm.midiInUnprepareHeader, mm.midiInAddBuffer):
             fn.argtypes = [ctypes.c_void_p, ctypes.POINTER(MIDIHDR), wintypes.UINT]
             fn.restype = wintypes.UINT
-        proc = ctypes.WINFUNCTYPE(None, ctypes.c_void_p, wintypes.UINT, ctypes.c_void_p,
-                                  ctypes.c_void_p, ctypes.c_void_p)
+        proc = ctypes.WINFUNCTYPE(
+            None, ctypes.c_void_p, wintypes.UINT, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p
+        )
         self._cbref = proc(self._cb)  # keep a reference alive
         self.handle = ctypes.c_void_p()
-        if mm.midiInOpen(ctypes.byref(self.handle), self.index, ctypes.cast(self._cbref, ctypes.c_void_p),
-                         0, CALLBACK_FUNCTION) != MMSYSERR_NOERROR:
+        if (
+            mm.midiInOpen(
+                ctypes.byref(self.handle), self.index, ctypes.cast(self._cbref, ctypes.c_void_p), 0, CALLBACK_FUNCTION
+            )
+            != MMSYSERR_NOERROR
+        ):
             raise RuntimeError(f"midiInOpen({self.name!r}) failed")
         self._hdrs = []
         self._bufs = []

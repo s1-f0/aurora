@@ -45,6 +45,7 @@ Metrics, implemented from their published definitions (no GPL, no extra dependen
   realtime_x / cpu_x         audio seconds per wall second of the whole run / per CPU second (process_time) of
                   feed() + predict() per block, the work the live loop does (ours)
 """
+
 from __future__ import annotations
 
 import functools
@@ -52,17 +53,21 @@ import hashlib
 import json
 import math
 import os
+import re as _re
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-F_WINDOW = 0.07          # seconds
-CONT_TOL = 0.175         # phase and period tolerance for the continuity metrics
-TEMPO_TOL = 0.04         # Acc1 / Acc2 tolerance
-SKIP_FIRST = 5.0         # seconds of each case not scored for beat metrics (the convention; lock_s covers it)
-PRED_HIT_MS = 35.0       # a predicted beat within this lands visibly ON the beat
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Sequence
+
+F_WINDOW = 0.07  # seconds
+CONT_TOL = 0.175  # phase and period tolerance for the continuity metrics
+TEMPO_TOL = 0.04  # Acc1 / Acc2 tolerance
+SKIP_FIRST = 5.0  # seconds of each case not scored for beat metrics (the convention; lock_s covers it)
+PRED_HIT_MS = 35.0  # a predicted beat within this lands visibly ON the beat
 
 # CPU clock for the speed row: process time of feed() + predict(), the work the live loop does per block.
 # A module attribute so a test can substitute a deterministic clock.
@@ -71,21 +76,28 @@ _cpu_clock = time.process_time
 
 # --- ground truth ------------------------------------------------------------------------------------------
 
+
 @dataclass
 class Case:
     name: str
-    audio: np.ndarray                  # float32 mono
+    audio: np.ndarray  # float32 mono
     rate: int
-    beats: np.ndarray                  # reference beat times, seconds (may be empty for tempo-only cases)
-    bpm: float                         # reference tempo (median, for ramps)
-    seed_bpm: Optional[float] = None   # what a database lookup would have given (None = no seed)
-    phase_known: bool = True           # False = score tempo only
+    beats: np.ndarray  # reference beat times, seconds (may be empty for tempo-only cases)
+    bpm: float  # reference tempo (median, for ramps)
+    seed_bpm: float | None = None  # what a database lookup would have given (None = no seed)
+    phase_known: bool = True  # False = score tempo only
     source: str = "synthetic"
-    meta: Dict = field(default_factory=dict)
+    meta: dict = field(default_factory=dict)
 
 
-def beat_times(bpm: float, secs: float, offset: float = 0.0, ramp_to: Optional[float] = None,
-               step_at: Optional[float] = None, step_to: Optional[float] = None) -> np.ndarray:
+def beat_times(
+    bpm: float,
+    secs: float,
+    offset: float = 0.0,
+    ramp_to: float | None = None,
+    step_at: float | None = None,
+    step_to: float | None = None,
+) -> np.ndarray:
     """Beat times for a constant tempo, a linear ramp from bpm to ramp_to over the whole case, or a sudden STEP
     to step_to at step_at seconds (a DJ transition / tempo automation; Daniel 2026-10-22: "have shifting bpm")."""
     if step_at is not None and step_to is not None:
@@ -113,7 +125,7 @@ def _env(n: int, rate: int, decay_s: float) -> np.ndarray:
 def _kick(rate: int) -> np.ndarray:
     n = int(0.25 * rate)
     t = np.arange(n) / rate
-    freq = 40 + 70 * np.exp(-t * 30)                         # pitch drop
+    freq = 40 + 70 * np.exp(-t * 30)  # pitch drop
     return (np.sin(2 * np.pi * np.cumsum(freq) / rate) * _env(n, rate, 0.08)).astype(np.float32)
 
 
@@ -127,7 +139,7 @@ def _snare(rate: int, rng: np.random.Generator) -> np.ndarray:
 def _hat(rate: int, rng: np.random.Generator) -> np.ndarray:
     n = int(0.05 * rate)
     noise = rng.standard_normal(n).astype(np.float32)
-    hp = np.diff(noise, prepend=0).astype(np.float32)        # crude high-pass
+    hp = np.diff(noise, prepend=0).astype(np.float32)  # crude high-pass
     return (0.35 * hp * _env(n, rate, 0.012)).astype(np.float32)
 
 
@@ -161,17 +173,29 @@ def _click(rate: int) -> np.ndarray:
 
 
 def _place(buf: np.ndarray, sound: np.ndarray, t: float, rate: int, gain: float = 1.0) -> None:
-    i = int(round(t * rate))
+    i = round(t * rate)
     if i >= len(buf):
         return
     j = min(len(buf), i + len(sound))
     buf[i:j] += gain * sound[: j - i]
 
 
-def synth_case(name: str, bpm: float, secs: float = 30.0, rate: int = 44100, style: str = "drums",
-               offset: float = 0.5, swing: float = 0.0, ramp_to: Optional[float] = None, noise: float = 0.0,
-               seed_bpm: Optional[float] = None, rng_seed: int = 7, step_at: Optional[float] = None,
-               step_to: Optional[float] = None, bass: str = "sine") -> Case:
+def synth_case(
+    name: str,
+    bpm: float,
+    secs: float = 30.0,
+    rate: int = 44100,
+    style: str = "drums",
+    offset: float = 0.5,
+    swing: float = 0.0,
+    ramp_to: float | None = None,
+    noise: float = 0.0,
+    seed_bpm: float | None = None,
+    rng_seed: int = 7,
+    step_at: float | None = None,
+    step_to: float | None = None,
+    bass: str = "sine",
+) -> Case:
     """Exact-ground-truth audio. style: click | drums | sparse (kick only on 1, hats off) | offbeat (hats
     on the 'and', the classic octave trap) | halftime_bass (kick on 1, snare on 3, soft quarter hats, and LOUD
     sub-bass hits on syncopated 16ths, never on a beat -- tonight's TYNAN failure, 2026-10-22)."""
@@ -192,7 +216,7 @@ def synth_case(name: str, bpm: float, secs: float = 30.0, rate: int = 44100, sty
             if pos == 2:
                 _place(buf, snare, t, rate, 0.9)
             _place(buf, hat, t, rate, 0.4)
-            for sub in range(4):                              # this beat's four 16ths
+            for sub in range(4):  # this beat's four 16ths
                 if pos * 4 + sub in SYNC_BASS_16THS:
                     _place(buf, bass_note, t + (nxt - t) * sub / 4, rate, 1.3)
         elif style == "sparse":
@@ -213,16 +237,30 @@ def synth_case(name: str, bpm: float, secs: float = 30.0, rate: int = 44100, sty
     peak = float(np.max(np.abs(buf))) or 1.0
     audio = (buf / peak * 0.8)[: int(secs * rate)].astype(np.float32)
     ref_bpm = float(np.median(60.0 / np.diff(beats))) if len(beats) > 1 else bpm
-    return Case(name, audio, rate, beats, ref_bpm, seed_bpm=seed_bpm, source="synthetic",
-                meta={"style": style, "swing": swing, "ramp_to": ramp_to, "noise": noise, "offset": offset,
-                      "step_at": step_at, "step_to": step_to, "bass": bass})
+    return Case(
+        name,
+        audio,
+        rate,
+        beats,
+        ref_bpm,
+        seed_bpm=seed_bpm,
+        source="synthetic",
+        meta={
+            "style": style,
+            "swing": swing,
+            "ramp_to": ramp_to,
+            "noise": noise,
+            "offset": offset,
+            "step_at": step_at,
+            "step_to": step_to,
+            "bass": bass,
+        },
+    )
 
 
-def synthetic_suite(rate: int = 44100, secs: float = 30.0) -> List[Case]:
+def synthetic_suite(rate: int = 44100, secs: float = 30.0) -> list[Case]:
     """The standing synthetic suite: easy, tempo range, octave traps, swing, a ramp, noise, sparse."""
-    s = []
-    for bpm in (70, 92, 120, 128, 140, 174):
-        s.append(synth_case(f"drums_{bpm}", bpm, secs, rate))
+    s = [synth_case(f"drums_{bpm}", bpm, secs, rate) for bpm in (70, 92, 120, 128, 140, 174)]
     s.append(synth_case("click_100", 100, secs, rate, style="click"))
     s.append(synth_case("offbeat_hats_95", 95, secs, rate, style="offbeat"))
     s.append(synth_case("offbeat_hats_95_seeded", 95, secs, rate, style="offbeat", seed_bpm=95))
@@ -230,35 +268,33 @@ def synthetic_suite(rate: int = 44100, secs: float = 30.0) -> List[Case]:
     s.append(synth_case("ramp_100_to_130", 100, secs, rate, ramp_to=130))
     s.append(synth_case("noisy_124", 124, secs, rate, noise=0.25))
     s.append(synth_case("sparse_kick_85", 85, secs, rate, style="sparse"))
-    s.append(synth_case("dnb_174_seeded_87", 174, secs, rate, seed_bpm=87))   # a seed off by an octave
+    s.append(synth_case("dnb_174_seeded_87", 174, secs, rate, seed_bpm=87))  # a seed off by an octave
     return s
 
 
-def drift_suite(rate: int = 44100, secs: float = 40.0) -> List[Case]:
+def drift_suite(rate: int = 44100, secs: float = 40.0) -> list[Case]:
     """Grid-holding under syncopation (Daniel 2026-10-22: "its drifting, i want our beat detection to detect the
     grid not just the spaced out notes"). Half-time drums with loud off-beat sub-bass; the tempo is constant, so
     any BPM spread or flip after lock is the tracker chasing notes instead of holding the grid."""
-    s = []
-    for bpm in (140, 150, 128):
-        s.append(synth_case(f"halftime_bass_{bpm}", bpm, secs, rate, style="halftime_bass"))
+    s = [synth_case(f"halftime_bass_{bpm}", bpm, secs, rate, style="halftime_bass") for bpm in (140, 150, 128)]
     s.append(synth_case("halftime_bass_140_seeded", 140, secs, rate, style="halftime_bass", seed_bpm=140))
     s.append(synth_case("halftime_bass_140_noisy", 140, secs, rate, style="halftime_bass", noise=0.15))
     return s
 
 
-def bright_drift_suite(rate: int = 44100, secs: float = 40.0) -> List[Case]:
+def bright_drift_suite(rate: int = 44100, secs: float = 40.0) -> list[Case]:
     """Round 2 (pre-registered 2026-10-22): the drift suite with a BRIGHT (sawtooth) bass. Same patterns, tempi,
     seed and noise as drift_suite; only the bass timbre changes. A tracker must hold the beat here too, because
     real half-time bass music (TYNAN) has harmonic-rich bass, not a sine."""
-    s = []
-    for bpm in (140, 150, 128):
-        s.append(synth_case(f"bright_bass_{bpm}", bpm, secs, rate, style="halftime_bass", bass="saw"))
+    s = [
+        synth_case(f"bright_bass_{bpm}", bpm, secs, rate, style="halftime_bass", bass="saw") for bpm in (140, 150, 128)
+    ]
     s.append(synth_case("bright_bass_140_seeded", 140, secs, rate, style="halftime_bass", seed_bpm=140, bass="saw"))
     s.append(synth_case("bright_bass_140_noisy", 140, secs, rate, style="halftime_bass", noise=0.15, bass="saw"))
     return s
 
 
-def shift_suite(rate: int = 44100, secs: float = 40.0) -> List[Case]:
+def shift_suite(rate: int = 44100, secs: float = 40.0) -> list[Case]:
     """Real tempo changes the tracker must FOLLOW (not hold): a sudden step at 20 s. Scored by relock_s, the time
     from the step until 8 consecutive beats hit again. The drift metrics do not apply here, because the shift is
     real."""
@@ -280,8 +316,8 @@ BASS_TIMBRES = ("square", "saw_blep", "saw_pair", "fm", "soft_sine")
 BASS_PATTERNS = ("offbeat", "onbeat", "sidechain")
 BASS_ROOT_HZ = (35.0, 90.0)
 VARIANT_BPM = (125.0, 175.0)
-BASS_RELEASE_S = 0.005   # every bass note fades to zero over its last 5 ms: no hard-cut click at a note's end
-BASS_ATTACK_S = 0.0015   # and rises from zero over 1.5 ms: a sharp onset without a waveform-step click
+BASS_RELEASE_S = 0.005  # every bass note fades to zero over its last 5 ms: no hard-cut click at a note's end
+BASS_ATTACK_S = 0.0015  # and rises from zero over 1.5 ms: a sharp onset without a waveform-step click
 _OFFBEAT_16THS = (1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15)
 
 
@@ -298,7 +334,7 @@ def _polyblep(ph: np.ndarray, dt: np.ndarray) -> np.ndarray:
     return out
 
 
-def _phase(freq: np.ndarray, rate: int, ph0: float = 0.0) -> Tuple[np.ndarray, np.ndarray]:
+def _phase(freq: np.ndarray, rate: int, ph0: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
     dt = freq / rate
     return (ph0 + np.cumsum(dt) - dt[0]) % 1.0, dt
 
@@ -314,14 +350,24 @@ def _blep_square(freq: np.ndarray, rate: int, ph0: float = 0.0) -> np.ndarray:
     return sq + _polyblep(ph, dt) - _polyblep((ph + 0.5) % 1.0, dt)
 
 
-def bass_note(timbre: str, f0: float, dur: float, rate: int, glide_from: Optional[float] = None,
-              glide_s: float = 0.04, decay_s: Optional[float] = 0.2, detune: float = 0.008, fm_ratio: float = 1.0,
-              fm_index: float = 3.0, drive: float = 4.0) -> np.ndarray:
+def bass_note(
+    timbre: str,
+    f0: float,
+    dur: float,
+    rate: int,
+    glide_from: float | None = None,
+    glide_s: float = 0.04,
+    decay_s: float | None = 0.2,
+    detune: float = 0.008,
+    fm_ratio: float = 1.0,
+    fm_index: float = 3.0,
+    drive: float = 4.0,
+) -> np.ndarray:
     """One bass note, `dur` seconds long INCLUDING its 5 ms release (the last sample is exactly zero).
     timbre: square | saw_blep (band-limited saw) | saw_pair (two detuned saws, a reese) | fm | soft_sine (tanh).
     glide_from: start at this frequency and slide exponentially to f0 (time constant glide_s). decay_s None =
     sustained (a pad-like bass for sidechain pumping), else an exponential pluck decay."""
-    n = max(4, int(round(dur * rate)))
+    n = max(4, round(dur * rate))
     t = np.arange(n) / rate
     freq = np.full(n, float(f0))
     if glide_from:
@@ -342,7 +388,7 @@ def bass_note(timbre: str, f0: float, dur: float, rate: int, glide_from: Optiona
     else:
         raise ValueError(f"unknown bass timbre {timbre!r}; choose from {BASS_TIMBRES}")
     env = np.ones(n) if decay_s is None else np.exp(-t / decay_s)
-    na, nr = max(1, int(round(BASS_ATTACK_S * rate))), max(2, int(round(BASS_RELEASE_S * rate)))
+    na, nr = max(1, round(BASS_ATTACK_S * rate)), max(2, round(BASS_RELEASE_S * rate))
     env[:na] *= np.linspace(0.0, 1.0, na, endpoint=False)
     env[-nr:] *= np.linspace(1.0, 0.0, nr)
     return (y * env).astype(np.float32)
@@ -356,7 +402,7 @@ def _fold_into(f: float, lo: float = BASS_ROOT_HZ[0], hi: float = BASS_ROOT_HZ[1
     return f
 
 
-def bass_positions(pattern: str, rng: np.random.Generator) -> List[int]:
+def bass_positions(pattern: str, rng: np.random.Generator) -> list[int]:
     """The 16th positions (0-15 in a 4/4 bar) a bar of bass plays. offbeat never touches a beat; onbeat always
     plays beat one and maybe other beats, plus a few off-beat 16ths; sidechain holds long notes from beat one
     (and maybe beat three) that the ducking pumps."""
@@ -378,7 +424,7 @@ def _duck_curve(n: int, rate: int, beats: np.ndarray, depth: float, tau_s: float
     g = np.ones(n)
     pre = BASS_RELEASE_S
     for b in beats:
-        i0, i1 = int(round((b - pre) * rate)), int(round((b + 6 * tau_s) * rate))
+        i0, i1 = round((b - pre) * rate), round((b + 6 * tau_s) * rate)
         lo, hi = max(0, i0), min(n, i1)
         if hi <= lo:
             continue
@@ -388,8 +434,9 @@ def _duck_curve(n: int, rate: int, beats: np.ndarray, depth: float, tau_s: float
     return g
 
 
-def bright_variant_case(name: str, p: Dict, rate: int = 44100, secs: float = 40.0,
-                        rng_seed: Sequence[int] = (0,)) -> Case:
+def bright_variant_case(
+    name: str, p: dict, rate: int = 44100, secs: float = 40.0, rng_seed: Sequence[int] = (0,)
+) -> Case:
     """One held-out bright-bass case from its parameters (see bright_variants_suite). The audio begins at a random
     16th (p["start16"], 1-15) of a bar after a whole bar of run-in, so it never starts on beat one and the first
     sounds are tails of notes already playing. Ground truth is exact, as in synth_case."""
@@ -411,13 +458,13 @@ def bright_variant_case(name: str, p: Dict, rate: int = 44100, secs: float = 40.
             if pos == 2:
                 _place(drums, snare, t, rate, 0.9)
             _place(drums, hat, t, rate, 0.4)
-        else:                                                     # four on the floor
+        else:  # four on the floor
             _place(drums, kick, t, rate)
             if pos in (1, 3):
                 _place(drums, snare, t, rate, 0.8)
             _place(drums, hat, t + period / 2, rate, 0.7)
     positions = bass_positions(p["pattern"], rng)
-    phrase = [0] + [int(x) for x in rng.choice((0, 3, 5, 7, -2, -4), size=3)]   # semitones per bar, 4-bar phrase
+    phrase = [0] + [int(x) for x in rng.choice((0, 3, 5, 7, -2, -4), size=3)]  # semitones per bar, 4-bar phrase
     decay = None if p["pattern"] == "sidechain" else float(rng.uniform(0.08, 0.3))
     detune, fm_ratio = float(rng.uniform(0.004, 0.012)), float(rng.choice((0.5, 1.0, 2.0)))
     fm_index, drive = float(rng.uniform(1.5, 5.0)), float(rng.uniform(2.0, 6.0))
@@ -428,71 +475,119 @@ def bright_variant_case(name: str, p: Dict, rate: int = 44100, secs: float = 40.
             starts.append(bar * 4 * period + pos * six)
             freqs.append(f)
     prev_f = freqs[0] * 2 ** (7 / 12.0) if freqs else None
-    for i, (t0, f) in enumerate(zip(starts, freqs)):
+    for i, (t0, f) in enumerate(zip(starts, freqs, strict=False)):
         nxt = starts[i + 1] if i + 1 < len(starts) else t0 + 4 * period
         want = (nxt - t0) if p["pattern"] == "sidechain" else float(rng.integers(1, 4)) * six
-        note = bass_note(p["timbre"], f, min(want, nxt - t0), rate,
-                         glide_from=(prev_f if p.get("glide") else None), glide_s=float(p.get("glide_s", 0.04)),
-                         decay_s=decay, detune=detune, fm_ratio=fm_ratio, fm_index=fm_index, drive=drive)
+        note = bass_note(
+            p["timbre"],
+            f,
+            min(want, nxt - t0),
+            rate,
+            glide_from=(prev_f if p.get("glide") else None),
+            glide_s=float(p.get("glide_s", 0.04)),
+            decay_s=decay,
+            detune=detune,
+            fm_ratio=fm_ratio,
+            fm_index=fm_index,
+            drive=drive,
+        )
         _place(bass, note, t0, rate)
         prev_f = f
     if p["pattern"] == "sidechain":
-        bass *= _duck_curve(n_total, rate, grid, float(p.get("duck_depth", 0.85)),
-                            float(p.get("duck_tau_beats", 0.3)) * period).astype(np.float32)
+        bass *= _duck_curve(
+            n_total, rate, grid, float(p.get("duck_depth", 0.85)), float(p.get("duck_tau_beats", 0.3)) * period
+        ).astype(np.float32)
     buf = drums + float(p["bass_gain"]) * bass
     if p.get("noise"):
         buf += (float(p["noise"]) * rng.standard_normal(n_total)).astype(np.float32)
-    c0 = int(math.floor(pre * rate))                  # never past a beat that falls exactly on the first sample
-    audio = buf[c0:c0 + int(secs * rate)]
+    c0 = math.floor(pre * rate)  # never past a beat that falls exactly on the first sample
+    audio = buf[c0 : c0 + int(secs * rate)]
     peak = float(np.max(np.abs(audio))) or 1.0
     audio = (audio / peak * 0.8).astype(np.float32)
     shift = c0 / rate
     beats = grid[(grid >= shift) & (grid - shift < secs)] - shift
-    meta = {**p, "style": "bright_variant", "bass_16ths": positions, "phrase_semitones": phrase,
-            "decay_s": decay, "detune": detune, "fm_ratio": fm_ratio, "fm_index": fm_index, "drive": drive}
+    meta = {
+        **p,
+        "style": "bright_variant",
+        "bass_16ths": positions,
+        "phrase_semitones": phrase,
+        "decay_s": decay,
+        "detune": detune,
+        "fm_ratio": fm_ratio,
+        "fm_index": fm_index,
+        "drive": drive,
+    }
     return Case(name, audio, rate, beats, bpm, source="synthetic", meta=meta)
 
 
-def bright_variants_suite(seed: int, n: int = 10, rate: int = 44100, secs: float = 40.0) -> List[Case]:
+def bright_variants_suite(seed: int, n: int = 10, rate: int = 44100, secs: float = 40.0) -> list[Case]:
     """Round 2's HELD-OUT bright-bass row: n cases drawn from `seed`. The gating seed is kept secret until scoring,
     so no tracker can be tuned on these cases; any other seed is free for development. Every timbre and pattern
     appears (each cycles through a shuffled order), tempi are 125-175 BPM, roots 35-90 Hz, half the cases glide,
     and each case starts at a random 16th, never on beat one."""
     pick = np.random.default_rng(int(seed))
-    order_t = [BASS_TIMBRES[i] for _ in range(math.ceil(n / len(BASS_TIMBRES)))
-               for i in pick.permutation(len(BASS_TIMBRES))][:n]
-    order_p = [BASS_PATTERNS[i] for _ in range(math.ceil(n / len(BASS_PATTERNS)))
-               for i in pick.permutation(len(BASS_PATTERNS))][:n]
+    order_t = [
+        BASS_TIMBRES[i] for _ in range(math.ceil(n / len(BASS_TIMBRES))) for i in pick.permutation(len(BASS_TIMBRES))
+    ][:n]
+    order_p = [
+        BASS_PATTERNS[i] for _ in range(math.ceil(n / len(BASS_PATTERNS))) for i in pick.permutation(len(BASS_PATTERNS))
+    ][:n]
     cases = []
     for i in range(n):
-        p = {"bpm": round(float(pick.uniform(*VARIANT_BPM)), 1), "timbre": order_t[i], "pattern": order_p[i],
-             "root_hz": round(float(pick.uniform(*BASS_ROOT_HZ)), 2), "glide": bool(pick.random() < 0.5),
-             "glide_s": round(float(pick.uniform(0.02, 0.08)), 3), "start16": int(pick.integers(1, 16)),
-             "drums": "halftime" if pick.random() < 0.7 else "fourfloor",
-             "bass_gain": round(float(pick.uniform(1.0, 1.6)), 2),
-             "duck_depth": round(float(pick.uniform(0.6, 0.95)), 2),
-             "duck_tau_beats": round(float(pick.uniform(0.2, 0.45)), 2),
-             "noise": round(float(pick.uniform(0.0, 0.08)), 3) if pick.random() < 0.3 else 0.0}
-        cases.append(bright_variant_case(f"bvar_{i:02d}_{p['timbre']}_{p['pattern']}_{p['bpm']:g}", p, rate, secs,
-                                         rng_seed=(int(seed), i)))
+        p = {
+            "bpm": round(float(pick.uniform(*VARIANT_BPM)), 1),
+            "timbre": order_t[i],
+            "pattern": order_p[i],
+            "root_hz": round(float(pick.uniform(*BASS_ROOT_HZ)), 2),
+            "glide": bool(pick.random() < 0.5),
+            "glide_s": round(float(pick.uniform(0.02, 0.08)), 3),
+            "start16": int(pick.integers(1, 16)),
+            "drums": "halftime" if pick.random() < 0.7 else "fourfloor",
+            "bass_gain": round(float(pick.uniform(1.0, 1.6)), 2),
+            "duck_depth": round(float(pick.uniform(0.6, 0.95)), 2),
+            "duck_tau_beats": round(float(pick.uniform(0.2, 0.45)), 2),
+            "noise": round(float(pick.uniform(0.0, 0.08)), 3) if pick.random() < 0.3 else 0.0,
+        }
+        cases.append(
+            bright_variant_case(
+                f"bvar_{i:02d}_{p['timbre']}_{p['pattern']}_{p['bpm']:g}", p, rate, secs, rng_seed=(int(seed), i)
+            )
+        )
     return cases
 
 
-def file_case(path: str, bpm: float, phase_known: bool = False, offset: float = 0.0,
-              seed_bpm: Optional[float] = None, max_secs: Optional[float] = 60.0) -> Case:
+def file_case(
+    path: str,
+    bpm: float,
+    phase_known: bool = False,
+    offset: float = 0.0,
+    seed_bpm: float | None = None,
+    max_secs: float | None = 60.0,
+) -> Case:
     """A real recording with a known tempo (e.g. an FL render). Mono-mixed; soundfile reads wav/flac/ogg/mp3."""
-    import soundfile as sf
+    import soundfile as sf  # pyright: ignore[reportMissingImports]  # optional audio dependency, not in the lock
+
     data, rate = sf.read(path, dtype="float32", always_2d=True)
     audio = data.mean(axis=1)
     if max_secs:
         audio = audio[: int(max_secs * rate)]
     secs = len(audio) / rate
     beats = beat_times(bpm, secs, offset) if phase_known else np.array([])
-    return Case(os.path.basename(path), audio.astype(np.float32), rate, beats, float(bpm), seed_bpm=seed_bpm,
-                phase_known=phase_known, source="file", meta={"path": path})
+    return Case(
+        os.path.basename(path),
+        audio.astype(np.float32),
+        rate,
+        beats,
+        float(bpm),
+        seed_bpm=seed_bpm,
+        phase_known=phase_known,
+        source="file",
+        meta={"path": path},
+    )
 
 
 # --- metrics ------------------------------------------------------------------------------------------------
+
 
 def _trim(b: np.ndarray, start: float) -> np.ndarray:
     return b[b >= start]
@@ -533,49 +628,52 @@ def _continuity_total(est: np.ndarray, ref: np.ndarray, tol: float = CONT_TOL) -
     return ok / (len(ref) - 1)
 
 
-def _variants(ref: np.ndarray) -> List[np.ndarray]:
+def _variants(ref: np.ndarray) -> list[np.ndarray]:
     """The allowed metrical variations for AML: as-is, off-beat, double, half (both phases)."""
     out = [ref]
     if len(ref) >= 2:
         mids = (ref[:-1] + ref[1:]) / 2
-        out.append(mids)                                       # off-beat
+        out.append(mids)  # off-beat
         dbl = np.sort(np.concatenate([ref, mids]))
-        out.append(dbl)                                        # double tempo
-        out.append(ref[::2])                                   # half tempo, phase 0
-        out.append(ref[1::2])                                  # half tempo, phase 1
+        out.append(dbl)  # double tempo
+        out.append(ref[::2])  # half tempo, phase 0
+        out.append(ref[1::2])  # half tempo, phase 1
     return out
 
 
-def cml_aml(est: np.ndarray, ref: np.ndarray) -> Dict[str, float]:
+def cml_aml(est: np.ndarray, ref: np.ndarray) -> dict[str, float]:
     cmlt = _continuity_total(est, ref)
     amlt = max(_continuity_total(est, v) for v in _variants(ref)) if len(ref) else 0.0
     return {"CMLt": cmlt, "AMLt": max(cmlt, amlt)}
 
 
-def tempo_acc(est_bpm: float, ref_bpm: float) -> Dict[str, bool]:
+def tempo_acc(est_bpm: float, ref_bpm: float) -> dict[str, bool]:
     if not est_bpm or not ref_bpm:
         return {"Acc1": False, "Acc2": False}
+
     def near(x):
         return abs(est_bpm - x) <= TEMPO_TOL * x
+
     return {"Acc1": near(ref_bpm), "Acc2": any(near(ref_bpm * k) for k in (1, 2, 0.5, 3, 1 / 3))}
 
 
-def lock_time(est: np.ndarray, ref: np.ndarray, run: int = 8, window: float = F_WINDOW) -> Optional[float]:
+def lock_time(est: np.ndarray, ref: np.ndarray, run: int = 8, window: float = F_WINDOW) -> float | None:
     """The first reference beat from which `run` consecutive reference beats are all hit."""
     if len(est) == 0 or len(ref) < run:
         return None
     hit = np.array([np.min(np.abs(est - r)) <= window for r in ref])
     for i in range(len(ref) - run + 1):
-        if hit[i:i + run].all():
+        if hit[i : i + run].all():
             return float(ref[i])
     return None
 
 
 # --- running a tracker ----------------------------------------------------------------------------------------
 
-def dedupe(events: List[dict], merge: float = 0.05) -> List[dict]:
+
+def dedupe(events: list[dict], merge: float = 0.05) -> list[dict]:
     """A tracker may re-announce the same beat as its prediction sharpens: keep the LAST word on each beat."""
-    out: List[dict] = []
+    out: list[dict] = []
     for ev in sorted(events, key=lambda e: (e["t_beat"], e["_at"])):
         if out and ev["t_beat"] - out[-1]["t_beat"] < merge:
             if ev["_at"] >= out[-1]["_at"]:
@@ -585,39 +683,44 @@ def dedupe(events: List[dict], merge: float = 0.05) -> List[dict]:
     return out
 
 
-def run_tracker(factory: Callable, case: Case, hop: int = 512) -> Dict:
+def run_tracker(factory: Callable, case: Case, hop: int = 512) -> dict:
     """Feed the case block by block and, after EVERY block, ask predict() exactly as beatsync does; ahead[0] is
     the beat the lights would paint next, so that is the prediction scored (a tracker cannot be flattered by the
     bench picking a better item from its list, or by being asked only every 100 ms). Speed: the CPU time
     (process_time) of feed() + predict() per block is summed, alongside the wall time of the whole run."""
     tracker = factory(case.rate, hop, seed_bpm=case.seed_bpm)
-    predict = getattr(tracker, "predict", None)
-    can_predict = callable(predict)
-    events: List[dict] = []
-    preds: List[dict] = []
+    predict_fn = getattr(tracker, "predict", None)
+    can_predict = callable(predict_fn)
+    events: list[dict] = []
+    preds: list[dict] = []
     proc = 0.0
     t0 = time.perf_counter()
     n_blocks = len(case.audio) // hop
     for b in range(n_blocks):
-        block = case.audio[b * hop:(b + 1) * hop]
+        block = case.audio[b * hop : (b + 1) * hop]
         at = (b + 1) * hop / case.rate
         c0 = _cpu_clock()
         out = tracker.feed(block)
-        ahead = predict(at) if can_predict else None
+        ahead = cast("list[dict]", predict_fn(at)) if can_predict else None
         proc += _cpu_clock() - c0
-        for ev in out or []:
-            events.append({**ev, "_at": at})
+        events.extend({**ev, "_at": at} for ev in cast("list[dict[str, Any]]", out or []))
         if ahead:
             preds.append({"asked_at": at, "t_next": float(ahead[0]["t_beat"])})
     wall = time.perf_counter() - t0
     beats = dedupe(events)
     audio_s = len(case.audio) / case.rate
-    return {"beats": beats, "predictions": preds, "cpu_s": wall, "proc_s": proc, "audio_s": audio_s,
-            "realtime_x": audio_s / wall if wall > 0 else float("inf"),
-            "cpu_x": audio_s / proc if proc > 0 else float("inf")}
+    return {
+        "beats": beats,
+        "predictions": preds,
+        "cpu_s": wall,
+        "proc_s": proc,
+        "audio_s": audio_s,
+        "realtime_x": audio_s / wall if wall > 0 else float("inf"),
+        "cpu_x": audio_s / proc if proc > 0 else float("inf"),
+    }
 
 
-def _in_spans(x: np.ndarray, spans: Optional[Sequence]) -> np.ndarray:
+def _in_spans(x: np.ndarray, spans: Sequence | None) -> np.ndarray:
     """Index of the span each time falls in, -1 outside all of them (no spans = everything in span 0)."""
     x = np.asarray(x, dtype=float)
     if not spans:
@@ -628,8 +731,9 @@ def _in_spans(x: np.ndarray, spans: Optional[Sequence]) -> np.ndarray:
     return idx
 
 
-def prediction_error(preds: List[dict], ref: np.ndarray, after: float, min_lead: float = 0.05,
-                     spans: Optional[Sequence] = None) -> Dict:
+def prediction_error(
+    preds: list[dict], ref: np.ndarray, after: float, min_lead: float = 0.05, spans: Sequence | None = None
+) -> dict:
     """For each prediction asked at time a (after lock), compare the predicted next beat with the TRUE next beat
     (the first reference beat after a). Predictions asked less than min_lead before that beat are skipped: too
     late to steer a light by, so they would only flatter the tracker. With spans (a real song's confirmed
@@ -650,8 +754,10 @@ def prediction_error(preds: List[dict], ref: np.ndarray, after: float, min_lead:
         errs.append(abs(p["t_next"] - ref[j]) * 1000)
     if not errs:
         return {}
-    return {"pred_err_ms": round(float(np.median(errs)), 1),
-            "pred_hit": round(sum(e <= PRED_HIT_MS for e in errs) / len(errs), 3)}
+    return {
+        "pred_err_ms": round(float(np.median(errs)), 1),
+        "pred_hit": round(sum(e <= PRED_HIT_MS for e in errs) / len(errs), 3),
+    }
 
 
 def _good_bpm(x) -> bool:
@@ -661,20 +767,28 @@ def _good_bpm(x) -> bool:
         return False
 
 
-def score(case: Case, result: Dict) -> Dict:
+def score(case: Case, result: dict) -> dict:
     est = np.array([b["t_beat"] for b in result["beats"]])
     late = [b for b in result["beats"] if b["t_beat"] >= SKIP_FIRST]
     late_bpm = [float(b["bpm"]) for b in late if _good_bpm(b.get("bpm"))]
-    est_bpm = float(np.median(late_bpm)) if late_bpm else (
-        float(60.0 / np.median(np.diff(est))) if len(est) > 2 else 0.0)
-    out = {"case": case.name, "ref_bpm": round(case.bpm, 2), "est_bpm": round(est_bpm, 2), **tempo_acc(est_bpm, case.bpm),
-           "realtime_x": round(result["realtime_x"], 1)}
+    est_bpm = (
+        float(np.median(late_bpm)) if late_bpm else (float(60.0 / np.median(np.diff(est))) if len(est) > 2 else 0.0)
+    )
+    out = {
+        "case": case.name,
+        "ref_bpm": round(case.bpm, 2),
+        "est_bpm": round(est_bpm, 2),
+        **tempo_acc(est_bpm, case.bpm),
+        "realtime_x": round(result["realtime_x"], 1),
+    }
     if "cpu_x" in result:
         out["cpu_x"] = round(result["cpu_x"], 1) if math.isfinite(result["cpu_x"]) else result["cpu_x"]
     if late_bpm:
         # each locked-state bpm with its OWN beat (a beat with no bpm is counted by drift(), never misaligned here)
-        octave = [abs(x - 2 * case.bpm) <= TEMPO_TOL * 2 * case.bpm or abs(x - case.bpm / 2) <= TEMPO_TOL * case.bpm / 2
-                  for x in late_bpm]
+        octave = [
+            abs(x - 2 * case.bpm) <= TEMPO_TOL * 2 * case.bpm or abs(x - case.bpm / 2) <= TEMPO_TOL * case.bpm / 2
+            for x in late_bpm
+        ]
         out["octave_err"] = round(sum(octave) / len(octave), 3)
     spans = (case.meta or {}).get("spans")
     out.update(drift(result["beats"], start=SKIP_FIRST))
@@ -698,22 +812,25 @@ def score(case: Case, result: Dict) -> Dict:
             rl = lock_time(est, after)
             out["relock_s"] = round(rl - step_at, 2) if rl is not None else None
         if result.get("predictions"):
-            out.update(prediction_error(result["predictions"], case.beats, after=lt if lt is not None else SKIP_FIRST,
-                                        spans=spans))
+            out.update(
+                prediction_error(
+                    result["predictions"], case.beats, after=lt if lt is not None else SKIP_FIRST, spans=spans
+                )
+            )
     return out
 
 
-FLIP_RATIO = 0.08   # a reported tempo jumping more than 8 % between consecutive beats counts as a flip
+FLIP_RATIO = 0.08  # a reported tempo jumping more than 8 % between consecutive beats counts as a flip
 
 
-def _spread_flips(v: np.ndarray, seqs: Optional[List[np.ndarray]] = None) -> Tuple[float, int]:
+def _spread_flips(v: np.ndarray, seqs: list[np.ndarray] | None = None) -> tuple[float, int]:
     med = float(np.median(v))
     spread = float((np.percentile(v, 90) - np.percentile(v, 10)) / med) if med else 0.0
     flips = sum(int(np.sum(np.abs(s[1:] / s[:-1] - 1.0) > FLIP_RATIO)) for s in (seqs or [v]) if len(s) > 1)
     return spread, flips
 
 
-def drift(beats: List[dict], start: float = SKIP_FIRST) -> Dict:
+def drift(beats: list[dict], start: float = SKIP_FIRST) -> dict:
     """How steady the DISPLAYED tempo is once settled. Music made in a DAW has a constant grid, so on constant-
     tempo material any spread or flip is the tracker chasing notes rather than holding the grid.
       bpm_spread   (p90 - p10) / median of the reported bpm after `start`; 0 = rock steady
@@ -722,7 +839,7 @@ def drift(beats: List[dict], start: float = SKIP_FIRST) -> Dict:
                    because dropping them silently would let a tracker hide its unsure beats from the two above"""
     late = [b for b in beats if b["t_beat"] >= start]
     vals = [float(b["bpm"]) for b in late if _good_bpm(b.get("bpm"))]
-    out: Dict = {"bpm_missing": len(late) - len(vals)}
+    out: dict = {"bpm_missing": len(late) - len(vals)}
     if len(vals) < 3:
         return out
     spread, flips = _spread_flips(np.array(vals))
@@ -730,7 +847,7 @@ def drift(beats: List[dict], start: float = SKIP_FIRST) -> Dict:
     return out
 
 
-def ibi_drift(beats: List[dict], start: float = SKIP_FIRST, spans: Optional[Sequence] = None) -> Dict:
+def ibi_drift(beats: list[dict], start: float = SKIP_FIRST, spans: Sequence | None = None) -> dict:
     """Grid steadiness from the beat TIMES: bpm_spread and tempo_flips' own definitions applied to 60 / inter-beat
     interval of the observed (deduped) beats after `start`. A tracker may smooth the bpm it displays; it cannot
     smooth these without moving its beats. With spans (a real song's confirmed sections) an interval counts only
@@ -754,48 +871,71 @@ def ibi_drift(beats: List[dict], start: float = SKIP_FIRST, spans: Optional[Sequ
     return {"ibi_spread": round(spread, 4), "ibi_flips": flips}
 
 
-def summarize(rows: List[Dict]) -> Dict:
+def summarize(rows: list[dict]) -> dict:
     def num(x):
         return isinstance(x, (int, float)) and not isinstance(x, bool)
+
     def mean(key):
         vals = [r[key] for r in rows if num(r.get(key))]
         return round(float(np.mean(vals)), 3) if vals else None
+
     def share(key):
         vals = [bool(r[key]) for r in rows if key in r]
         return round(sum(vals) / len(vals), 3) if vals else None
+
     def lowest(key):
         vals = [r[key] for r in rows if num(r.get(key))]
         return round(float(min(vals)), 3) if vals else None
+
     locks = [r["lock_s"] for r in rows if r.get("lock_s") is not None]
-    return {"cases": len(rows), "F": mean("F"), "CMLt": mean("CMLt"), "AMLt": mean("AMLt"),
-            "min_F": lowest("F"), "min_CMLt": lowest("CMLt"), "Acc1": share("Acc1"),
-            "Acc2": share("Acc2"), "octave_err": mean("octave_err"), "lead_ms": mean("lead_ms"),
-            "lock_s_median": round(float(np.median(locks)), 2) if locks else None,
-            "never_locked": sum(1 for r in rows if "lock_s" in r and r["lock_s"] is None),
-            "pred_err_ms": mean("pred_err_ms"), "pred_hit": mean("pred_hit"),
-            "bpm_spread": mean("bpm_spread"), "tempo_flips": mean("tempo_flips"),
-            "ibi_spread": mean("ibi_spread"), "ibi_flips": mean("ibi_flips"),
-            "bpm_missing": sum(int(r.get("bpm_missing") or 0) for r in rows),
-            "relock_s": mean("relock_s"),
-            "never_relocked": sum(1 for r in rows if "relock_s" in r and r["relock_s"] is None),
-            "realtime_x_min": min((r["realtime_x"] for r in rows), default=None),
-            "cpu_x_min": min((r["cpu_x"] for r in rows if num(r.get("cpu_x"))), default=None)}
+    return {
+        "cases": len(rows),
+        "F": mean("F"),
+        "CMLt": mean("CMLt"),
+        "AMLt": mean("AMLt"),
+        "min_F": lowest("F"),
+        "min_CMLt": lowest("CMLt"),
+        "Acc1": share("Acc1"),
+        "Acc2": share("Acc2"),
+        "octave_err": mean("octave_err"),
+        "lead_ms": mean("lead_ms"),
+        "lock_s_median": round(float(np.median(locks)), 2) if locks else None,
+        "never_locked": sum(1 for r in rows if "lock_s" in r and r["lock_s"] is None),
+        "pred_err_ms": mean("pred_err_ms"),
+        "pred_hit": mean("pred_hit"),
+        "bpm_spread": mean("bpm_spread"),
+        "tempo_flips": mean("tempo_flips"),
+        "ibi_spread": mean("ibi_spread"),
+        "ibi_flips": mean("ibi_flips"),
+        "bpm_missing": sum(int(r.get("bpm_missing") or 0) for r in rows),
+        "relock_s": mean("relock_s"),
+        "never_relocked": sum(1 for r in rows if "relock_s" in r and r["relock_s"] is None),
+        "realtime_x_min": min((r["realtime_x"] for r in rows), default=None),
+        "cpu_x_min": min((r["cpu_x"] for r in rows if num(r.get("cpu_x"))), default=None),
+    }
 
 
 # --- reference trackers (baselines) ----------------------------------------------------------------------------
 
+
 class AubioTracker:
     """Baseline row: aubio's online tracker (GPLv3+, optional; imported lazily, never vendored)."""
 
-    def __init__(self, rate: int, hop: int, seed_bpm: Optional[float] = None):
-        import aubio
+    def __init__(self, rate: int, hop: int, seed_bpm: float | None = None):
+        import aubio  # pyright: ignore[reportMissingImports]  # optional audio dependency, not in the lock
+
         self.rate, self.hop = rate, hop
         self.t = aubio.tempo("default", hop * 2, hop, rate)
 
-    def feed(self, block: np.ndarray) -> List[dict]:
+    def feed(self, block: np.ndarray) -> list[dict]:
         if self.t(block.astype(np.float32))[0]:
-            return [{"t_beat": float(self.t.get_last_s()), "bpm": float(self.t.get_bpm()),
-                     "confidence": float(self.t.get_confidence())}]
+            return [
+                {
+                    "t_beat": float(self.t.get_last_s()),
+                    "bpm": float(self.t.get_bpm()),
+                    "confidence": float(self.t.get_confidence()),
+                }
+            ]
         return []
 
 
@@ -803,15 +943,16 @@ class LibrosaOffline:
     """Reference row, NOT live: librosa's offline dynamic-programming tracker (Ellis 2007, ISC licence) run on the
     whole case at the end. It sees the future, so it is an upper-bound-ish yardstick; its lead_ms is meaningless."""
 
-    def __init__(self, rate: int, hop: int, seed_bpm: Optional[float] = None):
+    def __init__(self, rate: int, hop: int, seed_bpm: float | None = None):
         self.rate, self.hop, self.seed, self.buf = rate, hop, seed_bpm, []
 
-    def feed(self, block: np.ndarray) -> List[dict]:
+    def feed(self, block: np.ndarray) -> list[dict]:
         self.buf.append(block)
         return []
 
-    def finish(self) -> List[dict]:
-        import librosa
+    def finish(self) -> list[dict]:
+        import librosa  # pyright: ignore[reportMissingImports]  # optional audio dependency, not in the lock
+
         y = np.concatenate(self.buf)
         kw = {"start_bpm": self.seed} if self.seed else {}
         tempo, frames = librosa.beat.beat_track(y=y, sr=self.rate, hop_length=self.hop, units="frames", **kw)
@@ -820,11 +961,11 @@ class LibrosaOffline:
         return [{"t_beat": float(t), "bpm": bpm, "confidence": 1.0} for t in times]
 
 
-def run_offline(factory: Callable, case: Case, hop: int = 512) -> Dict:
+def run_offline(factory: Callable, case: Case, hop: int = 512) -> dict:
     r = run_tracker(factory, case, hop)
     tracker = factory(case.rate, hop, seed_bpm=case.seed_bpm)
     for b in range(len(case.audio) // hop):
-        tracker.feed(case.audio[b * hop:(b + 1) * hop])
+        tracker.feed(case.audio[b * hop : (b + 1) * hop])
     t0, c0 = time.perf_counter(), _cpu_clock()
     evs = [{**e, "_at": len(case.audio) / case.rate} for e in tracker.finish()]
     r["beats"], r["cpu_s"], r["proc_s"] = dedupe(evs), time.perf_counter() - t0, _cpu_clock() - c0
@@ -833,7 +974,7 @@ def run_offline(factory: Callable, case: Case, hop: int = 512) -> Dict:
     return r
 
 
-TRACKERS: Dict[str, Dict] = {
+TRACKERS: dict[str, dict] = {
     "aubio": {"factory": AubioTracker, "offline": False, "note": "GPLv3+, optional, baseline"},
     "librosa": {"factory": LibrosaOffline, "offline": True, "note": "offline reference, sees the future"},
 }
@@ -848,11 +989,13 @@ def _check_unique(names: Iterable[str], what: str = "case") -> None:
     for n in names:
         (dup if n in seen else seen).add(n)
     if dup:
-        raise ValueError(f"duplicate {what} names {sorted(dup)[:5]}: paired comparison matches by name, so every "
-                         f"{what} name must be unique")
+        raise ValueError(
+            f"duplicate {what} names {sorted(dup)[:5]}: paired comparison matches by name, so every "
+            f"{what} name must be unique"
+        )
 
 
-def bench(cases: Sequence[Case], names: Sequence[str], hop: int = 512, log: Callable[[str], None] = print) -> Dict:
+def bench(cases: Sequence[Case], names: Sequence[str], hop: int = 512, log: Callable[[str], None] = print) -> dict:
     _check_unique(c.name for c in cases)
     report = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "hop": hop, "trackers": {}}
     for name in names:
@@ -879,14 +1022,14 @@ def bench(cases: Sequence[Case], names: Sequence[str], hop: int = 512, log: Call
 REQUIRED_KEYS = ("t_beat", "bpm", "phase", "confidence")
 
 
-def check_tracker(factory: Callable, rate: int = 44100, hop: int = 512) -> List[str]:
+def check_tracker(factory: Callable, rate: int = 44100, hop: int = 512) -> list[str]:
     """Conformance with the streaming contract above. Returns problems; [] means it conforms.
 
     The lights paint from predict(), so a contestant must have one: called after every block (as beatsync calls
     it), whatever it returns must be sorted and strictly in the future, and once the tracker has locked on a plain
     120 BPM drum loop (8 consecutive observed beats on the true beat) it must never come back empty. Every observed
     beat must carry a finite bpm > 0."""
-    problems: List[str] = []
+    problems: list[str] = []
     case = synth_case("contract_120", 120, secs=10.0, rate=rate)
     for seed in (None, 120.0):
         try:
@@ -897,11 +1040,11 @@ def check_tracker(factory: Callable, rate: int = 44100, hop: int = 512) -> List[
         if not callable(pred):
             problems.append("predict() missing: the lights paint from predict(), so every contestant needs one")
         seen = 0
-        observed: List[dict] = []
-        polls: List[Tuple[float, bool]] = []
+        observed: list[dict] = []
+        polls: list[tuple[float, bool]] = []
         for b in range(len(case.audio) // hop):
             at = (b + 1) * hop / rate
-            out = tr.feed(case.audio[b * hop:(b + 1) * hop])
+            out = tr.feed(case.audio[b * hop : (b + 1) * hop])
             if not isinstance(out, list):
                 problems.append(f"feed() returned {type(out).__name__}, not list")
                 break
@@ -948,16 +1091,16 @@ def check_tracker(factory: Callable, rate: int = 44100, hop: int = 512) -> List[
                 locked_at = float(ref_after[7]) if len(ref_after) > 7 else float(case.beats[-1])
                 empty = [at for at, ok in polls if at >= locked_at and not ok]
                 if empty:
-                    problems.append(f"predict() came back empty after lock ({len(empty)} of the blocks after "
-                                    f"{locked_at:.2f} s, seed={seed})")
+                    problems.append(
+                        f"predict() came back empty after lock ({len(empty)} of the blocks after "
+                        f"{locked_at:.2f} s, seed={seed})"
+                    )
         if problems:
             break
     return sorted(set(problems))
 
 
 # --- real audio: BPM-labelled loops from Daniel's own sample packs (local, private, never committed) ---------------
-
-import re as _re
 
 _BPM_RE = _re.compile(r"(?<!\d)(\d{2,3})\s?bpm", _re.I)
 # Three kinds, because they are not equally answerable: a loop WITH a kick marks the beat; a hats/tops/percussion
@@ -967,7 +1110,7 @@ _KICKY = ("drum loop", "drum fill", "breakbeat", "break", "groove", "kick", "ful
 _TOPS = ("hat", "top", "perc", "shaker", "clap", "snare", "cymbal", "ride", "tamb", "conga", "bongo")
 
 
-def parse_bpm(name: str) -> Optional[int]:
+def parse_bpm(name: str) -> int | None:
     m = _BPM_RE.search(name)
     if not m:
         return None
@@ -979,23 +1122,29 @@ def parse_bpm(name: str) -> Optional[int]:
 _NOT_A_PACK = ("\\appdata\\local\\temp\\", "pytest-of-", "\\$recycle.bin\\")
 
 
-def find_bpm_loops(max_results: int = 200000) -> List[str]:
+def find_bpm_loops(max_results: int = 200000) -> list[str]:
     """Loops whose FILE NAME carries a BPM, from the Everything index (no drive crawl). Reads the WHOLE index (a
     capped slice made the pool an arbitrary first-N that any stray file reshuffled) and skips temp, test and
     recycle-bin copies (the bench's own tests write 'Drum Loop N 120 BPM.wav' files that pytest keeps)."""
     from core.tools.everything import search
+
     r = search(r"regex:(?i)\d{2,3}\s?bpm.*\.(wav|flac|aiff?|mp3)$", max_results=max_results)
-    return [p for p in r.paths if "loop" in p.lower() and parse_bpm(os.path.basename(p))
-            and not any(x in p.lower() for x in _NOT_A_PACK)]
+    return [
+        p
+        for p in r.paths
+        if "loop" in p.lower() and parse_bpm(os.path.basename(p)) and not any(x in p.lower() for x in _NOT_A_PACK)
+    ]
 
 
 def receipt_case_names(paths: Iterable[str]) -> set:
     """The loop FILE NAMES a bench receipt scored (seeded twins and content-hash suffixes folded): the tuning set
     as it actually ran, independent of how the live index has drifted since."""
     import re as _re
+
     names = set()
     for rp in paths:
-        rep_ = json.load(open(rp, encoding="utf-8"))
+        with open(rp, encoding="utf-8") as fh:
+            rep_ = json.load(fh)
         for t in rep_.get("trackers", {}).values():
             for row in t.get("cases", []):
                 n = row["case"].replace(" [seeded]", "")
@@ -1023,15 +1172,19 @@ def loop_pack(path: str) -> str:
 # shares is unique without being read; files that share a size are compared on a 128 KB head+tail digest first,
 # and only files that also share that are hashed in full. Digests are cached by (path, size, mtime).
 
-HASH_CACHE_PATH: Optional[str] = os.path.join(
+HASH_CACHE_PATH: str | None = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "state", "arsenal", "keylab", "content-hashes.json")
-_HASH_MEM: Dict[str, Dict[str, str]] = {}
+    "state",
+    "arsenal",
+    "keylab",
+    "content-hashes.json",
+)
+_HASH_MEM: dict[str, dict[str, str]] = {}
 _HASH_LOADED = False
 _PARTIAL = 65536
 
 
-def _hash_cache() -> Dict[str, Dict[str, str]]:
+def _hash_cache() -> dict[str, dict[str, str]]:
     global _HASH_LOADED
     if not _HASH_LOADED:
         _HASH_LOADED = True
@@ -1057,7 +1210,7 @@ def _save_hash_cache() -> None:
         pass
 
 
-def _stat_key(path: str) -> Optional[Tuple[str, int]]:
+def _stat_key(path: str) -> tuple[str, int] | None:
     try:
         st = os.stat(path)
     except OSError:
@@ -1065,7 +1218,7 @@ def _stat_key(path: str) -> Optional[Tuple[str, int]]:
     return f"{path}|{st.st_size}|{st.st_mtime_ns}", int(st.st_size)
 
 
-def _digest(path: str, kind: str) -> Optional[str]:
+def _digest(path: str, kind: str) -> str | None:
     """kind 'sha1' = the whole file; 'partial' = size + first and last 64 KB (a cheap pre-filter only)."""
     sk = _stat_key(path)
     if sk is None:
@@ -1093,22 +1246,24 @@ def _digest(path: str, kind: str) -> Optional[str]:
     return h.hexdigest()
 
 
-def file_sha1(path: str) -> Optional[str]:
+def file_sha1(path: str) -> str | None:
     return _digest(path, "sha1")
 
 
-def content_key(path: str) -> Optional[Tuple[int, str]]:
+def content_key(path: str) -> tuple[int, str] | None:
     """(size, sha1 of the bytes): what makes two loop files the same loop."""
     sk = _stat_key(path)
-    sha = file_sha1(path) if sk else None
+    if sk is None:
+        return None
+    sha = file_sha1(path)
     return (sk[1], sha) if sha else None
 
 
-def dedupe_by_content(paths: Iterable[str]) -> Tuple[List[str], Dict[str, int]]:
+def dedupe_by_content(paths: Iterable[str]) -> tuple[list[str], dict[str, int]]:
     """Keep one path per distinct content, the first in sorted path order; drop paths that cannot be read. Returns
     (kept, counts) with counts {'unreadable', 'duplicates'}."""
     ordered = sorted(dict.fromkeys(paths))
-    sized: Dict[int, List[str]] = {}
+    sized: dict[int, list[str]] = {}
     bad, dup = set(), set()
     for p in ordered:
         sk = _stat_key(p)
@@ -1118,8 +1273,8 @@ def dedupe_by_content(paths: Iterable[str]) -> Tuple[List[str], Dict[str, int]]:
             sized.setdefault(sk[1], []).append(p)
     for group in sized.values():
         if len(group) < 2:
-            continue                                         # a size nobody else has: unique without reading it
-        by_partial: Dict[str, List[str]] = {}
+            continue  # a size nobody else has: unique without reading it
+        by_partial: dict[str, list[str]] = {}
         for p in group:
             d = _digest(p, "partial")
             if d is None:
@@ -1129,8 +1284,8 @@ def dedupe_by_content(paths: Iterable[str]) -> Tuple[List[str], Dict[str, int]]:
         for same in by_partial.values():
             if len(same) < 2:
                 continue
-            first_of: Dict[str, str] = {}
-            for p in same:                                   # in sorted order: the first of each content is kept
+            first_of: dict[str, str] = {}
+            for p in same:  # in sorted order: the first of each content is kept
                 sha = file_sha1(p)
                 if sha is None:
                     bad.add(p)
@@ -1143,9 +1298,14 @@ def dedupe_by_content(paths: Iterable[str]) -> Tuple[List[str], Dict[str, int]]:
     return kept, {"unreadable": len(bad), "duplicates": len(dup)}
 
 
-def stratified_loops(per_cat: int = 30, rng_seed: int = 23, exclude: Optional[Iterable[str]] = None,
-                     pool: Optional[List[str]] = None, dedupe: bool = True,
-                     exclude_names: Optional[set] = None) -> List[str]:
+def stratified_loops(
+    per_cat: int = 30,
+    rng_seed: int = 23,
+    exclude: Iterable[str] | None = None,
+    pool: list[str] | None = None,
+    dedupe: bool = True,
+    exclude_names: set | None = None,
+) -> list[str]:
     """per_cat loop paths from each category (kick / tops / melodic), so a run is not dominated by melodic loops
     (most of the pool) and each class is scored with enough cases to mean something.
 
@@ -1166,9 +1326,11 @@ def stratified_loops(per_cat: int = 30, rng_seed: int = 23, exclude: Optional[It
         if exclude:
             excl = {k for k in (content_key(p) for p in exclude) if k}
             sizes = {k[0] for k in excl}
+
             def tuned_on(p):
                 sk = _stat_key(p)
                 return sk is not None and sk[1] in sizes and content_key(p) in excl
+
             pool = [p for p in pool if not tuned_on(p)]
             _save_hash_cache()
     rng = np.random.default_rng(rng_seed)
@@ -1185,7 +1347,7 @@ def stratified_loops(per_cat: int = 30, rng_seed: int = 23, exclude: Optional[It
     return picked
 
 
-def held_out_exclusion(seeds: Iterable[int], per_cat: int = 30, pool: Optional[List[str]] = None) -> set:
+def held_out_exclusion(seeds: Iterable[int], per_cat: int = 30, pool: list[str] | None = None) -> set:
     """Every loop a tuning draw at these seeds could have used: the round-1 draw exactly as it ran (dedupe=False)
     AND the deduped draw at the same seeds (what a round-2 builder gets for `--seed 7`). Returned as paths;
     stratified_loops excludes them by content."""
@@ -1201,9 +1363,15 @@ class ManifestMismatch(ValueError):
     """A file named by a manifest is missing, unreadable, or no longer has the content the manifest recorded."""
 
 
-def loop_suite(n: int = 40, rng_seed: int = 7, tile_secs: float = 30.0, paths: Optional[List[str]] = None,
-               log: Callable[[str], None] = print, expect_sha1: Optional[Dict[str, str]] = None,
-               strict: bool = False) -> List[Case]:
+def loop_suite(
+    n: int = 40,
+    rng_seed: int = 7,
+    tile_secs: float = 30.0,
+    paths: list[str] | None = None,
+    log: Callable[[str], None] = print,
+    expect_sha1: dict[str, str] | None = None,
+    strict: bool = False,
+) -> list[Case]:
     """n loops sampled across packs and tempos, each tiled to tile_secs (loops loop seamlessly by design, and the
     trackers need time to lock). Tempo comes from the file name; phase is ASSUMED to start at t=0 (loops are cut
     to the grid). Third-party audio: evaluated in place, never copied into the repo.
@@ -1213,37 +1381,41 @@ def loop_suite(n: int = 40, rng_seed: int = 7, tile_secs: float = 30.0, paths: O
     expect_sha1 {path: sha1} (a manifest) makes a changed file an error; strict=True makes ANY file that cannot be
     scored an error instead of a skip (a manifest run scores exactly its list or nothing)."""
     import io
-    import soundfile as sf
+
+    import soundfile as sf  # pyright: ignore[reportMissingImports]  # optional audio dependency, not in the lock
+
     pool = paths if paths is not None else find_bpm_loops()
     rng = np.random.default_rng(rng_seed)
-    by_pack: Dict[str, List[str]] = {}
+    by_pack: dict[str, list[str]] = {}
     for p in pool:
         parts = p.replace("/", "\\").split("\\")
         pack = "\\".join(parts[:3]) if len(parts) > 3 else parts[0]
         by_pack.setdefault(pack, []).append(p)
     packs = sorted(by_pack)
     rng.shuffle(packs)
-    chosen: List[str] = []
+    chosen: list[str] = []
     while len(chosen) < n and any(by_pack[k] for k in packs):
-        for k in packs:                                  # round-robin across packs, so no single pack dominates
+        for k in packs:  # round-robin across packs, so no single pack dominates
             if by_pack[k] and len(chosen) < n:
                 chosen.append(by_pack[k].pop(int(rng.integers(len(by_pack[k])))))
     cases = []
-    loaded: Dict[str, str] = {}
+    loaded: dict[str, str] = {}
     for p in chosen:
         try:
             with open(p, "rb") as f:
                 raw = f.read()
             sha = hashlib.sha1(raw).hexdigest()
-            if sha in loaded:                            # the same loop at a second path: one loop, scored once
+            if sha in loaded:  # the same loop at a second path: one loop, scored once
                 if strict:
                     raise ManifestMismatch(f"{p}: the same content as {loaded[sha]}")
                 log(f"[beatbench] skip {os.path.basename(p)}: same content as {os.path.basename(loaded[sha])}")
                 continue
             loaded[sha] = p
             if expect_sha1 is not None and expect_sha1.get(p) != sha:
-                raise ManifestMismatch(f"{p}: content changed since the manifest was written "
-                                       f"(sha1 {sha[:12]}, manifest {str(expect_sha1.get(p))[:12]})")
+                raise ManifestMismatch(
+                    f"{p}: content changed since the manifest was written "
+                    f"(sha1 {sha[:12]}, manifest {str(expect_sha1.get(p))[:12]})"
+                )
             data, rate = sf.read(io.BytesIO(raw), dtype="float32", always_2d=True)
         except ManifestMismatch:
             raise
@@ -1253,18 +1425,37 @@ def loop_suite(n: int = 40, rng_seed: int = 7, tile_secs: float = 30.0, paths: O
             log(f"[beatbench] skip {os.path.basename(p)}: {type(exc).__name__}")
             continue
         mono = data.mean(axis=1)
-        if len(mono) < rate:                            # under a second: a one-shot mislabelled as a loop
+        if len(mono) < rate:  # under a second: a one-shot mislabelled as a loop
             if strict:
                 raise ManifestMismatch(f"{p}: shorter than a second, not a loop")
             continue
-        reps = int(math.ceil(tile_secs * rate / len(mono)))
+        reps = math.ceil(tile_secs * rate / len(mono))
         audio = np.tile(mono, reps)[: int(tile_secs * rate)].astype(np.float32)
-        bpm = float(parse_bpm(os.path.basename(p)))
+        label_bpm = parse_bpm(os.path.basename(p))
+        if label_bpm is None:
+            continue  # no BPM in the name: no ground truth for a loop
+        bpm = float(label_bpm)
         name = f"{os.path.basename(p)} #{sha[:8]}"
         cat = loop_category(p)
-        cases.append(Case(name, audio, int(rate), beat_times(bpm, tile_secs, 0.0), bpm, phase_known=True,
-                          source="loop", meta={"path": p, "category": cat, "loop_secs": round(len(mono) / rate, 2),
-                                               "sha1": sha, "size": len(raw), "pack": loop_pack(p)}))
+        cases.append(
+            Case(
+                name,
+                audio,
+                int(rate),
+                beat_times(bpm, tile_secs, 0.0),
+                bpm,
+                phase_known=True,
+                source="loop",
+                meta={
+                    "path": p,
+                    "category": cat,
+                    "loop_secs": round(len(mono) / rate, 2),
+                    "sha1": sha,
+                    "size": len(raw),
+                    "pack": loop_pack(p),
+                },
+            )
+        )
     return cases
 
 
@@ -1273,7 +1464,7 @@ def loop_suite(n: int = 40, rng_seed: int = 7, tile_secs: float = 30.0, paths: O
 MANIFEST_KIND = "beatbench-manifest"
 
 
-def case_files(cases: Sequence[Case]) -> List[Dict]:
+def case_files(cases: Sequence[Case]) -> list[dict]:
     """The files behind file-backed cases (seeded copies share their loop's file and appear once)."""
     out, seen = [], set()
     for c in cases:
@@ -1281,16 +1472,23 @@ def case_files(cases: Sequence[Case]) -> List[Dict]:
         if not m.get("path") or m["path"] in seen:
             continue
         seen.add(m["path"])
-        out.append({"path": m["path"], "size": m.get("size"), "sha1": m.get("sha1"),
-                    "category": m.get("category", c.source)})
+        out.append(
+            {"path": m["path"], "size": m.get("size"), "sha1": m.get("sha1"), "category": m.get("category", c.source)}
+        )
     return out
 
 
 def write_manifest(path: str, cases: Sequence[Case], suite: str, **params) -> str:
     """Write the drawn cases (path, size, sha1, category) and the draw's parameters; returns the manifest's own
     sha1 (the receipt of a gating run names it)."""
-    doc = {"kind": MANIFEST_KIND, "version": 1, "suite": suite, "written_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-           **params, "cases": case_files(cases)}
+    doc = {
+        "kind": MANIFEST_KIND,
+        "version": 1,
+        "suite": suite,
+        "written_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        **params,
+        "cases": case_files(cases),
+    }
     raw = json.dumps(doc, indent=1, ensure_ascii=False).encode("utf-8")
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "wb") as f:
@@ -1298,7 +1496,7 @@ def write_manifest(path: str, cases: Sequence[Case], suite: str, **params) -> st
     return hashlib.sha1(raw).hexdigest()
 
 
-def read_manifest(path: str) -> Tuple[Dict, str]:
+def read_manifest(path: str) -> tuple[dict, str]:
     """(the manifest, the sha1 of its bytes). Raises ValueError on anything that is not a beatbench manifest."""
     with open(path, "rb") as f:
         raw = f.read()
@@ -1311,19 +1509,25 @@ def read_manifest(path: str) -> Tuple[Dict, str]:
     return doc, hashlib.sha1(raw).hexdigest()
 
 
-def manifest_loops(doc: Dict, tile_secs: float = 30.0, log: Callable[[str], None] = print) -> List[Case]:
+def manifest_loops(doc: dict, tile_secs: float = 30.0, log: Callable[[str], None] = print) -> list[Case]:
     """Exactly the manifest's loops, each verified against its sha1; any missing or changed file is an error."""
     if doc.get("suite") != "loops":
         raise ValueError(f"manifest suite is {doc.get('suite')!r}, not 'loops'")
     paths = [c["path"] for c in doc["cases"]]
-    cases = loop_suite(n=len(paths), paths=paths, tile_secs=tile_secs, log=log,
-                       expect_sha1={c["path"]: c.get("sha1") for c in doc["cases"]}, strict=True)
+    cases = loop_suite(
+        n=len(paths),
+        paths=paths,
+        tile_secs=tile_secs,
+        log=log,
+        expect_sha1={c["path"]: c.get("sha1") for c in doc["cases"]},
+        strict=True,
+    )
     if len(cases) != len(paths):
         raise ValueError(f"manifest lists {len(paths)} loops, {len(cases)} were scored")
     return cases
 
 
-def case_index(cases: Sequence[Case]) -> List[Dict]:
+def case_index(cases: Sequence[Case]) -> list[dict]:
     """What a receipt records about every case: its name, kind, and for files the path and sha1 scored."""
     out = []
     for c in cases:
@@ -1338,8 +1542,8 @@ def case_index(cases: Sequence[Case]) -> List[Dict]:
 
 # --- round 2: paired comparison, and real recordings with listened-to ground truth -----------------------------
 
-def paired(rows_c: List[Dict], rows_ref: List[Dict], key: str, n_boot: int = 4000, seed: int = 0,
-           cluster=None) -> Dict:
+
+def paired(rows_c: list[dict], rows_ref: list[dict], key: str, n_boot: int = 4000, seed: int = 0, cluster=None) -> dict:
     """Per-case paired difference contestant - reference on one metric, over the cases both scored (matched by
     case name, which must be unique). Returns the mean difference and a 95 % bootstrap interval. Round 2 replaced
     round 1's fixed margin on one draw of 30 loops (smaller than the draw-to-draw noise: beat_a's own kick F moved
@@ -1354,16 +1558,20 @@ def paired(rows_c: List[Dict], rows_ref: List[Dict], key: str, n_boot: int = 400
 
     def num(x):
         return isinstance(x, (int, float)) and not isinstance(x, bool)
+
     ref = {r["case"]: r for r in rows_ref}
-    pairs = [(r["case"], r[key] - ref[r["case"]][key]) for r in rows_c
-             if num(r.get(key)) and r["case"] in ref and num(ref[r["case"]].get(key))]
+    pairs = [
+        (r["case"], r[key] - ref[r["case"]][key])
+        for r in rows_c
+        if num(r.get(key)) and r["case"] in ref and num(ref[r["case"]].get(key))
+    ]
     d = np.array([x for _, x in pairs], dtype=float)
     if not len(d):
         return {"n": 0}
     rng = np.random.default_rng(seed)
     if cluster is None:
         boots = d[rng.integers(0, len(d), size=(n_boot, len(d)))].mean(axis=1)
-        extra: Dict = {}
+        extra: dict = {}
     else:
         get = cluster if callable(cluster) else (lambda name: cluster.get(name, name))
         ids = [get(name) for name, _ in pairs]
@@ -1377,8 +1585,12 @@ def paired(rows_c: List[Dict], rows_ref: List[Dict], key: str, n_boot: int = 400
         boots = sums[draw].sum(axis=1) / counts[draw].sum(axis=1)
         extra = {"clusters": int(k)}
     lo, hi = np.percentile(boots, [2.5, 97.5])
-    return {"n": int(len(d)), "mean": round(float(d.mean()), 4), "ci95": [round(float(lo), 4), round(float(hi), 4)],
-            **extra}
+    return {
+        "n": len(d),
+        "mean": round(float(d.mean()), 4),
+        "ci95": [round(float(lo), 4), round(float(hi), 4)],
+        **extra,
+    }
 
 
 PAIRED_KEYS = ("F", "CMLt", "bpm_spread", "ibi_spread")
@@ -1391,8 +1603,9 @@ def case_group(c: Case) -> str:
     return f"{cat}{' seeded' if c.seed_bpm and c.source == 'loop' else ''}"
 
 
-def paired_report(cases: Sequence[Case], report: Dict, vs: str, keys: Sequence[str] = PAIRED_KEYS,
-                  log: Callable[[str], None] = print) -> Dict:
+def paired_report(
+    cases: Sequence[Case], report: dict, vs: str, keys: Sequence[str] = PAIRED_KEYS, log: Callable[[str], None] = print
+) -> dict:
     """Every scored tracker against `vs`, case by case: per group and POOLED over all groups, each with a cluster
     bootstrap by loop pack folder when the cases are loops (a non-loop case is its own cluster)."""
     trackers = report["trackers"]
@@ -1402,34 +1615,42 @@ def paired_report(cases: Sequence[Case], report: Dict, vs: str, keys: Sequence[s
     packs = {c.name: (c.meta or {}).get("pack") for c in cases}
     cluster = {n: (p or n) for n, p in packs.items()} if any(packs.values()) else None
     ref_rows = trackers[vs]["cases"]
-    out: Dict = {}
+    out: dict = {}
     for name, t in trackers.items():
         if name == vs or "cases" not in t:
             continue
-        res: Dict = {}
-        for g in sorted(set(group.values())) + ["pooled"]:
+        res: dict = {}
+        for g in [*sorted(set(group.values())), "pooled"]:
             rc = [r for r in t["cases"] if g == "pooled" or group.get(r["case"]) == g]
             rr = [r for r in ref_rows if g == "pooled" or group.get(r["case"]) == g]
             res[g] = {k: paired(rc, rr, k, cluster=cluster) for k in keys}
             f, c, sp = res[g]["F"], res[g]["CMLt"], res[g]["bpm_spread"]
             if f.get("n"):
-                log(f"[paired] {name} - {vs} | {g:18} n {f['n']:3}"
+                log(
+                    f"[paired] {name} - {vs} | {g:18} n {f['n']:3}"
                     f"{' clusters ' + str(f['clusters']) if 'clusters' in f else ''}  F {f['mean']:+.3f} {f['ci95']}  "
-                    f"CMLt {c['mean']:+.3f} {c['ci95']}  spread {sp.get('mean', 0):+.3f} {sp.get('ci95')}")
+                    f"CMLt {c['mean']:+.3f} {c['ci95']}  spread {sp.get('mean', 0):+.3f} {sp.get('ci95')}"
+                )
         out[name] = res
     return out
 
 
-RECORDINGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                              "state", "arsenal", "keylab", "recordings")
+RECORDINGS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "state",
+    "arsenal",
+    "keylab",
+    "recordings",
+)
 
 
 FIT_N_FFT = 2048
 FIT_RELATIVES = (("x1/2", 0.5), ("x2", 2.0), ("x2/3", 2.0 / 3.0), ("x3/2", 1.5), ("x4/5", 0.8))
 
 
-def _flux_env(audio: np.ndarray, rate: int, hop: int = 256, n_fft: int = FIT_N_FFT,
-              low_hz: Optional[float] = None) -> np.ndarray:
+def _flux_env(
+    audio: np.ndarray, rate: int, hop: int = 256, n_fft: int = FIT_N_FFT, low_hz: float | None = None
+) -> np.ndarray:
     """Log-magnitude spectral flux per frame (frame i = samples [i*hop, i*hop + n_fft)); low_hz keeps only the bins
     below it (the kick band)."""
     win = np.hanning(n_fft)
@@ -1438,7 +1659,7 @@ def _flux_env(audio: np.ndarray, rate: int, hop: int = 256, n_fft: int = FIT_N_F
     env = np.zeros(frames)
     prev = None
     for i in range(frames):
-        mag = np.log1p(100.0 * np.abs(np.fft.rfft(audio[i * hop:i * hop + n_fft] * win)))[sel]
+        mag = np.log1p(100.0 * np.abs(np.fft.rfft(audio[i * hop : i * hop + n_fft] * win)))[sel]
         if prev is not None:
             env[i] = np.maximum(mag - prev, 0.0).mean()
         prev = mag
@@ -1458,7 +1679,7 @@ def frame_time_offset(rate: int, hop: int = 256, n_fft: int = FIT_N_FFT) -> floa
     buf = (1e-4 * rng.standard_normal(int(secs * rate))).astype(np.float32)
     click = _click(rate)
     times = 0.5 + np.arange(20) * 0.5 + (np.arange(20) % 8) * hop / (8.0 * rate)
-    times = np.round(times * rate) / rate                       # exactly where _place puts them
+    times = np.round(times * rate) / rate  # exactly where _place puts them
     for t in times:
         _place(buf, click, float(t), rate)
     env = _flux_env(buf, rate, hop, n_fft)
@@ -1471,8 +1692,9 @@ def frame_time_offset(rate: int, hop: int = 256, n_fft: int = FIT_N_FFT) -> floa
     return float(np.median(lags))
 
 
-def onset_envelope(audio: np.ndarray, rate: int, hop: int = 256, low_hz: Optional[float] = None
-                   ) -> Tuple[np.ndarray, np.ndarray]:
+def onset_envelope(
+    audio: np.ndarray, rate: int, hop: int = 256, low_hz: float | None = None
+) -> tuple[np.ndarray, np.ndarray]:
     """(times, envelope): the flux with each frame placed at the onset time it stands for (calibrated)."""
     env = _flux_env(audio, rate, hop, FIT_N_FFT, low_hz)
     t = np.arange(len(env)) * hop / rate + frame_time_offset(rate, hop, FIT_N_FFT)
@@ -1485,7 +1707,7 @@ def _resultant(env: np.ndarray, t: np.ndarray, bpm: float) -> float:
     return float(abs(z))
 
 
-def _refine_bpm(env: np.ndarray, t: np.ndarray, bpm: float, rel: float = 0.01) -> Tuple[float, float]:
+def _refine_bpm(env: np.ndarray, t: np.ndarray, bpm: float, rel: float = 0.01) -> tuple[float, float]:
     """(tempo, score): the best tempo within +-rel of bpm, by a 0.02 BPM scan and then a 0.002 BPM scan within
     +-0.04 BPM of its winner."""
     best = (_resultant(env, t, bpm), float(bpm))
@@ -1498,18 +1720,20 @@ def _refine_bpm(env: np.ndarray, t: np.ndarray, bpm: float, rel: float = 0.01) -
     return best[1], best[0]
 
 
-def _comb(env: np.ndarray, t: np.ndarray, period: float, res_s: float = 0.001, smooth_s: float = 0.006
-          ) -> Tuple[np.ndarray, int]:
-    nb = max(16, int(round(period / res_s)))
+def _comb(
+    env: np.ndarray, t: np.ndarray, period: float, res_s: float = 0.001, smooth_s: float = 0.006
+) -> tuple[np.ndarray, int]:
+    nb = max(16, round(period / res_s))
     x = (t % period) / period * nb
     i0 = np.floor(x).astype(int)
     fr = x - i0
-    hist = (np.bincount(i0 % nb, weights=env * (1 - fr), minlength=nb)
-            + np.bincount((i0 + 1) % nb, weights=env * fr, minlength=nb))
+    hist = np.bincount(i0 % nb, weights=env * (1 - fr), minlength=nb) + np.bincount(
+        (i0 + 1) % nb, weights=env * fr, minlength=nb
+    )
     sig = max(0.5, smooth_s / period * nb)
     ks = np.arange(-int(4 * sig) - 1, int(4 * sig) + 2)
     sm = np.zeros(nb)
-    for k, w in zip(ks, np.exp(-0.5 * (ks / sig) ** 2)):
+    for k, w in zip(ks, np.exp(-0.5 * (ks / sig) ** 2), strict=False):
         sm += w * np.roll(hist, k)
     return sm, nb
 
@@ -1526,8 +1750,7 @@ def _sharpen_bpm(env: np.ndarray, t: np.ndarray, bpm: float, span: float = 0.15,
     return float(grid[int(np.argmax([comb_sharpness(env, t, float(b)) for b in grid]))])
 
 
-def comb_phase(env: np.ndarray, t: np.ndarray, period: float, res_s: float = 0.001, smooth_s: float = 0.006
-               ) -> float:
+def comb_phase(env: np.ndarray, t: np.ndarray, period: float, res_s: float = 0.001, smooth_s: float = 0.006) -> float:
     """The phase (seconds into a beat, 0..period) at which the onsets pile up most: every frame's flux is folded
     onto one beat by its time modulo the period (linear interpolation between 1 ms bins), smoothed by a +-6 ms
     Gaussian, and the peak is taken (parabolic refinement). This is the onset-sum (comb) argmax over phase; unlike
@@ -1540,8 +1763,15 @@ def comb_phase(env: np.ndarray, t: np.ndarray, period: float, res_s: float = 0.0
     return float(((j + delta) / nb * period) % period)
 
 
-def fit_grid(audio: np.ndarray, rate: int, bpm_lo: float = 60.0, bpm_hi: float = 200.0, hop: int = 256,
-             bpm: Optional[float] = None, n_peaks: int = 3) -> Dict:
+def fit_grid(
+    audio: np.ndarray,
+    rate: int,
+    bpm_lo: float = 60.0,
+    bpm_hi: float = 200.0,
+    hop: int = 256,
+    bpm: float | None = None,
+    n_peaks: int = 3,
+) -> dict:
     """OFFLINE reference grid for a real recording: the constant tempo and first beat that best fit the WHOLE
     track's onsets (it sees the future, so it is a reference, never a tracker). Electronic music made in a DAW
     holds one tempo, which is what makes a whole-track fit trustworthy. The result is only ground truth after a
@@ -1556,7 +1786,7 @@ def fit_grid(audio: np.ndarray, rate: int, bpm_lo: float = 60.0, bpm_hi: float =
     fps = rate / hop
     grid = np.arange(bpm_lo, bpm_hi, 0.05)
     curve = np.array([_resultant(env, t, float(b)) for b in grid])
-    found: List[Dict] = []
+    found: list[dict] = []
 
     def add(b: float, s: float, rel: str) -> None:
         for c in found:
@@ -1566,8 +1796,11 @@ def fit_grid(audio: np.ndarray, rate: int, bpm_lo: float = 60.0, bpm_hi: float =
                 return
         found.append({"bpm": b, "score": s, "rel": [rel]})
 
-    peaks = [i for i in range(len(curve)) if (i == 0 or curve[i] >= curve[i - 1])
-             and (i == len(curve) - 1 or curve[i] >= curve[i + 1])]
+    peaks = [
+        i
+        for i in range(len(curve))
+        if (i == 0 or curve[i] >= curve[i - 1]) and (i == len(curve) - 1 or curve[i] >= curve[i + 1])
+    ]
     peaks.sort(key=lambda i: -curve[i])
     best_b, best_s = _refine_bpm(env, t, float(grid[peaks[0]])) if peaks else (120.0, 0.0)
     add(best_b, best_s, "best")
@@ -1579,10 +1812,10 @@ def fit_grid(audio: np.ndarray, rate: int, bpm_lo: float = 60.0, bpm_hi: float =
             break
         if all(abs(float(grid[i]) / c["bpm"] - 1) > 0.02 for c in found):
             b, s = _refine_bpm(env, t, float(grid[i]))
-            if all(abs(b / c["bpm"] - 1) > 0.02 for c in found):   # a side lobe of a tempo already listed: skip
+            if all(abs(b / c["bpm"] - 1) > 0.02 for c in found):  # a side lobe of a tempo already listed: skip
                 add(b, s, "peak")
     for c in found:
-        c["bpm"] = _sharpen_bpm(env, t, c["bpm"])            # the resultant finds the tempo, the comb pins it
+        c["bpm"] = _sharpen_bpm(env, t, c["bpm"])  # the resultant finds the tempo, the comb pins it
         c["first_beat"] = round(comb_phase(env, t, 60.0 / c["bpm"]), 4)
         c["bpm"], c["score"] = round(c["bpm"], 3), round(c["score"], 4)
     found.sort(key=lambda c: (0 if "best" in c["rel"] else 1, -c["score"]))
@@ -1591,11 +1824,16 @@ def fit_grid(audio: np.ndarray, rate: int, bpm_lo: float = 60.0, bpm_hi: float =
         first = comb_phase(env, t, 60.0 / use_bpm)
     else:
         use_bpm, fit, first = found[0]["bpm"], best_s, found[0]["first_beat"]
-    return {"bpm": round(float(use_bpm), 3) if bpm is None else float(bpm), "first_beat": round(float(first), 4),
-            "fit": round(float(fit), 4), "fps": round(fps, 2), "bpm_forced": float(bpm) if bpm is not None else None,
-            "frame_offset_ms": round(frame_time_offset(rate, hop, FIT_N_FFT) * 1000, 2),
-            "method": "whole-track resultant for tempo, onset-comb argmax for phase, calibrated frame time",
-            "candidates": found}
+    return {
+        "bpm": round(float(use_bpm), 3) if bpm is None else float(bpm),
+        "first_beat": round(float(first), 4),
+        "fit": round(float(fit), 4),
+        "fps": round(fps, 2),
+        "bpm_forced": float(bpm) if bpm is not None else None,
+        "frame_offset_ms": round(frame_time_offset(rate, hop, FIT_N_FFT) * 1000, 2),
+        "method": "whole-track resultant for tempo, onset-comb argmax for phase, calibrated frame time",
+        "candidates": found,
+    }
 
 
 def _flux_envelopes(audio: np.ndarray, rate: int, hop: int = 256):
@@ -1607,20 +1845,21 @@ def _flux_envelopes(audio: np.ndarray, rate: int, hop: int = 256):
     env_lo, env_all, rms = np.zeros(frames), np.zeros(frames), np.zeros(frames)
     prev = None
     for i in range(frames):
-        seg = audio[i * hop:i * hop + n_fft]
+        seg = audio[i * hop : i * hop + n_fft]
         mag = np.log1p(100.0 * np.abs(np.fft.rfft(seg * win)))
         if prev is not None:
             d = np.maximum(mag - prev, 0.0)
             env_lo[i], env_all[i] = d[low].mean(), d.mean()
         prev = mag
-        rms[i] = np.sqrt(np.mean(seg ** 2))
+        rms[i] = np.sqrt(np.mean(seg**2))
     # the calibrated frame-time convention (see frame_time_offset), not the window centre
     t = np.arange(frames) * hop / rate + frame_time_offset(rate, hop, n_fft)
     return t, env_lo, env_all, rms
 
 
-def fit_sections(audio: np.ndarray, rate: int, bpm: Optional[float] = None, quiet_db: float = 4.0,
-                 min_len_s: float = 6.0) -> Dict:
+def fit_sections(
+    audio: np.ndarray, rate: int, bpm: float | None = None, quiet_db: float = 4.0, min_len_s: float = 6.0
+) -> dict:
     """OFFLINE reference grids for a real song, ONE PER SECTION. Real tracks re-enter after a breakdown at a phase
     of their own (Daniel's ear check on Hard Driver, 2026-10-23: the click "lagged" in the intro and was early by
     about 100 ms after the quiet part, a jump of about 150 ms; one whole-track grid cannot sit on both). Sections
@@ -1628,12 +1867,12 @@ def fit_sections(audio: np.ndarray, rate: int, bpm: Optional[float] = None, quie
     fitted to the kick band where the kick is clear, else to all bands. Quiet stretches get no reference beats and
     are not scored. Still a REFERENCE: ground truth only after the ear check."""
     t, env_lo, env_all, rms = _flux_envelopes(audio, rate)
-    song = fit_grid(audio, rate, *((bpm - 0.3, bpm + 0.3) if bpm else ()))
+    song = fit_grid(audio, rate, bpm_lo=bpm - 0.3 if bpm else 60.0, bpm_hi=bpm + 0.3 if bpm else 200.0)
     loud = 20 * np.log10(np.convolve(rms, np.ones(64) / 64, mode="same") + 1e-9)
     is_loud = loud > np.median(loud) - quiet_db
     sections = []
     start = None
-    for i, on in enumerate(list(is_loud) + [False]):
+    for i, on in enumerate([*list(is_loud), False]):
         if on and start is None:
             start = i
         elif not on and start is not None:
@@ -1652,14 +1891,24 @@ def fit_sections(audio: np.ndarray, rate: int, bpm: Optional[float] = None, quie
                 z = (e * np.exp(2j * np.pi * t[sel] / period)).sum() / (e.sum() + 1e-12)
                 if best is None or abs(z) > best[0] * (1.15 if band == "all" else 1.0):
                     best = (abs(z), bp, (np.angle(z) / (2 * np.pi)) % 1.0 * period, band)
-            if best[3] == "kick" and best[0] > 0.12:
-                break                     # a clear kick decides; only fall back to all bands when it is weak
-        out.append({"start": round(a, 3), "end": round(b, 3), "bpm": round(float(best[1]), 3),
-                    "first_beat": round(float(best[2]), 4), "fit": round(float(best[0]), 3), "band": best[3]})
+            if best is not None and best[3] == "kick" and best[0] > 0.12:
+                break  # a clear kick decides; only fall back to all bands when it is weak
+        if best is None:
+            continue  # no measurable evidence in this stretch: no reference beats for it
+        out.append(
+            {
+                "start": round(a, 3),
+                "end": round(b, 3),
+                "bpm": round(float(best[1]), 3),
+                "first_beat": round(float(best[2]), 4),
+                "fit": round(float(best[0]), 3),
+                "band": best[3],
+            }
+        )
     return {"bpm": song["bpm"], "sections": out}
 
 
-def section_beats(sections: List[Dict]) -> np.ndarray:
+def section_beats(sections: list[dict]) -> np.ndarray:
     beats = []
     for sec in sections:
         period = 60.0 / sec["bpm"]
@@ -1671,10 +1920,12 @@ def section_beats(sections: List[Dict]) -> np.ndarray:
     return np.array(sorted(beats))
 
 
-def render_clicks(audio: np.ndarray, rate: int, bpm: float, first_beat: float, path: str,
-                  beats: Optional[np.ndarray] = None) -> str:
+def render_clicks(
+    audio: np.ndarray, rate: int, bpm: float, first_beat: float, path: str, beats: np.ndarray | None = None
+) -> str:
     """The recording with a click on every reference beat (accent on every 4th), for the listen check."""
-    import soundfile as sf
+    import soundfile as sf  # pyright: ignore[reportMissingImports]  # optional audio dependency, not in the lock
+
     out = audio.astype(np.float32).copy() * 0.6
     click = _click(rate)
     if beats is None:
@@ -1688,7 +1939,7 @@ def render_clicks(audio: np.ndarray, rate: int, bpm: float, first_beat: float, p
 _STAMP_RE = _re.compile(r"^(\d{8}-\d{6})(?!\d)")
 
 
-def recording_stamp(path: str) -> Optional[str]:
+def recording_stamp(path: str) -> str | None:
     """The YYYYMMDD-HHMMSS stamp beatsync.record puts at the start of every recording's file name, or None."""
     m = _STAMP_RE.match(os.path.basename(path))
     return m.group(1) if m else None
@@ -1697,18 +1948,18 @@ def recording_stamp(path: str) -> Optional[str]:
 def check_stamp(since: str) -> str:
     if not _STAMP_RE.match(since or "") or len(since) != 15:
         raise ValueError(f"since must be a YYYYMMDD-HHMMSS stamp like 20261023-120000, not {since!r}")
-    time.strptime(since, "%Y%m%d-%H%M%S")                       # a real date and time, or ValueError
+    time.strptime(since, "%Y%m%d-%H%M%S")  # a real date and time, or ValueError
     return since
 
 
-def _load_json(path: str) -> Optional[Dict]:
+def _load_json(path: str) -> dict | None:
     if not os.path.exists(path):
         return None
     with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
-def recording_truth(path: str, confirmed_only: bool = True) -> Optional[Tuple[str, Dict]]:
+def recording_truth(path: str, confirmed_only: bool = True) -> tuple[str, dict] | None:
     """The ground truth a recording carries: a TAPPED answer key (`<file>.tapkey.json`, sections from the hand's
     taps) when one is present and confirmed, else the fitted grid (`<file>.beats.json`). (kind, meta) or None."""
     tk = _load_json(path + ".tapkey.json")
@@ -1720,9 +1971,14 @@ def recording_truth(path: str, confirmed_only: bool = True) -> Optional[Tuple[st
     return None
 
 
-def recording_suite(root: Optional[str] = None, confirmed_only: bool = True, max_secs: float = 90.0,
-                    since: Optional[str] = None, manifest: Optional[Dict] = None,
-                    log: Callable[[str], None] = print) -> List[Case]:
+def recording_suite(
+    root: str | None = None,
+    confirmed_only: bool = True,
+    max_secs: float = 90.0,
+    since: str | None = None,
+    manifest: dict | None = None,
+    log: Callable[[str], None] = print,
+) -> list[Case]:
     """Daniel's own recordings (beatsync.record or `beat --save`; state/, never committed) that carry ground truth:
     a confirmed tapped key `<file>.tapkey.json` (preferred) or a confirmed grid `<file>.beats.json`. Only
     confirmed ground truth is scored unless asked.
@@ -1733,7 +1989,9 @@ def recording_suite(root: Optional[str] = None, confirmed_only: bool = True, max
     had a timing gap (`<file>.rec.json`) is never scored. Every recording scored is named in the log."""
     import glob
     import io
-    import soundfile as sf
+
+    import soundfile as sf  # pyright: ignore[reportMissingImports]  # optional audio dependency, not in the lock
+
     if manifest is not None:
         if manifest.get("suite") != "real":
             raise ValueError(f"manifest suite is {manifest.get('suite')!r}, not 'real'")
@@ -1762,6 +2020,7 @@ def recording_suite(root: Optional[str] = None, confirmed_only: bool = True, max
                 raise ManifestMismatch(f"{p}: {problem}")
             log(f"[beatbench] real: not scored ({problem}): {os.path.basename(p)}")
             continue
+        assert truth is not None  # a problem above already skipped a recording without truth
         kind, meta = truth
         with open(p, "rb") as f:
             raw = f.read()
@@ -1779,28 +2038,41 @@ def recording_suite(root: Optional[str] = None, confirmed_only: bool = True, max
         else:
             first = float(meta["first_beat"]) % (60.0 / float(meta["bpm"]))
             beats = beat_times(float(meta["bpm"]), secs, first)
-        log(f"[beatbench] real: scoring {os.path.basename(p)} ({kind} ground truth, "
+        log(
+            f"[beatbench] real: scoring {os.path.basename(p)} ({kind} ground truth, "
             f"{'confirmed' if meta.get('confirmed') else 'NOT confirmed'}, {float(meta['bpm']):.2f} BPM, "
-            f"sha1 {sha[:10]})")
-        cases.append(Case(os.path.basename(p), audio, int(rate), beats, float(meta["bpm"]),
-                          seed_bpm=meta.get("seed_bpm"), phase_known=True, source="recording",
-                          meta={**meta, "path": p, "sha1": sha, "size": len(raw), "truth": kind}))
+            f"sha1 {sha[:10]})"
+        )
+        cases.append(
+            Case(
+                os.path.basename(p),
+                audio,
+                int(rate),
+                beats,
+                float(meta["bpm"]),
+                seed_bpm=meta.get("seed_bpm"),
+                phase_known=True,
+                source="recording",
+                meta={**meta, "path": p, "sha1": sha, "size": len(raw), "truth": kind},
+            )
+        )
     return cases
 
 
 # --- tapped answer keys: the hand's taps, straightened -------------------------------------------------------------
 
-TAP_GAP_BEATS = 2.2      # a pause longer than this many beats ends a stretch of tapping
-TAP_MIN_TAPS = 8         # a stretch needs this many taps to count
+TAP_GAP_BEATS = 2.2  # a pause longer than this many beats ends a stretch of tapping
+TAP_MIN_TAPS = 8  # a stretch needs this many taps to count
 
 
-def tap_stretches(taps: Sequence[float], gap_beats: float = TAP_GAP_BEATS, min_taps: int = TAP_MIN_TAPS
-                  ) -> Tuple[List[List[float]], int]:
+def tap_stretches(
+    taps: Sequence[float], gap_beats: float = TAP_GAP_BEATS, min_taps: int = TAP_MIN_TAPS
+) -> tuple[list[list[float]], int]:
     """Split taps into steady stretches: a pause longer than gap_beats beats (the stretch's own median interval so
     far) starts a new one. Stretches with fewer than min_taps taps are dropped. Returns (stretches, dropped taps)."""
     taps = sorted(float(x) for x in taps)
-    out: List[List[float]] = []
-    cur: List[float] = []
+    out: list[list[float]] = []
+    cur: list[float] = []
     for t in taps:
         if not cur:
             cur = [t]
@@ -1820,7 +2092,7 @@ def tap_stretches(taps: Sequence[float], gap_beats: float = TAP_GAP_BEATS, min_t
     return keep, sum(len(s) for s in out) - sum(len(s) for s in keep)
 
 
-def fit_tap_line(taps: Sequence[float]) -> Dict:
+def fit_tap_line(taps: Sequence[float]) -> dict:
     """A straight line through one steady stretch: beat number k (taps rounded onto the median interval, so a
     skipped tap is a skipped beat, not a slow one) against tap time, least squares. Returns the period, the time
     of beat 0, and the taps' scatter about the line (jitter, ms, RMS)."""
@@ -1830,8 +2102,12 @@ def fit_tap_line(taps: Sequence[float]) -> Dict:
     a = np.vstack([k, np.ones_like(k)]).T
     (period, t0), *_ = np.linalg.lstsq(a, t, rcond=None)
     resid = t - (t0 + k * period)
-    return {"period": float(period), "t0": float(t0), "k_last": int(k[-1]),
-            "jitter_ms": float(np.sqrt(np.mean(resid ** 2)) * 1000)}
+    return {
+        "period": float(period),
+        "t0": float(t0),
+        "k_last": int(k[-1]),
+        "jitter_ms": float(np.sqrt(np.mean(resid**2)) * 1000),
+    }
 
 
 def kick_onsets(audio: np.ndarray, rate: int, hop: int = 256, low_hz: float = 150.0) -> np.ndarray:
@@ -1842,7 +2118,7 @@ def kick_onsets(audio: np.ndarray, rate: int, hop: int = 256, low_hz: float = 15
         return np.array([])
     thr = float(np.median(env) + 1.5 * np.std(env))
     pk = [i for i in range(1, len(env) - 1) if env[i] > thr and env[i] >= env[i - 1] and env[i] > env[i + 1]]
-    out: List[float] = []
+    out: list[float] = []
     for i in pk:
         if out and t[i] - out[-1] < 0.08:
             continue
@@ -1850,8 +2126,9 @@ def kick_onsets(audio: np.ndarray, rate: int, hop: int = 256, low_hz: float = 15
     return np.array(out)
 
 
-def tap_key(path: str, write: bool = True, gap_beats: float = TAP_GAP_BEATS, min_taps: int = TAP_MIN_TAPS,
-            render: bool = True) -> Dict:
+def tap_key(
+    path: str, write: bool = True, gap_beats: float = TAP_GAP_BEATS, min_taps: int = TAP_MIN_TAPS, render: bool = True
+) -> dict:
     """An answer key made by ear, from a `beat --save` session: the taps in `<file>.hand.json` (seconds into the
     audio) are split into steady stretches (a pause > gap_beats beats starts a new one; >= min_taps taps each),
     and each stretch gets a straight line: its BPM, its tap jitter (ms), and the offset between the taps and the
@@ -1861,15 +2138,20 @@ def tap_key(path: str, write: bool = True, gap_beats: float = TAP_GAP_BEATS, min
 
     The taps are NOT shifted onto the kicks: the offset is reported for a person to judge, because a kick is not
     always the beat. A recording whose capture had a timing gap is refused (the taps would not line up)."""
-    import soundfile as sf
+    import soundfile as sf  # pyright: ignore[reportMissingImports]  # optional audio dependency, not in the lock
+
     hand = _load_json(path + ".hand.json")
     if not hand or not hand.get("taps"):
-        raise ValueError(f"no taps for {os.path.basename(path)}: tap along with `beat --save --hand` first "
-                         f"(it writes {os.path.basename(path)}.hand.json)")
+        raise ValueError(
+            f"no taps for {os.path.basename(path)}: tap along with `beat --save --hand` first "
+            f"(it writes {os.path.basename(path)}.hand.json)"
+        )
     timing = hand.get("timing") or _load_json(path + ".rec.json")
     if timing and timing.get("gap"):
-        raise ValueError(f"{os.path.basename(path)}: the capture had a timing gap ({timing.get('gap_ms')} ms "
-                         f"between sample time and wall time), so the taps cannot be placed on the audio")
+        raise ValueError(
+            f"{os.path.basename(path)}: the capture had a timing gap ({timing.get('gap_ms')} ms "
+            f"between sample time and wall time), so the taps cannot be placed on the audio"
+        )
     stretches, dropped = tap_stretches(hand["taps"], gap_beats, min_taps)
     if not stretches:
         raise ValueError(f"no steady stretch of >= {min_taps} taps in {os.path.basename(path)}.hand.json")
@@ -1887,16 +2169,29 @@ def tap_key(path: str, write: bool = True, gap_beats: float = TAP_GAP_BEATS, min
                 j = int(np.argmin(np.abs(kicks - x)))
                 if abs(kicks[j] - x) <= 0.25 * per:
                     offs.append(x - kicks[j])
-        out.append({"start": round(max(0.0, s[0] - per / 2), 3), "end": round(min(dur, s[-1] + per / 2), 3),
-                    "bpm": round(60.0 / per, 3), "first_beat": round(line["t0"], 4), "taps": len(s),
-                    "jitter_ms": round(line["jitter_ms"], 1),
-                    "kick_offset_ms": round(float(np.median(offs)) * 1000, 1) if offs else None,
-                    "kick_matched": round(len(offs) / len(s), 2)})
+        out.append(
+            {
+                "start": round(max(0.0, s[0] - per / 2), 3),
+                "end": round(min(dur, s[-1] + per / 2), 3),
+                "bpm": round(60.0 / per, 3),
+                "first_beat": round(line["t0"], 4),
+                "taps": len(s),
+                "jitter_ms": round(line["jitter_ms"], 1),
+                "kick_offset_ms": round(float(np.median(offs)) * 1000, 1) if offs else None,
+                "kick_matched": round(len(offs) / len(s), 2),
+            }
+        )
     weights = np.array([s["taps"] for s in out], dtype=float)
-    doc = {"method": "tapped answer key: a least-squares line through each steady stretch of taps",
-           "source": os.path.basename(path) + ".hand.json", "taps": len(hand["taps"]), "dropped_taps": dropped,
-           "bpm": round(float(np.average([s["bpm"] for s in out], weights=weights)), 3),
-           "sections": out, "spans": [[s["start"], s["end"]] for s in out], "confirmed": False}
+    doc = {
+        "method": "tapped answer key: a least-squares line through each steady stretch of taps",
+        "source": os.path.basename(path) + ".hand.json",
+        "taps": len(hand["taps"]),
+        "dropped_taps": dropped,
+        "bpm": round(float(np.average([s["bpm"] for s in out], weights=weights)), 3),
+        "sections": out,
+        "spans": [[s["start"], s["end"]] for s in out],
+        "confirmed": False,
+    }
     if render:
         clicks = os.path.splitext(path)[0] + " TAPKEY CLICKS.wav"
         render_clicks(audio, rate, doc["bpm"], 0.0, clicks, beats=section_beats(out))
@@ -1909,18 +2204,19 @@ def tap_key(path: str, write: bool = True, gap_beats: float = TAP_GAP_BEATS, min
 
 # --- the listen check: what was rendered must be what is confirmed ------------------------------------------------
 
-def grid_params(meta: Dict) -> Dict:
+
+def grid_params(meta: dict) -> dict:
     """The part of a sidecar that decides where the clicks go."""
     if meta.get("sections"):
         return {"sections": [{k: s[k] for k in ("start", "end", "bpm", "first_beat")} for s in meta["sections"]]}
     return {"bpm": meta.get("bpm"), "first_beat": meta.get("first_beat")}
 
 
-def clicks_record(clicks_path: str, meta: Dict) -> Dict:
+def clicks_record(clicks_path: str, meta: dict) -> dict:
     return {"path": clicks_path, "sha1": file_sha1_uncached(clicks_path), "grid": grid_params(meta)}
 
 
-def file_sha1_uncached(path: str) -> Optional[str]:
+def file_sha1_uncached(path: str) -> str | None:
     h = hashlib.sha1()
     try:
         with open(path, "rb") as f:
@@ -1931,7 +2227,7 @@ def file_sha1_uncached(path: str) -> Optional[str]:
     return h.hexdigest()
 
 
-def clicks_mismatch(meta: Dict) -> Optional[str]:
+def clicks_mismatch(meta: dict) -> str | None:
     """Why this sidecar cannot be confirmed as listened to, or None: the CLICKS file it records must still exist
     with the same bytes, and the grid in the sidecar must be the grid those clicks were rendered from."""
     rec = meta.get("clicks")
@@ -1947,10 +2243,15 @@ def clicks_mismatch(meta: Dict) -> Optional[str]:
     return None
 
 
-def save_report(report: Dict, path: Optional[str] = None) -> str:
+def save_report(report: dict, path: str | None = None) -> str:
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                        "state", "arsenal", "keylab", "receipts")
+    root = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "state",
+        "arsenal",
+        "keylab",
+        "receipts",
+    )
     path = path or os.path.join(root, f"beatbench-{stamp}.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:

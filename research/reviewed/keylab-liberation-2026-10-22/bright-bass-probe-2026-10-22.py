@@ -4,12 +4,17 @@ The beat_w auditor's finding, applied to every contestant: the drift suite's sub
 half-time bass music (TYNAN) has harmonic-rich bass. This rebuilds the drift cases with a sawtooth bass (same pitch
 drop, same envelope, same syncopated 16ths), and with that saw low-passed at ~400 Hz, and scores all trackers.
 Run from the repo root: py research/reviewed/keylab-liberation-2026-10-22/bright-bass-probe-2026-10-22.py"""
-import sys, importlib
-import numpy as np
+
+import importlib
+import sys
 from multiprocessing import Pool
-sys.path.insert(0, "E:/AI-Setup")
-sys.stdout.reconfigure(encoding="utf-8")
+from typing import Any, cast
+
+import numpy as np
+
 from arsenal.keylab import beatbench as BB
+
+cast("Any", sys.stdout).reconfigure(encoding="utf-8")  # a console only; a piped stream has no reconfigure
 
 RATE = 44100
 TRACKERS = ["a", "g", "h", "w"]
@@ -22,7 +27,7 @@ def saw_bass(rate, lowpass_hz=None):
     ph = np.cumsum(freq) / rate
     x = 2.0 * (ph % 1.0) - 1.0
     if lowpass_hz:
-        a = np.exp(-2 * np.pi * lowpass_hz / rate)          # one-pole low-pass, twice
+        a = np.exp(-2 * np.pi * lowpass_hz / rate)  # one-pole low-pass, twice
         for _ in range(2):
             y = np.zeros_like(x)
             acc = 0.0
@@ -58,13 +63,14 @@ if __name__ == "__main__":
     with Pool(8) as p:
         rows = p.map(run, jobs)
     agg = {}
-    for kind, name, cname, s in rows:
+    for kind, name, _cname, s in rows:
         agg.setdefault((kind, name), []).append(s)
     print(f"{'bass':10} {'tracker':7} {'F':>6} {'CMLt':>6} {'AMLt':>6} {'est bpm (128/140/150)':>24}")
     for kind in ("sine", "saw", "saw_lp400"):
         for name in TRACKERS:
             rs = agg[(kind, name)]
-            f = np.mean([r.get("F", 0) for r in rs]); c = np.mean([r.get("CMLt", 0) for r in rs])
+            f = np.mean([r.get("F", 0) for r in rs])
+            c = np.mean([r.get("CMLt", 0) for r in rs])
             am = np.mean([r.get("AMLt", 0) for r in rs])
             est = "/".join(f"{r['est_bpm']:.0f}" for r in rs)
             print(f"{kind:10} {name:7} {f:6.3f} {c:6.3f} {am:6.3f} {est:>24}")

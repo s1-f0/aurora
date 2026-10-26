@@ -43,37 +43,37 @@ Design (this file):
 Licence: stdlib + numpy + scipy ONLY, no relative imports into arsenal.keylab, self-contained in this one file.
 Causal: never looks past the audio fed so far. No constant copied from the bench (e.g. the bass 16th positions).
 """
+
 from __future__ import annotations
 
 import math
-from typing import List, Optional
 
 import numpy as np
 
 # --- onset / grid constants --------------------------------------------------------------------
 
-NFFT = 2048                       # FFT window (zero-padded from the 512 hop)
+NFFT = 2048  # FFT window (zero-padded from the 512 hop)
 BPM_MIN, BPM_MAX = 40.0, 300.0
-FOLD_LO, FOLD_HI = 62.0, 188.0    # octave band the tempo folds into
-SILENCE_STD = 1e-4                # blocks quieter than this steer nothing
+FOLD_LO, FOLD_HI = 62.0, 188.0  # octave band the tempo folds into
+SILENCE_STD = 1e-4  # blocks quieter than this steer nothing
 MIN_ENV = 1e-6
 
 # grid-search geometry
-N_PERIODS = 120                   # geometric period ladder
-N_PHASES = 40                     # phase lattice per period
-GRID_MEMORY_S = 4.5               # how many seconds of onsets each hypothesis is scored on
-GRID_EVERY = 13                   # run grid search every ~13 hops (~0.15s)
-PARSIMONY_W = 0.15                # complexity penalty weight (per grid line): light -- a grid that explains MORE
-                                  # onsets (finer, correct level) should win even though it has more lines
+N_PERIODS = 120  # geometric period ladder
+N_PHASES = 40  # phase lattice per period
+GRID_MEMORY_S = 4.5  # how many seconds of onsets each hypothesis is scored on
+GRID_EVERY = 13  # run grid search every ~13 hops (~0.15s)
+PARSIMONY_W = 0.15  # complexity penalty weight (per grid line): light -- a grid that explains MORE
+# onsets (finer, correct level) should win even though it has more lines
 ACCENT_LO, ACCENT_HI = 40.0, 220.0  # kick/snare band split for beat-level choice
 
 # master-grid / volatility / hysteresis
-SCORE_MARGIN = 1.02               # rival must beat master by this ratio in score
-RIVAL_BEATS = 8                   # ... for this many beats of sustained advantage, before the master moves
-LOWVOL_EMA = 0.01                 # low-volatility period correction (grid-holder: near-rigid)
-HIGHVOL_EMA = 0.5                 # high-volatility period correction (tempo-follower: nimble)
-VOL_DOWN, VOL_UP = 0.05, 0.3      # q decay / rise per grid update
-FIRST_BEATS = 10                  # no emission for the first few hops (let the grid form)
+SCORE_MARGIN = 1.02  # rival must beat master by this ratio in score
+RIVAL_BEATS = 8  # ... for this many beats of sustained advantage, before the master moves
+LOWVOL_EMA = 0.01  # low-volatility period correction (grid-holder: near-rigid)
+HIGHVOL_EMA = 0.5  # high-volatility period correction (tempo-follower: nimble)
+VOL_DOWN, VOL_UP = 0.05, 0.3  # q decay / rise per grid update
+FIRST_BEATS = 10  # no emission for the first few hops (let the grid form)
 
 
 def _hann(n: int) -> np.ndarray:
@@ -110,7 +110,7 @@ class Tracker:
     (period, phase) grid -> a two-volatility regime that holds under syncopation and follows a real tempo step ->
     predict from the master grid."""
 
-    def __init__(self, rate: int, hop: int, seed_bpm: Optional[float] = None):
+    def __init__(self, rate: int, hop: int, seed_bpm: float | None = None):
         self.rate = int(rate)
         self.hop = int(hop)
         self.hop_s = hop / rate
@@ -118,13 +118,13 @@ class Tracker:
         self.seed_bpm = float(seed_bpm) if seed_bpm and seed_bpm > 0 else None
 
         self._win = _hann(self.nfft)
-        self._prev_mag: Optional[np.ndarray] = None
+        self._prev_mag: np.ndarray | None = None
 
         # onset ring buffer: absolute audio time + flux strength + ACCENT weight, for each detected onset peak
         cap = int(GRID_MEMORY_S * rate / hop) + 16
         self._on_t = np.zeros(cap, dtype=np.float64)
-        self._on_v = np.zeros(cap, dtype=np.float32)    # total spectral-flux strength
-        self._on_a = np.zeros(cap, dtype=np.float32)    # accent (kick+snare band) strength -- the BEAT
+        self._on_v = np.zeros(cap, dtype=np.float32)  # total spectral-flux strength
+        self._on_a = np.zeros(cap, dtype=np.float32)  # accent (kick+snare band) strength -- the BEAT
         self._on_n = 0
 
         # rolling flux window (three-hop) for local peak picking -- one for total flux, one for the HIGH band.
@@ -146,7 +146,7 @@ class Tracker:
 
         # master grid evidence + volatility regime q in [0,1]
         self._master_score = -1.0
-        self._q = 0.3                  # start slightly volatile so it can lock at all
+        self._q = 0.3  # start slightly volatile so it can lock at all
         self._rival_period = self._period
         self._rival_phase = self._phase
         self._rival_score = -1.0
@@ -181,18 +181,18 @@ class Tracker:
         if sf <= MIN_ENV:
             return 0.0, 0.0, 0.0
         n = len(mag)
-        freqs = np.fft.rfftfreq(self.nfft, 1.0 / self.rate)[: n]
+        freqs = np.fft.rfftfreq(self.nfft, 1.0 / self.rate)[:n]
         # The BEAT-level accent is HIGH-band percussive flux (snare ~190 Hz + high hat noise): these are
         # regular on the beat and spectrally disjoint from the sustained sub-bass. LOW-band (40-100 Hz) is the
         # kick AND the sub-bass together -- raw low-band energy cannot separate them (grid-research-grid §5), so
         # it must NOT drive the grid. Kick energy is tracked separately, for the downbeat/level choice only.
         kick_e = float(np.sum(pos[(freqs >= 40.0) & (freqs <= 100.0)]))
-        high_e = float(np.sum(pos[freqs >= 150.0]))          # snare + hat: the regular percussive accent
+        high_e = float(np.sum(pos[freqs >= 150.0]))  # snare + hat: the regular percussive accent
         self._accent_lo = 0.99 * self._accent_lo + 0.01 * kick_e
         self._accent_hi = 0.99 * self._accent_hi + 0.01 * high_e
         return sf, kick_e, high_e
 
-    def _find_onsets(self, v0: float, v1: float, v2: float) -> Optional[tuple]:
+    def _find_onsets(self, v0: float, v1: float, v2: float) -> tuple | None:
         """A local flux peak at v1 (previous hop's flux), parabola-interpolated to sub-hop time, gated by an
         adaptive threshold and a refractory window. Returns (t_audio_of_peak, peak_value) or None."""
         if not (v1 >= v0 and v1 > v2 and v1 > MIN_ENV):
@@ -207,7 +207,7 @@ class Tracker:
         base = self._t_audio - 2.0 * self.hop_s
         if base - self._last_onset_t < 0.090:
             return None
-        denom = (v0 - 2.0 * v1 + v2)
+        denom = v0 - 2.0 * v1 + v2
         d = 0.5 * (v0 - v2) / denom if abs(denom) > 1e-12 else 0.0
         d = float(np.clip(d, -1.0, 1.0))
         apex_v = v1 - 0.25 * (v0 - v2) * d
@@ -235,11 +235,11 @@ class Tracker:
         if m < 8:
             return self._period, self._phase, -1.0
         idx = (np.arange(m) + (self._on_n - m)) % cap
-        t = self._on_t[idx]                     # absolute onset times, recent-most-last
+        t = self._on_t[idx]  # absolute onset times, recent-most-last
         a = self._on_a[idx].astype(np.float64)  # HIGH-band accent (snare+hat) strength -- the beat marker
         amax = float(np.max(a)) or 1.0
         w = a / amax
-        w = w * w                               # strength-weighted
+        w = w * w  # strength-weighted
 
         # the beat band: 62..188 bpm in period seconds
         lo_p = 60.0 / FOLD_HI
@@ -254,7 +254,7 @@ class Tracker:
                 parts = [np.geomspace(max(lo_p, c * 0.90), min(hi_p, c * 1.10), N_PERIODS)]
             else:
                 parts = [np.geomspace(max(lo_p, c * 0.90), min(hi_p, c * 1.10), N_PERIODS // 2)]
-                for f in (0.5, 2.0):            # octave partners (the master family: 70/140/280 is one grid)
+                for f in (0.5, 2.0):  # octave partners (the master family: 70/140/280 is one grid)
                     plo, phi = max(lo_p, c * f * 0.90), min(hi_p, c * f * 1.10)
                     if phi > plo:
                         parts.append(np.geomspace(plo, phi, N_PERIODS // 4))
@@ -274,11 +274,11 @@ class Tracker:
             f = (t - t_ref) / period
             frac2 = f[:, None] - phases[None, :]
             frac2 = frac2 - np.floor(frac2)
-            dist2 = np.minimum(frac2, 1.0 - frac2) * period      # (m, N_PHASES)
+            dist2 = np.minimum(frac2, 1.0 - frac2) * period  # (m, N_PHASES)
             on = dist2 <= tol
             reward = (w[:, None] * on * (1.0 - dist2 / (tol + 1e-9))).sum(axis=0)
             off_pen = (w[:, None] * (~on)).sum(axis=0)
-            scores = reward - 0.5 * off_pen - penalty             # (N_PHASES,)
+            scores = reward - 0.5 * off_pen - penalty  # (N_PHASES,)
             j = int(np.argmax(scores))
             if scores[j] > best_s:
                 best_s = float(scores[j])
@@ -338,7 +338,7 @@ class Tracker:
             if self.seed_bpm is not None:
                 rival_bpm = 60.0 / self._rival_period
                 if abs(math.log2(rival_bpm / self.seed_bpm)) > 0.5:
-                    self._rival_beats = 0.0           # discard the off-octave rival, hold the seeded level
+                    self._rival_beats = 0.0  # discard the off-octave rival, hold the seeded level
                     return
             # commit: move the master toward the rival, nimble or rigid by volatility
             ema = HIGHVOL_EMA if self._q > 0.6 else LOWVOL_EMA
@@ -367,7 +367,7 @@ class Tracker:
         t = self._on_t[idx]
         a = self._on_a[idx].astype(np.float64)
         amax = float(np.max(a)) or 1.0
-        w = (a / amax)
+        w = a / amax
         w = w * w
         tol = min(0.06, 0.25 * period)
         f = (t - phase) / period
@@ -380,26 +380,26 @@ class Tracker:
 
     # -- feed -----------------------------------------------------------------------------------
 
-    def feed(self, block: np.ndarray) -> List[dict]:
+    def feed(self, block: np.ndarray) -> list[dict]:
         block = np.asarray(block, dtype=np.float32)
         if block.ndim > 1:
             block = block.mean(axis=1)
         self._hop_i += 1
         self._t_audio += self.hop_s
-        out: List[dict] = []
+        out: list[dict] = []
 
         if float(np.std(block) if block.size else 0.0) < SILENCE_STD:
             self._flux_hist[0], self._flux_hist[1], self._flux_hist[2] = 0.0, self._flux_hist[1], self._flux_hist[2]
             return out
 
-        flux, kick_e, high_e = self._flux(block)
+        flux, _kick_e, high_e = self._flux(block)
 
         # shift the two flux windows; peak-pick on the HIGH band (the percussive accent), which is the signal
         # that is regular on the beat and disjoint from the off-beat sub-bass. The bass's onset times must not
         # become beat candidates -- the hat/snare's times must.
-        f0, f1, f2 = self._flux_hist[0], self._flux_hist[1], self._flux_hist[2]
+        _f0, f1, f2 = self._flux_hist[0], self._flux_hist[1], self._flux_hist[2]
         self._flux_hist[0], self._flux_hist[1], self._flux_hist[2] = f1, f2, flux
-        h0, h1, h2 = self._high_hist[0], self._high_hist[1], self._high_hist[2]
+        _h0, h1, h2 = self._high_hist[0], self._high_hist[1], self._high_hist[2]
         self._high_hist[0], self._high_hist[1], self._high_hist[2] = h1, h2, high_e
         # the peak we look for is at the PREVIOUS hop's HIGH flux, compared against its neighbours
         det = self._find_onsets(h1, h2, high_e)
@@ -407,8 +407,8 @@ class Tracker:
             t_peak, amp = det
             slot = self._on_n % len(self._on_t)
             self._on_t[slot] = t_peak
-            self._on_v[slot] = amp                         # HIGH-band strength (the signal we peak-picked on)
-            self._on_a[slot] = high_e                      # HIGH-band accent -- the beat marker
+            self._on_v[slot] = amp  # HIGH-band strength (the signal we peak-picked on)
+            self._on_a[slot] = high_e  # HIGH-band accent -- the beat marker
             self._on_n += 1
 
         if self._hop_i < FIRST_BEATS:
@@ -444,20 +444,22 @@ class Tracker:
             t_beat = self._next_beat
             phase = (t_beat % self._period) / self._period
             confidence = float(np.clip(1.0 - self._q, 0.0, 1.0))
-            out = [{
-                "t_beat": float(t_beat),
-                "bpm": round(float(self._bpm), 3),
-                "phase": round(float(phase), 4),
-                "confidence": round(float(confidence), 3),
-                "is_downbeat": None,
-            }]
+            out = [
+                {
+                    "t_beat": float(t_beat),
+                    "bpm": round(float(self._bpm), 3),
+                    "phase": round(float(phase), 4),
+                    "confidence": round(float(confidence), 3),
+                    "is_downbeat": None,
+                }
+            ]
             self._next_beat = t_beat + self._period
             self._conf = confidence
         return out
 
     # -- predict ---------------------------------------------------------------------------------
 
-    def predict(self, now: float) -> List[dict]:
+    def predict(self, now: float) -> list[dict]:
         if self._period <= 0:
             return []
         t = self._next_beat
@@ -465,11 +467,13 @@ class Tracker:
             t += self._period
         out = []
         for _ in range(2):
-            out.append({
-                "t_beat": float(t),
-                "bpm": round(float(self._bpm), 3),
-                "phase": round((t % self._period) / self._period, 4),
-                "confidence": round(float(self._conf), 3),
-            })
+            out.append(
+                {
+                    "t_beat": float(t),
+                    "bpm": round(float(self._bpm), 3),
+                    "phase": round((t % self._period) / self._period, 4),
+                    "confidence": round(float(self._conf), 3),
+                }
+            )
             t += self._period
         return out

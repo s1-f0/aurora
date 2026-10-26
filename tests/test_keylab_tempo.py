@@ -3,24 +3,25 @@
 Pure analysis only; no port, no audio device, no network in the tested paths. The DB sources are
 exercised through the offline flag and the fusion math, not through live HTTP.
 """
+
 from __future__ import annotations
 
 import pytest
 
 import arsenal.keylab.tempo as tempo
 
-
 # --- octave folding ------------------------------------------------------------------------------
 
+
 def test_fold_to_band_halves_and_doubles_collapse():
-    assert tempo.fold_to_band(240.0) == pytest.approx(120.0)   # 240 -> 120
-    assert tempo.fold_to_band(60.0) == pytest.approx(120.0)    # 60  -> 120
-    assert tempo.fold_to_band(120.0) == pytest.approx(120.0)   # already in band
+    assert tempo.fold_to_band(240.0) == pytest.approx(120.0)  # 240 -> 120
+    assert tempo.fold_to_band(60.0) == pytest.approx(120.0)  # 60  -> 120
+    assert tempo.fold_to_band(120.0) == pytest.approx(120.0)  # already in band
 
 
 def test_fold_to_band_multiple_octaves():
-    assert tempo.fold_to_band(480.0) == pytest.approx(120.0)   # 480 -> 240 -> 120
-    assert tempo.fold_to_band(30.0) == pytest.approx(120.0)    # 30 -> 60 -> 120
+    assert tempo.fold_to_band(480.0) == pytest.approx(120.0)  # 480 -> 240 -> 120
+    assert tempo.fold_to_band(30.0) == pytest.approx(120.0)  # 30 -> 60 -> 120
 
 
 def test_fold_to_band_nonpositive_untouched():
@@ -29,6 +30,7 @@ def test_fold_to_band_nonpositive_untouched():
 
 
 # --- snap_to_octave (the deterministic half/double fix) ------------------------------------------
+
 
 def test_snap_to_octave_does_not_move_an_already_correct_value():
     assert tempo.snap_to_octave(124.0, 124.0) == pytest.approx(124.0)
@@ -54,6 +56,7 @@ def test_snap_to_octave_clamps():
 
 
 # --- fusion (fold-then-median, NOT mean) ---------------------------------------------------------
+
 
 def test_fuse_bpm_median_not_mean():
     # 120 and 240 fold to the same octave; a naive mean would be 180 (wrong), median is 120.
@@ -97,12 +100,14 @@ def test_fuse_bpm_empty_returns_zero_seed():
 
 # --- normalize_title -----------------------------------------------------------------------------
 
+
 def test_normalize_title_strips_remix_and_brackets():
     assert tempo.normalize_title("On My Mind (feat. X) [Remix]") == "On My Mind"
     assert tempo.normalize_title("Song ft. Someone Else") == "Song"
 
 
 # --- offline: no network -------------------------------------------------------------------------
+
 
 def test_lookup_offline_returns_empty_no_network():
     # With offline=True, lookup must return [] and make zero HTTP calls. We can't intercept HTTP
@@ -119,9 +124,11 @@ def test_lookup_sources_are_isolated():
 
 # --- BeatTracker seed-aware refinement (no audio device needed) ----------------------------------
 
+
 def _click_block(rate=44100, bpm=120.0, seconds=2.0):
     """Build a synthetic click buffer and feed it one hop-sized block at a time."""
     import numpy as np
+
     period = 60.0 / bpm
     n = int(rate * seconds)
     buf = np.zeros(n, dtype=np.float32)
@@ -141,7 +148,7 @@ def test_beattracker_emits_dict_shape():
     hop = tempo.DEFAULT_HOP
     events = []
     for i in range(0, len(buf) - hop, hop):
-        events.extend(tracker.push(buf[i:i + hop]))
+        events.extend(tracker.push(buf[i : i + hop]))
     assert isinstance(events, list)
     # event shape (may be empty if aubio isn't installed; the shape contract is what we pin)
     for ev in events:

@@ -5,6 +5,7 @@ message reaches (or that it reaches none). Nothing touches a keyboard or FL. Art
 are only READ, as text, and only to cross-check facts (those pins skip on a machine without them); nothing is
 imported from them, so no bytecode cache can be written there. Install pins use a temporary Hardware folder.
 """
+
 from __future__ import annotations
 
 import ast
@@ -24,20 +25,47 @@ from arsenal.keylab import protocol as P
 from arsenal.keylab.governor import max_in_window
 
 SCRIPT = pathlib.Path(F.SOURCE)
-ARTURIA_DIR = pathlib.Path(os.path.expanduser("~")) / "Documents" / "Image-Line" / "FL Studio" / "Settings" / \
-    "Hardware" / "Arturia KeyLab mk3"
+ARTURIA_DIR = (
+    pathlib.Path(os.path.expanduser("~"))
+    / "Documents"
+    / "Image-Line"
+    / "FL Studio"
+    / "Settings"
+    / "Hardware"
+    / "Arturia KeyLab mk3"
+)
 FL_MIDI_PY = pathlib.Path(r"C:\Program Files\Image-Line\FL Studio 2026\Shared\Python\Lib\midi.py")
 
 # The values FL 2026 ships in Shared/Python/Lib/midi.py (pinned against that file below when it is present).
-MIDI_CONSTANTS = {"SS_Stop": 0, "SS_Start": 2, "FPT_TapTempo": 106, "FPT_LoopRecord": 113, "FPT_Metronome": 110,
-                  "FPT_Save": 92, "HW_Dirty_LEDs": 256, "HW_Dirty_Mixer_Controls": 4, "HW_Dirty_ControlValues": 4096}
+MIDI_CONSTANTS = {
+    "SS_Stop": 0,
+    "SS_Start": 2,
+    "FPT_TapTempo": 106,
+    "FPT_LoopRecord": 113,
+    "FPT_Metronome": 110,
+    "FPT_Save": 92,
+    "HW_Dirty_LEDs": 256,
+    "HW_Dirty_Mixer_Controls": 4,
+    "HW_Dirty_ControlValues": 4096,
+}
 
 # Every FL function the script may call: the P23 drill list. Changing it is a decision, not a refactor.
-FL_CALLS = {"device.midiOutSysex", "transport.start", "transport.stop", "transport.record",
-            "transport.continuousMove", "transport.globalTransport", "general.undoUp", "general.undoDown",
-            "transport.isPlaying", "transport.isRecording", "ui.isLoopRecEnabled", "ui.isMetronomeEnabled"}
+FL_CALLS = {
+    "device.midiOutSysex",
+    "transport.start",
+    "transport.stop",
+    "transport.record",
+    "transport.continuousMove",
+    "transport.globalTransport",
+    "general.undoUp",
+    "general.undoDown",
+    "transport.isPlaying",
+    "transport.isRecording",
+    "ui.isLoopRecEnabled",
+    "ui.isMetronomeEnabled",
+}
 FL_MODULES = {"device", "general", "midi", "transport", "ui"}
-ALLOWED_IMPORTS = FL_MODULES | {"time"}       # all imported by Arturia's own scripts, so FL's Python has them
+ALLOWED_IMPORTS = FL_MODULES | {"time"}  # all imported by Arturia's own scripts, so FL's Python has them
 
 
 # =====================================================================================================================
@@ -77,8 +105,9 @@ def rig(monkeypatch):
 
     def recorder(qual, result=None):
         def fn(*args):
-            calls.append((qual,) + args)
+            calls.append((qual, *args))
             return result(*args) if callable(result) else result
+
         return fn
 
     def out_sysex(data):
@@ -86,29 +115,30 @@ def rig(monkeypatch):
         sent.append((clock["t"], bytes(data)))
 
     device = types.ModuleType("device")
-    device.midiOutSysex = out_sysex
+    device.midiOutSysex = out_sysex  # pyright: ignore[reportAttributeAccessIssue]  # a stub module for the FL API
     transport = types.ModuleType("transport")
     for name in ("start", "stop", "record", "continuousMove", "globalTransport"):
         setattr(transport, name, recorder("transport." + name))
-    transport.isPlaying = recorder("transport.isPlaying", lambda: state["playing"])
-    transport.isRecording = recorder("transport.isRecording", lambda: state["recording"])
+    transport.isPlaying = recorder("transport.isPlaying", lambda: state["playing"])  # pyright: ignore[reportAttributeAccessIssue]  # a stub module for the FL API
+    transport.isRecording = recorder("transport.isRecording", lambda: state["recording"])  # pyright: ignore[reportAttributeAccessIssue]  # a stub module for the FL API
     general = types.ModuleType("general")
-    general.undoUp = recorder("general.undoUp", 0)
-    general.undoDown = recorder("general.undoDown", 0)
+    general.undoUp = recorder("general.undoUp", 0)  # pyright: ignore[reportAttributeAccessIssue]  # a stub module for the FL API
+    general.undoDown = recorder("general.undoDown", 0)  # pyright: ignore[reportAttributeAccessIssue]  # a stub module for the FL API
     ui = types.ModuleType("ui")
-    ui.isLoopRecEnabled = recorder("ui.isLoopRecEnabled", lambda: state["looprec"])
-    ui.isMetronomeEnabled = recorder("ui.isMetronomeEnabled", lambda: state["metronome"])
+    ui.isLoopRecEnabled = recorder("ui.isLoopRecEnabled", lambda: state["looprec"])  # pyright: ignore[reportAttributeAccessIssue]  # a stub module for the FL API
+    ui.isMetronomeEnabled = recorder("ui.isMetronomeEnabled", lambda: state["metronome"])  # pyright: ignore[reportAttributeAccessIssue]  # a stub module for the FL API
     midi = types.ModuleType("midi")
     for k, v in MIDI_CONSTANTS.items():
         setattr(midi, k, v)
-    for name, m in (("device", device), ("transport", transport), ("general", general), ("ui", ui),
-                    ("midi", midi)):
+    for name, m in (("device", device), ("transport", transport), ("general", general), ("ui", ui), ("midi", midi)):
         monkeypatch.setitem(sys.modules, name, m)
     monkeypatch.setattr(sys, "dont_write_bytecode", True)
     spec = importlib.util.spec_from_file_location("aurora_keylab_fl_under_test", SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    mod._clock = lambda: clock["t"]
+    mod._clock = lambda: clock["t"]  # pyright: ignore[reportAttributeAccessIssue]  # a stub module for the FL API
     return Rig(mod, calls, sent, state, clock)
 
 
@@ -122,9 +152,11 @@ def led(lid, rgb):
 def test_first_line_names_the_script_and_it_never_auto_claims_the_keyboard():
     text = SCRIPT.read_text(encoding="utf-8")
     assert text.splitlines()[0] == "# name=Aurora KeyLab"
-    assert F.SCRIPT_TITLE == "Aurora KeyLab" and SCRIPT.name.startswith("device_")
+    assert F.SCRIPT_TITLE == "Aurora KeyLab"
+    assert SCRIPT.name.startswith("device_")
     # no supportedHardwareIds / supportedDevices: FL never picks this script on its own; Daniel picks it
-    assert "supportedHardwareIds" not in text and "supportedDevices" not in text
+    assert "supportedHardwareIds" not in text
+    assert "supportedDevices" not in text
 
 
 def test_oninit_sends_exactly_the_daw_connect_and_the_pad_port_and_calls_nothing_else(rig):
@@ -139,7 +171,7 @@ def test_ondeinit_sends_exactly_the_daw_disconnect(rig):
     rig.clear()
     rig.mod.OnDeInit()
     assert [d for _, d in rig.sent] == [P.daw_connect(False)]
-    assert rig.mod.DAW_DISCONNECT == bytes.fromhex("F0 00 20 6B 7F 42 00 02 05 00 F7")
+    assert bytes.fromhex("F0 00 20 6B 7F 42 00 02 05 00 F7") == rig.mod.DAW_DISCONNECT
     assert rig.fl_calls() == []
 
 
@@ -148,7 +180,8 @@ def test_oninit_twice_is_harmless(rig):
     rig.mod.OnInit()
     rig.mod.OnRefresh(0)
     rig.mod.OnInit()
-    assert rig.mod._led_shown == {} and rig.mod._led_wanted == {}
+    assert rig.mod._led_shown == {}
+    assert rig.mod._led_wanted == {}
     assert [d for _, d in rig.sent].count(P.daw_connect(True)) == 2
 
 
@@ -156,13 +189,13 @@ def test_oninit_twice_is_harmless(rig):
 # transport
 # =====================================================================================================================
 GT = MIDI_CONSTANTS
-TRANSPORT_EXPECT = {   # control number: (calls on press, calls on release)
+TRANSPORT_EXPECT = {  # control number: (calls on press, calls on release)
     20: ([("transport.stop",)], []),
     21: ([], [("transport.start",)]),
     22: ([], [("transport.record",)]),
-    23: ([], []),          # Tap is tempo for the visuals only (Daniel, 2026-10-25): swallowed, FL's tempo never moves
+    23: ([], []),  # Tap is tempo for the visuals only (Daniel, 2026-10-25): swallowed, FL's tempo never moves
     24: ([], [("transport.globalTransport", GT["FPT_LoopRecord"], 1)]),
-    25: ([], []),          # Rewind / Fast forward step the VJ sets, always (Daniel, 2026-10-25): swallowed, no scrub
+    25: ([], []),  # Rewind / Fast forward step the VJ sets, always (Daniel, 2026-10-25): swallowed, no scrub
     26: ([], []),
     27: ([], [("transport.globalTransport", GT["FPT_Metronome"], 1)]),
     41: ([("transport.globalTransport", GT["FPT_Save"], 1)], []),
@@ -175,8 +208,19 @@ def test_the_transport_map_is_the_surface_maps_numbers(rig):
     # keylab-full-surface-map-2026-10-23.md T1-T12: Play 21, Stop 20, Record 22, Tap 23, Loop 24, Rewind 25,
     # Fast forward 26, Metronome 27, Save 41, Undo 43, Redo 44 (Quantize 42 and Back 40 are deliberately left out)
     names = {cc: v[0] for cc, v in rig.mod.TRANSPORT_BUTTONS.items()}
-    assert names == {20: "stop", 21: "play", 22: "record", 23: "tap", 24: "loop", 25: "rewind", 26: "forward",
-                     27: "metronome", 41: "save", 43: "undo", 44: "redo"}
+    assert names == {
+        20: "stop",
+        21: "play",
+        22: "record",
+        23: "tap",
+        24: "loop",
+        25: "rewind",
+        26: "forward",
+        27: "metronome",
+        41: "save",
+        43: "undo",
+        44: "redo",
+    }
     assert set(TRANSPORT_EXPECT) == set(names)
 
 
@@ -203,7 +247,7 @@ def test_tap_stays_with_the_visuals_unless_given_back_to_fl(rig):
     for value in (127, 0, 127, 0):
         assert rig.msg(0xB0 | 9, 23, value).handled is True
     assert rig.fl_calls() == []
-    rig.mod.TAP_TO_FL = True                                  # the switch gives the press back to FL's tap tempo
+    rig.mod.TAP_TO_FL = True  # the switch gives the press back to FL's tap tempo
     rig.clear()
     rig.msg(0xB0 | 9, 23, 127)
     assert rig.calls == [("transport.globalTransport", GT["FPT_TapTempo"], 1)]
@@ -224,22 +268,25 @@ def test_scrub_stays_with_the_sets_unless_given_back_to_fl(rig):
             assert rig.msg(0xB0 | 9, cc, value).handled is True
     assert rig.fl_calls() == []
     rig.mod.TAP_TO_FL = False
-    rig.mod.SCRUB_TO_FL = True                                # the switch gives them back to FL's scrub
+    rig.mod.SCRUB_TO_FL = True  # the switch gives them back to FL's scrub
     rig.clear()
     rig.msg(0xB0, 26, 127)
     rig.msg(0xB0, 26, 0)
-    assert rig.calls == [("transport.continuousMove", 2, GT["SS_Start"]), ("transport.continuousMove", 2, GT["SS_Stop"])]
+    assert rig.calls == [
+        ("transport.continuousMove", 2, GT["SS_Start"]),
+        ("transport.continuousMove", 2, GT["SS_Stop"]),
+    ]
 
 
 def test_rewind_held_when_the_script_unloads_is_stopped_first(rig):
-    rig.mod.SCRUB_TO_FL = True                                # only FL's scrub can be held
+    rig.mod.SCRUB_TO_FL = True  # only FL's scrub can be held
     rig.mod.OnInit()
     rig.msg(0xB0, 25, 127)
     rig.clear()
     rig.mod.OnDeInit()
     assert rig.calls == [("transport.continuousMove", -2, GT["SS_Stop"]), ("device.midiOutSysex", P.daw_connect(False))]
     rig.clear()
-    rig.mod.OnDeInit()                                    # nothing held any more: only the disconnect
+    rig.mod.OnDeInit()  # nothing held any more: only the disconnect
     assert rig.fl_calls() == []
 
 
@@ -249,7 +296,7 @@ def test_rewind_held_when_the_script_unloads_is_stopped_first(rig):
 FADERS = list(range(105, 114))
 FADER_TOUCH = [28, 29, 30, 31, 33, 34, 35, 36, 37]
 KNOBS = [91, 92, 94, 95, 96, 97, 102, 103, 104]
-KNOB_TOUCH = list(range(8, 16)) + [38]
+KNOB_TOUCH = [*list(range(8, 16)), 38]
 SCREEN_BUTTONS = list(range(45, 53))
 DIAL = [116, 117]
 BACK_AND_QUANTIZE = [40, 42]
@@ -262,15 +309,15 @@ def surface_messages():
         out += [(0xB0, cc, v) for v in (0, 1, 64, 127)]
     for cc in FADER_TOUCH + KNOB_TOUCH + SCREEN_BUTTONS + BACK_AND_QUANTIZE + [117]:
         out += [(0xB0, cc, 127), (0xB0, cc, 0)]
-    for cc in KNOBS + [116]:
+    for cc in [*KNOBS, 116]:
         out += [(0xB0, cc, v) for v in (65, 72, 63, 55)]
-    for note in range(12):                                # DAW-bank pads: notes 0-11 on channel 10
+    for note in range(12):  # DAW-bank pads: notes 0-11 on channel 10
         out += [(0x99, note, 100), (0x89, note, 0), (0x99, note, 0), (0xA9, note, 50)]
-    for cc in range(128):                                 # the sweep: every CC we do not drive, both channels
+    for cc in range(128):  # the sweep: every CC we do not drive, both channels
         if cc in TRANSPORT_EXPECT or cc == 1:
             continue
         out += [(0xB0, cc, 127), (0xB0, cc, 0), (0xB9, cc, 127)]
-    out += [(0x90, 60, 90), (0x80, 60, 0)]                                   # notes on other channels
+    out += [(0x90, 60, 90), (0x80, 60, 0)]  # notes on other channels
     out += [(0xD9, 40, 0), (0xD0, 40, 0), (0xC0, 5, 0), (0xF8, 0, 0), (0xFA, 0, 0)]
     return out
 
@@ -283,7 +330,8 @@ def test_every_surface_message_is_swallowed_with_no_fl_call(rig):
     for status, d1, d2 in msgs:
         ev = rig.msg(status, d1, d2)
         assert ev.handled is True, f"{status:02X} {d1} {d2} was left for FL"
-    assert rig.calls == [] and rig.sent == []
+    assert rig.calls == []
+    assert rig.sent == []
 
 
 def test_the_named_surface_groups_are_all_in_the_sweep():
@@ -291,7 +339,8 @@ def test_the_named_surface_groups_are_all_in_the_sweep():
     for cc in FADERS + FADER_TOUCH + KNOBS + KNOB_TOUCH + SCREEN_BUTTONS + DIAL + BACK_AND_QUANTIZE:
         assert (0xB0, cc) in covered
     for note in range(12):
-        assert (0x90, note) in covered and (0x80, note) in covered
+        assert (0x90, note) in covered
+        assert (0x80, note) in covered
 
 
 def test_bank_pads_pass_to_fl_untouched_and_daw_pads_never_do(rig):
@@ -300,10 +349,11 @@ def test_bank_pads_pass_to_fl_untouched_and_daw_pads_never_do(rig):
     for status, note, vel in [(0x99, 36, 100), (0x89, 36, 0), (0x99, 51, 90), (0xA9, 40, 30), (0x99, 12, 64)]:
         ev = rig.msg(status, note, vel)
         assert ev.handled is False, f"bank pad {status:02X} {note} was swallowed (FPC would go silent)"
-    for note in range(12):                                            # the DAW-bank pads are always swallowed
+    for note in range(12):  # the DAW-bank pads are always swallowed
         assert rig.msg(0x99, note, 100).handled is True
-    assert rig.msg(0x90, 36, 100).handled is True                     # channel 1 on the DAW port: not a pad
-    assert rig.calls == [] and rig.sent == []
+    assert rig.msg(0x90, 36, 100).handled is True  # channel 1 on the DAW port: not a pad
+    assert rig.calls == []
+    assert rig.sent == []
 
 
 def test_bank_pads_can_be_swallowed_too(rig):
@@ -312,7 +362,7 @@ def test_bank_pads_can_be_swallowed_too(rig):
 
 
 def test_oninit_asks_for_the_pads_on_the_daw_port_as_arturia_does(rig):
-    assert rig.mod.PAD_PORT_PROPERTY == bytes.fromhex("F0 00 20 6B 7F 42 00 02 00 14 02 01 00 F7")
+    assert bytes.fromhex("F0 00 20 6B 7F 42 00 02 00 14 02 01 00 F7") == rig.mod.PAD_PORT_PROPERTY
     rig.mod.SEND_PAD_PORT = False
     rig.mod.OnInit()
     assert [d for _, d in rig.sent] == [rig.mod.DAW_CONNECT]
@@ -327,14 +377,16 @@ def test_the_wheels_pass_to_fl_untouched(rig):
 
 def test_the_wheels_can_be_swallowed_too(rig):
     rig.mod.WHEELS_TO_FL = False
-    assert rig.msg(0xE0, 0, 64).handled is True and rig.msg(0xB0, 1, 9).handled is True
+    assert rig.msg(0xE0, 0, 64).handled is True
+    assert rig.msg(0xB0, 1, 9).handled is True
     assert rig.calls == []
 
 
 def test_sysex_on_the_daw_port_is_swallowed(rig):
     ev = Ev(0xF0)
     rig.mod.OnSysEx(ev)
-    assert ev.handled is True and rig.calls == []
+    assert ev.handled is True
+    assert rig.calls == []
 
 
 # =====================================================================================================================
@@ -346,8 +398,11 @@ LIT = {6: (0, 127, 0), 5: (127, 0, 0), 8: (127, 72, 0), 11: (127, 127, 127)}
 
 def test_led_ids_are_protocols_buttons(rig):
     m = rig.mod
-    assert (m.LED_PLAY, m.LED_RECORD, m.LED_LOOP, m.LED_METRONOME) == (
-        P.BUTTONS["play"], P.BUTTONS["record"], P.BUTTONS["repeat"], P.BUTTONS["metronome"]) == (6, 5, 8, 11)
+    assert (
+        (m.LED_PLAY, m.LED_RECORD, m.LED_LOOP, m.LED_METRONOME)
+        == (P.BUTTONS["play"], P.BUTTONS["record"], P.BUTTONS["repeat"], P.BUTTONS["metronome"])
+        == (6, 5, 8, 11)
+    )
     assert set(m.STATE_LEDS) == {6, 5, 8, 11}
     # the packet builder agrees with protocol's (8-bit in, 7-bit out) for full colours
     assert m._led_packet(m.LED_RECORD, True) == P.set_led("record", (255, 0, 0))
@@ -357,10 +412,14 @@ def test_led_ids_are_protocols_buttons(rig):
 def test_first_refresh_paints_the_four_leds_once(rig):
     rig.mod.OnInit()
     rig.clear()
-    rig.mod.OnRefresh(GT["HW_Dirty_ControlValues"])       # any first refresh reads the state once
+    rig.mod.OnRefresh(GT["HW_Dirty_ControlValues"])  # any first refresh reads the state once
     assert [d for _, d in rig.sent] == [led(6, DIM[6]), led(5, DIM[5]), led(8, DIM[8]), led(11, DIM[11])]
-    assert [c[0] for c in rig.fl_calls()] == ["transport.isPlaying", "transport.isRecording",
-                                              "ui.isLoopRecEnabled", "ui.isMetronomeEnabled"]
+    assert [c[0] for c in rig.fl_calls()] == [
+        "transport.isPlaying",
+        "transport.isRecording",
+        "ui.isLoopRecEnabled",
+        "ui.isMetronomeEnabled",
+    ]
 
 
 def test_later_refreshes_read_fl_only_when_fl_flags_the_leds(rig):
@@ -370,8 +429,9 @@ def test_later_refreshes_read_fl_only_when_fl_flags_the_leds(rig):
     for flags in (GT["HW_Dirty_Mixer_Controls"], GT["HW_Dirty_ControlValues"], 1, 2, 1024, 65536):
         rig.mod.OnRefresh(flags)
     assert rig.calls == []
-    rig.mod.OnRefresh(GT["HW_Dirty_LEDs"])                # flagged, nothing changed: four reads, no packet
-    assert len(rig.fl_calls()) == 4 and rig.sent == []
+    rig.mod.OnRefresh(GT["HW_Dirty_LEDs"])  # flagged, nothing changed: four reads, no packet
+    assert len(rig.fl_calls()) == 4
+    assert rig.sent == []
 
 
 def test_a_change_sends_only_that_led(rig):
@@ -416,7 +476,7 @@ def test_idle_with_nothing_held_back_does_nothing(rig):
 
 def test_led_storm_stays_inside_the_burst_rule_and_catches_up(rig):
     rig.mod.OnInit()
-    for i in range(40):                                   # every LED flips on every refresh, all in one instant
+    for i in range(40):  # every LED flips on every refresh, all in one instant
         on = i % 2 == 0
         rig.state.update(playing=on, recording=on, looprec=on, metronome=on)
         rig.mod.OnRefresh(GT["HW_Dirty_LEDs"])
@@ -425,18 +485,18 @@ def test_led_storm_stays_inside_the_burst_rule_and_catches_up(rig):
     assert len(rig.sent) <= rig.mod.BURST_LIMIT == 12
     assert max_in_window(times, rig.mod.BURST_WINDOW_S) <= 12
     assert rig.mod._led_backlog is True
-    rig.clock["t"] += 0.2                                 # the window passes: idle sends what was held back
+    rig.clock["t"] += 0.2  # the window passes: idle sends what was held back
     rig.mod.OnIdle()
     final = {6: rig.state["playing"], 5: rig.state["recording"], 8: rig.state["looprec"], 11: rig.state["metronome"]}
-    assert rig.mod._led_shown == final and rig.mod._led_backlog is False
+    assert rig.mod._led_shown == final
+    assert rig.mod._led_backlog is False
 
 
 def test_a_long_session_never_sends_a_screen_frame_or_a_pad(rig):
     rig.mod.OnInit()
     for step in range(300):
         rig.clock["t"] += 0.013
-        rig.state.update(playing=step % 7 < 3, recording=step % 11 == 0, looprec=step % 5 == 0,
-                         metronome=step % 3 == 0)
+        rig.state.update(playing=step % 7 < 3, recording=step % 11 == 0, looprec=step % 5 == 0, metronome=step % 3 == 0)
         rig.mod.OnRefresh(GT["HW_Dirty_LEDs"] if step % 2 else GT["HW_Dirty_ControlValues"])
         rig.mod.OnIdle()
         for status, d1, d2 in surface_messages()[step::300]:
@@ -447,10 +507,11 @@ def test_a_long_session_never_sends_a_screen_frame_or_a_pad(rig):
     rig.mod.OnDeInit()
     handshake = {P.daw_connect(True), P.daw_connect(False), rig.mod.PAD_PORT_PROPERTY}
     for _, d in rig.sent:
-        assert d.startswith(P.HEADER) and d.endswith(bytes([P.EOX]))
+        assert d.startswith(P.HEADER)
+        assert d.endswith(bytes([P.EOX]))
         if d in handshake:
             continue
-        payload = d[len(P.HEADER):-1]
+        payload = d[len(P.HEADER) : -1]
         assert payload[:3] == bytes([0x00, P.Ctx.DAW, P.Param.SET_LED]), f"not an LED packet: {d.hex(' ')}"
         assert payload[3] in (5, 6, 8, 11), f"LED {payload[3]} is not a transport state LED"
         assert len(payload) == 8
@@ -468,8 +529,12 @@ def _tree():
 def _fl_calls_in(tree, modules):
     found = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and isinstance(node.func.value, ast.Name) and node.func.value.id in modules:
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in modules
+        ):
             found.add(node.func.value.id + "." + node.func.attr)
     return found
 
@@ -495,7 +560,9 @@ def test_the_fl_calls_are_exactly_the_drill_list():
     commands = set()
     for node in ast.walk(_tree()):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "globalTransport":
-            commands.add(node.args[0].attr)
+            first = node.args[0]
+            assert isinstance(first, ast.Attribute)
+            commands.add(first.attr)
     assert commands == {"FPT_TapTempo", "FPT_LoopRecord", "FPT_Metronome", "FPT_Save"}
 
 
@@ -517,7 +584,8 @@ def test_midi_constants_match_fl_2026s_own_midi_py():
     text = FL_MIDI_PY.read_text(encoding="utf-8", errors="replace")
     for name, value in MIDI_CONSTANTS.items():
         m = re.search(r"^" + name + r"\s*=\s*(\d+)", text, re.M)
-        assert m and int(m.group(1)) == value, name
+        assert m, name
+        assert int(m.group(1)) == value, name
 
 
 # =====================================================================================================================
@@ -539,11 +607,18 @@ def test_every_fl_call_but_one_is_already_made_by_arturias_script():
 
 def test_the_transport_facts_agree_with_arturias_dispatch_table():
     text = (_arturia_files()[0].parent / "KL3Process.py").read_text(encoding="utf-8", errors="replace")
-    handlers = dict((int(cc), name) for cc, name in re.findall(r"\.NewHandler\((\d+),\s*self\.(\w+)", text))
-    assert handlers[21] == "Start" and handlers[20] == "Stop" and handlers[22] == "Record"
-    assert handlers[23] == "TapTempo" and handlers[27] == "SetClick" and handlers[24] == "Loop"
-    assert handlers[25] == "Rewind" and handlers[26] == "FastForward" and handlers[41] == "Save"
-    assert handlers[43] == "Undo" and handlers[44] == "Redo"
+    handlers = {int(cc): name for cc, name in re.findall(r"\.NewHandler\((\d+),\s*self\.(\w+)", text)}
+    assert handlers[21] == "Start"
+    assert handlers[20] == "Stop"
+    assert handlers[22] == "Record"
+    assert handlers[23] == "TapTempo"
+    assert handlers[27] == "SetClick"
+    assert handlers[24] == "Loop"
+    assert handlers[25] == "Rewind"
+    assert handlers[26] == "FastForward"
+    assert handlers[41] == "Save"
+    assert handlers[43] == "Undo"
+    assert handlers[44] == "Redo"
     # the edges: the release-only and press-only filters
     for cc in (21, 22, 27, 24):
         assert re.search(r"\.NewHandler\(" + str(cc) + r",\s*self\.\w+,\s*ignore_press\)", text), cc
@@ -556,7 +631,7 @@ def _normal_lines(text):
     out = []
     for raw in text.splitlines():
         line = " ".join(raw.split())
-        if not line or line.startswith("#") or line.startswith("import ") or line.startswith("from "):
+        if not line or line.startswith(("#", "import ", "from ")):
             continue
         if len(line) < 12:
             continue
@@ -566,16 +641,16 @@ def _normal_lines(text):
 
 def test_licence_no_three_consecutive_lines_appear_in_arturias_files():
     ours = _normal_lines(SCRIPT.read_text(encoding="utf-8"))
-    ours_triples = {tuple(ours[i:i + 3]) for i in range(len(ours) - 2)}
+    ours_triples = {tuple(ours[i : i + 3]) for i in range(len(ours) - 2)}
     for path in _arturia_files():
         theirs = _normal_lines(path.read_text(encoding="utf-8", errors="replace"))
         for i in range(len(theirs) - 2):
-            assert tuple(theirs[i:i + 3]) not in ours_triples, f"{path.name}: {theirs[i:i + 3]}"
+            assert tuple(theirs[i : i + 3]) not in ours_triples, f"{path.name}: {theirs[i : i + 3]}"
 
 
 def test_licence_no_name_we_define_is_one_arturia_defines():
     ours = set()
-    for node in _tree().body:                             # our module-level names (FL's callback names are FL's)
+    for node in _tree().body:  # our module-level names (FL's callback names are FL's)
         if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and not node.name.startswith("On"):
             ours.add(node.name)
         elif isinstance(node, ast.Assign):
@@ -609,8 +684,10 @@ def hw(tmp_path, monkeypatch):
 
 
 def snapshot(folder):
-    return {p.relative_to(folder).as_posix(): (hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else "dir")
-            for p in sorted(folder.rglob("*"))}
+    return {
+        p.relative_to(folder).as_posix(): (hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else "dir")
+        for p in sorted(folder.rglob("*"))
+    }
 
 
 def outside_ours(root):
@@ -622,36 +699,49 @@ def test_install_status_reinstall_uninstall_leave_arturia_byte_identical(hw):
     target = hw / F.FOLDER_NAME / F.SCRIPT_NAME
 
     code, lines = F.install(hw, dry_run=True)
-    assert code == 0 and not (hw / F.FOLDER_NAME).exists()
+    assert code == 0
+    assert not (hw / F.FOLDER_NAME).exists()
     assert any("would install" in line for line in lines)
 
     code, lines = F.install(hw)
-    assert code == 0 and target.read_bytes() == SCRIPT.read_bytes()
-    assert any("Aurora KeyLab (user)" in line for line in lines) and any("KeyLab mk3" in line for line in lines)
+    assert code == 0
+    assert target.read_bytes() == SCRIPT.read_bytes()
+    assert any("Aurora KeyLab (user)" in line for line in lines)
+    assert any("KeyLab mk3" in line for line in lines)
     assert sorted(p.name for p in (hw / F.FOLDER_NAME).iterdir()) == [F.SCRIPT_NAME]
 
     code, lines = F.status(hw)
     text = "\n".join(lines)
-    assert code == 0 and "installed:    yes" in text and "same bytes:   yes" in text
-    assert "Arturia's" in text and "FL running:   no" in text
+    assert code == 0
+    assert "installed:    yes" in text
+    assert "same bytes:   yes" in text
+    assert "Arturia's" in text
+    assert "FL running:   no" in text
 
     mtime = target.stat().st_mtime_ns
     code, lines = F.install(hw)
-    assert code == 0 and "already installed" in lines[0] and target.stat().st_mtime_ns == mtime
+    assert code == 0
+    assert "already installed" in lines[0]
+    assert target.stat().st_mtime_ns == mtime
 
     target.write_bytes(b"# name=Aurora KeyLab\n# an older copy\n")
     assert any("NO" in line for line in F.status(hw)[1])
     code, lines = F.install(hw)
-    assert code == 0 and lines[0].startswith("replaced") and target.read_bytes() == SCRIPT.read_bytes()
+    assert code == 0
+    assert lines[0].startswith("replaced")
+    assert target.read_bytes() == SCRIPT.read_bytes()
 
     code, lines = F.uninstall(hw, dry_run=True)
-    assert code == 0 and target.exists()
+    assert code == 0
+    assert target.exists()
     code, lines = F.uninstall(hw)
-    assert code == 0 and not (hw / F.FOLDER_NAME).exists()
+    assert code == 0
+    assert not (hw / F.FOLDER_NAME).exists()
     assert outside_ours(hw) == before
 
     code, lines = F.uninstall(hw)
-    assert code == 0 and lines[0].startswith("not installed")
+    assert code == 0
+    assert lines[0].startswith("not installed")
 
 
 def test_a_folder_with_foreign_files_is_refused_and_left_alone(hw):
@@ -661,9 +751,11 @@ def test_a_folder_with_foreign_files_is_refused_and_left_alone(hw):
     (folder / F.SCRIPT_NAME).write_bytes(b"old")
     before = snapshot(hw)
     code, lines = F.install(hw)
-    assert code == 2 and "notes.txt" in "\n".join(lines)
+    assert code == 2
+    assert "notes.txt" in "\n".join(lines)
     code, lines = F.uninstall(hw)
-    assert code == 2 and "notes.txt" in "\n".join(lines)
+    assert code == 2
+    assert "notes.txt" in "\n".join(lines)
     assert snapshot(hw) == before
     assert "foreign files" in "\n".join(F.status(hw)[1])
 
@@ -678,21 +770,24 @@ def test_a_stray_cache_file_is_foreign_but_our_own_cache_is_ours(hw):
     assert F.foreign_entries(folder) == ["__pycache__/KL3Display.cpython-312.pyc"]
     assert F.uninstall(hw)[0] == 2
     (folder / "__pycache__" / "KL3Display.cpython-312.pyc").unlink()
-    assert F.uninstall(hw)[0] == 0 and not folder.exists()
+    assert F.uninstall(hw)[0] == 0
+    assert not folder.exists()
 
 
 def test_a_missing_hardware_folder_is_refused(tmp_path, monkeypatch):
     monkeypatch.setattr(F, "fl_running", lambda: False)
-    monkeypatch.setattr(F, "daw_port_scripts", lambda: [])
+    monkeypatch.setattr(F, "daw_port_scripts", list)
     code, lines = F.install(tmp_path / "nope")
-    assert code == 2 and "--hardware-dir" in "\n".join(lines)
+    assert code == 2
+    assert "--hardware-dir" in "\n".join(lines)
     assert not (tmp_path / "nope").exists()
     assert F.uninstall(tmp_path / "nope")[0] == 0
 
 
 def test_a_file_where_our_folder_should_be_is_refused(hw):
     (hw / F.FOLDER_NAME).write_bytes(b"not a folder")
-    assert F.install(hw)[0] == 2 and F.uninstall(hw)[0] == 2
+    assert F.install(hw)[0] == 2
+    assert F.uninstall(hw)[0] == 2
     assert (hw / F.FOLDER_NAME).read_bytes() == b"not a folder"
 
 
@@ -712,18 +807,24 @@ def test_uninstall_refuses_while_fl_has_ours_picked_unless_forced(hw, monkeypatc
     monkeypatch.setattr(F, "daw_port_scripts", lambda: [("FL Studio 26", "KeyLab 88 mk3 DAW", "Aurora KeyLab")])
     assert "(ours" in "\n".join(F.status(hw)[1])
     code, lines = F.uninstall(hw)
-    assert code == 2 and "refused" in lines[0] and '"KeyLab mk3"' in lines[1]
-    assert (hw / F.FOLDER_NAME / F.SCRIPT_NAME).is_file()                 # nothing removed
+    assert code == 2
+    assert "refused" in lines[0]
+    assert '"KeyLab mk3"' in lines[1]
+    assert (hw / F.FOLDER_NAME / F.SCRIPT_NAME).is_file()  # nothing removed
     code, lines = F.uninstall(hw, force=True)
-    assert code == 0 and '"KeyLab mk3"' in lines[0] and not (hw / F.FOLDER_NAME).exists()
+    assert code == 0
+    assert '"KeyLab mk3"' in lines[0]
+    assert not (hw / F.FOLDER_NAME).exists()
 
 
 def test_uninstall_refuses_while_fl_runs_unless_forced(hw, monkeypatch):
     F.install(hw)
-    monkeypatch.setattr(F, "daw_port_scripts", lambda: [])
+    monkeypatch.setattr(F, "daw_port_scripts", list)
     monkeypatch.setattr(F, "fl_running", lambda: True)
-    assert F.uninstall(hw)[0] == 2 and (hw / F.FOLDER_NAME).exists()
-    assert F.uninstall(hw, force=True)[0] == 0 and not (hw / F.FOLDER_NAME).exists()
+    assert F.uninstall(hw)[0] == 2
+    assert (hw / F.FOLDER_NAME).exists()
+    assert F.uninstall(hw, force=True)[0] == 0
+    assert not (hw / F.FOLDER_NAME).exists()
 
 
 def test_uninstall_leaves_fls_own_ini_for_our_folder(hw):
@@ -731,7 +832,8 @@ def test_uninstall_leaves_fls_own_ini_for_our_folder(hw):
     ini = hw / (F.FOLDER_NAME + ".ini")
     ini.write_bytes(b"[Ini]\r\nVersion=1\r\n")
     code, lines = F.uninstall(hw)
-    assert code == 0 and ini.read_bytes() == b"[Ini]\r\nVersion=1\r\n"
+    assert code == 0
+    assert ini.read_bytes() == b"[Ini]\r\nVersion=1\r\n"
     assert any("left in place" in line for line in lines)
 
 
@@ -741,7 +843,8 @@ def test_the_cli_verbs(hw, capsys):
     assert CLI.main(["fl-install", "--hardware-dir", str(hw)]) == 0
     assert CLI.main(["fl-status", "--hardware-dir", str(hw)]) == 0
     out = capsys.readouterr().out
-    assert "same bytes:   yes" in out and "Options > MIDI settings" in out
+    assert "same bytes:   yes" in out
+    assert "Options > MIDI settings" in out
     assert CLI.main(["fl-uninstall", "--hardware-dir", str(hw)]) == 0
     assert not (hw / F.FOLDER_NAME).exists()
 
@@ -749,10 +852,13 @@ def test_the_cli_verbs(hw, capsys):
 def test_the_default_hardware_dir_is_under_documents():
     d = F.default_hardware_dir()
     assert d.parts[-4:] == ("Image-Line", "FL Studio", "Settings", "Hardware")
-    assert F.hardware_dir(None) == d and F.hardware_dir("X:/elsewhere") == pathlib.Path("X:/elsewhere")
+    assert F.hardware_dir(None) == d
+    assert F.hardware_dir("X:/elsewhere") == pathlib.Path("X:/elsewhere")
 
 
 def test_install_doc_exists_and_names_the_drill():
     doc = (SCRIPT.parent / "INSTALL.md").read_text(encoding="utf-8")
-    assert "Aurora KeyLab" in doc and "KeyLab mk3" in doc and "freeze" in doc.lower()
+    assert "Aurora KeyLab" in doc
+    assert "KeyLab mk3" in doc
+    assert "freeze" in doc.lower()
     assert "Image-Line/FL Studio/Settings/Hardware/Aurora KeyLab" in doc.replace("\\", "/")

@@ -9,25 +9,78 @@
 | agent/harness/draft_keepalive.py | 94 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | agent/harness/draft_keepalive.py | 118 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | agent/harness/dsh_plugin/bridge.py | 363 | `noqa: BLE001` | fail-soft: falls back to a default value |
+| agent/harness/hooks/snippet_autofile.py | 639 | `noqa: SIM108` | two named cases read clearer than a chained ternary |
 | agent/initializer.py | 128 | `pyright: ignore[reportAttributeAccessIssue]` | SignalEmitter declares it as None |
 | agent_cli.py | 56 | `noqa: E402` | after sys.path bootstrap and UTF-8 stream setup |
 | agent_cli.py | 61 | `noqa: E402` | after sys.path bootstrap and UTF-8 stream setup |
-| agent_cli.py | 1698 | `noqa: F401` | registers on import |
-| agent_cli.py | 2366 | `noqa: PLC0415, RUF100` | lazy, as elsewhere |
-| agent_cli.py | 2880 | `noqa: PLC0415, RUF100` | lazy: as every agent_cli verb |
-| agent_cli.py | 2949 | `noqa: PLC0415, RUF100` | lazy: as every agent_cli verb |
-| agent_cli.py | 3762 | `noqa: SIM115` | handle outlives this block: inherited by the Popen child, parent copy closed on GC |
-| agent_cli.py | 12571 | `noqa: BLE001` | fail-soft: logged, caller continues |
-| agent_cli.py | 12787 | `noqa: BLE001` | fail-soft: falls back to a default value |
-| agent_cli.py | 12812 | `noqa: BLE001` | fail-soft: falls back to a default value |
+| agent_cli.py | 384 | `noqa: BLE001` |  |
+| agent_cli.py | 1242 | `noqa: BLE001` |  |
+| agent_cli.py | 2741 | `noqa: F401` | registers on import |
+| agent_cli.py | 2793 | `fmt: skip` |  |
+| agent_cli.py | 3552 | `noqa: PLC0415, RUF100` | lazy, as elsewhere |
+| agent_cli.py | 4114 | `noqa: PLC0415, RUF100` | lazy: as every agent_cli verb |
+| agent_cli.py | 4222 | `noqa: PLC0415, RUF100` | was missing -- see _wish_curate_run |
+| agent_cli.py | 4521 | `fmt: skip` |  |
+| agent_cli.py | 4563 | `fmt: skip` |  |
+| agent_cli.py | 4592 | `fmt: skip` |  |
+| agent_cli.py | 4618 | `fmt: skip` |  |
+| agent_cli.py | 4628 | `fmt: skip` |  |
+| agent_cli.py | 4635 | `fmt: skip` |  |
+| agent_cli.py | 4655 | `fmt: skip` |  |
+| agent_cli.py | 4677 | `fmt: skip` |  |
+| agent_cli.py | 4726 | `fmt: skip` |  |
+| agent_cli.py | 4760 | `fmt: skip` |  |
+| agent_cli.py | 4778 | `fmt: skip` |  |
+| agent_cli.py | 4814 | `fmt: skip` |  |
+| agent_cli.py | 4822 | `fmt: skip` |  |
+| agent_cli.py | 4841 | `fmt: skip` |  |
+| agent_cli.py | 4844 | `fmt: skip` |  |
+| agent_cli.py | 4847 | `fmt: skip` |  |
+| agent_cli.py | 4854 | `fmt: skip` |  |
+| agent_cli.py | 4859 | `fmt: skip` |  |
+| agent_cli.py | 4875 | `fmt: skip` |  |
+| agent_cli.py | 4888 | `fmt: skip` |  |
+| agent_cli.py | 4918 | `fmt: skip` |  |
+| agent_cli.py | 4941 | `fmt: skip` |  |
+| agent_cli.py | 4954 | `fmt: skip` |  |
+| agent_cli.py | 4965 | `fmt: skip` |  |
+| agent_cli.py | 4968 | `fmt: skip` |  |
+| agent_cli.py | 4978 | `fmt: skip` |  |
+| agent_cli.py | 4982 | `fmt: skip` |  |
+| agent_cli.py | 5007 | `fmt: skip` |  |
+| agent_cli.py | 5011 | `fmt: skip` |  |
+| agent_cli.py | 5014 | `fmt: skip` |  |
+| agent_cli.py | 5034 | `fmt: skip` |  |
+| agent_cli.py | 5042 | `fmt: skip` |  |
+| agent_cli.py | 5302 | `noqa: SIM115` | handle outlives this block: inherited by the Popen child, parent copy closed on GC |
+| agent_cli.py | 9011 | `noqa: BLE001` |  |
+| agent_cli.py | 9059 | `noqa: BLE001` |  |
+| agent_cli.py | 9073 | `noqa: BLE001` |  |
+| agent_cli.py | 9081 | `noqa: BLE001` |  |
+| agent_cli.py | 9088 | `noqa: BLE001` |  |
+| agent_cli.py | 9620 | `fmt: skip` |  |
+| agent_cli.py | 10390 | `noqa: BLE001` |  |
+| agent_cli.py | 10892 | `noqa: BLE001` | fail-soft: a roster row never dies on the wake probe |
+| agent_cli.py | 13501 | `fmt: skip` |  |
+| agent_cli.py | 13855 | `fmt: skip` |  |
+| agent_cli.py | 14059 | `noqa: BLE001` |  |
+| agent_cli.py | 14079 | `noqa: BLE001` |  |
+| agent_cli.py | 14168 | `noqa: BLE001` |  |
+| agent_cli.py | 14804 | `type: ignore[method-assign]` | the AXI parser wrapper replaces argparse's method |
+| agent_cli.py | 18958 | `fmt: skip` |  |
+| agent_cli.py | 19045 | `noqa: BLE001` | fail-soft: logged, caller continues |
+| agent_cli.py | 19239 | `fmt: skip` |  |
+| agent_cli.py | 19243 | `fmt: skip` |  |
+| agent_cli.py | 19247 | `fmt: skip` |  |
+| agent_cli.py | 19617 | `noqa: BLE001` | fail-soft: cannot tell -> say so, never a false alarm |
 | ai_setup_mcp.py | 174 | `ty: ignore[invalid-assignment]` | deliberate process-wide monkeypatch with a subclass |
-| ai_setup_mcp.py | 518 | `noqa: RUF013` | MCP tool input schema (O4c) must stay byte-identical |
-| ai_setup_mcp.py | 518 | `ty: ignore[invalid-parameter-default]` | MCP tool input schema (O4c) must stay byte-identical |
-| ai_setup_mcp.py | 518 | `pyright: ignore[reportArgumentType]` | MCP tool input schema (O4c) must stay byte-identical |
-| ai_setup_mcp.py | 522 | `noqa: ASYNC109` | MCP tool parameter (input schema O4c) |
-| ai_setup_mcp.py | 525 | `noqa: A002` | public API name (MCP tool parameter) |
-| ai_setup_mcp.py | 998 | `noqa: A002` | public API name (MCP tool parameter) |
-| ai_setup_mcp.py | 1742 | `noqa: A002` | public API name (MCP tool parameter) |
+| ai_setup_mcp.py | 569 | `noqa: RUF013` | MCP tool input schema (O4c) must stay byte-identical |
+| ai_setup_mcp.py | 569 | `ty: ignore[invalid-parameter-default]` | MCP tool input schema (O4c) must stay byte-identical |
+| ai_setup_mcp.py | 569 | `pyright: ignore[reportArgumentType]` | MCP tool input schema (O4c) must stay byte-identical |
+| ai_setup_mcp.py | 573 | `noqa: ASYNC109` | MCP tool parameter (input schema O4c) |
+| ai_setup_mcp.py | 576 | `noqa: A002` | public API name (MCP tool parameter) |
+| ai_setup_mcp.py | 1052 | `noqa: A002` | public API name (MCP tool parameter) |
+| ai_setup_mcp.py | 1796 | `noqa: A002` | public API name (MCP tool parameter) |
 | arsenal/analysis.py | 187 | `noqa: BLE001` | deliberately broad: never raise, ever |
 | arsenal/boost.py | 71 | `ty: ignore[unsupported-operator]` | LATENT: a degenerate image's empty annulus (None) raises TypeError here |
 | arsenal/boost.py | 71 | `pyright: ignore[reportOperatorIssue]` | LATENT: a degenerate image's empty annulus (None) raises TypeError here |
@@ -38,7 +91,55 @@
 | arsenal/fl/vfx/arsenal_band.py | 463 | `pyright: ignore[reportAttributeAccessIssue]` | unset until on_tick reads FL's PPQ |
 | arsenal/fl/vfx/flvfx_mock.py | 497 | `ty: ignore[redundant-cast]` | pyright narrows callable(Any) to a callable returning object; the cast keeps int() well typed there |
 | arsenal/jam/schemas.py | 942 | `ty: ignore[invalid-return-type]` | an id-less card keys as None; callers pass cards that validate_card already gave ids |
+| arsenal/keylab/__main__.py | 638 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/__main__.py | 650 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
+| arsenal/keylab/__main__.py | 1320 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/beatbench.py | 568 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/beatbench.py | 925 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/beatbench.py | 954 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/beatbench.py | 1385 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/beatbench.py | 1927 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/beatbench.py | 1993 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/beatbench.py | 2141 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 100 | `pyright: ignore[reportMissingImports]` | Windows-only dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 279 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 280 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 396 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 501 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 704 | `pyright: ignore[reportMissingImports]` | optional beat-tracker dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 706 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
+| arsenal/keylab/chordsense.py | 105 | `pyright: ignore[reportMissingImports]` | optional analysis dependency, not in the lock |
+| arsenal/keylab/chordsense.py | 108 | `pyright: ignore[reportMissingImports]` | optional analysis dependency, not in the lock |
+| arsenal/keylab/fl/device_AuroraKeyLab.py | 50 | `pyright: ignore[reportMissingImports]` | FL Studio's embedded module, exists only inside FL |
+| arsenal/keylab/fl/device_AuroraKeyLab.py | 51 | `pyright: ignore[reportMissingImports]` | FL Studio's embedded module, exists only inside FL |
+| arsenal/keylab/fl/device_AuroraKeyLab.py | 52 | `pyright: ignore[reportMissingImports]` | FL Studio's embedded module, exists only inside FL |
+| arsenal/keylab/fl/device_AuroraKeyLab.py | 53 | `pyright: ignore[reportMissingImports]` | FL Studio's embedded module, exists only inside FL |
+| arsenal/keylab/fl/device_AuroraKeyLab.py | 54 | `pyright: ignore[reportMissingImports]` | FL Studio's embedded module, exists only inside FL |
+| arsenal/keylab/tempo.py | 295 | `pyright: ignore[reportMissingImports]` | optional beat-tracker dependency, not in the lock |
+| arsenal/keylab/tempo.py | 429 | `pyright: ignore[reportMissingImports]` | optional beat-tracker dependency, not in the lock |
+| arsenal/keylab/tempo.py | 521 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
+| arsenal/keylab/vj.py | 1032 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
+| arsenal/keylab/vj.py | 1095 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/vj.py | 1613 | `pyright: ignore[reportIncompatibleMethodOverride]` | the parent names it format, which ruff's A002 forbids shadowing |
 | arsenal/lanes/hwdecode_soak.py | 124 | `noqa: BLE001` | record and stop, never crash the soak |
+| arsenal/media/cut.py | 582 | `type: ignore[attr-defined]` |  |
+| arsenal/media/cut.py | 587 | `type: ignore[attr-defined]` |  |
+| arsenal/media/editapi.py | 538 | `noqa: B007` | fn is the matched route's handler, called after the break |
+| arsenal/media/export.py | 58 | `type: ignore[return-value]` |  |
+| arsenal/media/export.py | 144 | `noqa: F401` |  |
+| arsenal/media/export.py | 234 | `noqa: F401` |  |
+| arsenal/media/ff.py | 56 | `noqa: PLC0415, RUF100` | lazy: importing core runs Windows setup |
+| arsenal/media/ff.py | 316 | `noqa: A002` | mirrors subprocess.run(input=), which it is passed to |
+| arsenal/media/ff.py | 345 | `noqa: SIM115` | handle outlives this function: kept on proc, closed by finish() |
+| arsenal/media/ff.py | 357 | `type: ignore[attr-defined]` |  |
+| arsenal/media/ff.py | 358 | `type: ignore[attr-defined]` |  |
+| arsenal/media/league/hud.py | 77 | `type: ignore[return-value]` |  |
+| arsenal/media/league/live.py | 46 | `noqa: S323` |  |
+| arsenal/media/league/live.py | 99 | `noqa: SIM115` | kept across polls, closed in finally |
+| arsenal/media/sheet.py | 410 | `type: ignore[return-value]` |  |
+| arsenal/media/words.py | 219 | `noqa: F401` |  |
+| arsenal/params.py | 402 | `noqa: RUF003` | the fullwidth letter is the example: it sorts apart by code unit and by code point |
+| arsenal/params.py | 989 | `noqa: A002` | the JS twin's option name |
 | arsenal/practice.py | 2396 | `noqa: BLE001` | any failure inside the shared numberer falls back to the parts |
 | arsenal/practice.py | 2410 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | arsenal/practice.py | 5294 | `ty: ignore[not-subscriptable]` | LATENT: no velocities -> ZeroDivisionError above first; output for that case is a judgement call |
@@ -47,20 +148,29 @@
 | arsenal/practice_riff.py | 2124 | `noqa: E731` | local one-line key function |
 | arsenal/practice_riff.py | 2650 | `ty: ignore[not-subscriptable]` | LATENT: a def file whose key does not parse raises TypeError here |
 | arsenal/practice_riff.py | 2650 | `pyright: ignore[reportOptionalSubscript]` | LATENT: a def file whose key does not parse raises TypeError here |
-| arsenal/present/__init__.py | 37 | `noqa: E402` | re-exported for convenience; scene.py stays standalone |
+| arsenal/present/__init__.py | 38 | `noqa: E402` | re-exported for convenience; scene.py stays standalone |
 | arsenal/replay.py | 242 | `ty: ignore[invalid-method-override]` | fmt, not format (A002); stdlib passes it positionally |
 | arsenal/replay.py | 242 | `pyright: ignore[reportIncompatibleMethodOverride]` | fmt, not format (A002); stdlib passes it positionally |
 | arsenal/serve.py | 239 | `ty: ignore[invalid-method-override]` | fmt, not format (A002); stdlib passes it positionally |
 | arsenal/serve.py | 239 | `pyright: ignore[reportIncompatibleMethodOverride]` | fmt, not format (A002); stdlib passes it positionally |
+| arsenal/shaders/modules.py | 761 | `noqa: BLE001` | a salvage that fails makes the file unknown, which refuses more, never less |
+| arsenal/shaders/modules.py | 1017 | `noqa: BLE001` | lenient means one file can never take the library down |
+| arsenal/shaders/twins/light.py | 60 | `noqa: E741` | the GLSL signature's own name (n.l); the twin keeps the shader's parameters |
+| arsenal/shaders/twins/light.py | 65 | `noqa: E741` | the GLSL signature's own name (n.l); the twin keeps the shader's parameters |
+| arsenal/shaders/twins/light.py | 71 | `noqa: E741` | the GLSL signature's own name (n.l); the twin keeps the shader's parameters |
+| arsenal/shaders/twins/light.py | 267 | `noqa: A002` | the GLSL parameter's name; the twin keeps the shader's signature |
 | arsenal/tiktok.py | 40 | `noqa: TC003` | runtime-evaluated annotations (inventory annotation_sensitive) |
+| arsenal/web/piano/instruments/underkey-src/runes_note_names.py | 128 | `noqa: RUF001` | the rune is the data, not a confusable |
+| arsenal/web/piano/instruments/underkey-src/uk_glyphs_v2.py | 26 | `noqa: E402` | importable only after this folder joins sys.path above; main() is guarded, we reuse its helpers and SIGNS |
 | aurora-cli/src/aurora_cli/bundle.py | 105 | `noqa: SIM115` | returned to a with-block in the caller |
 | aurora-cli/src/aurora_cli/bundle.py | 107 | `noqa: S310` | https or file only, by construction |
 | aurora-rs/bench.py | 79 | `pyright: ignore[reportMissingImports]` | optional wheel |
 | bootstrap.py | 128 | `noqa: F401` | availability probe |
-| config.py | 246 | `noqa: E402` | beside the setting it serves |
+| config.py | 259 | `noqa: E402` | beside the setting it serves |
+| core/axi/cli.py | 65 | `type: ignore[override]` | argparse declares NoReturn |
 | core/codex/schema.py | 94 | `noqa: A002` | public API name |
 | core/comm/ask.py | 1341 | `noqa: BLE001` | fail-soft: falls back to a default value |
-| core/comm/bifrost_api.py | 193 | `noqa: BLE001` | fail-soft: falls back to a default value |
+| core/comm/bifrost_api.py | 232 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | core/comm/bus.py | 77 | `noqa: E402` | THE incarnation discriminator |
 | core/comm/bus.py | 376 | `noqa: BLE001` | fail-loud: refused or unavailable, the sender is told |
 | core/comm/bus.py | 883 | `noqa: RUF012` | annotation_sensitive module; class-level throttle shared on purpose |
@@ -93,25 +203,44 @@
 | core/comm/doctor.py | 1228 | `ty: ignore[call-non-callable]` | LATENT: LockManager has no list_held; always [] |
 | core/comm/doctor.py | 1228 | `pyright: ignore[reportAttributeAccessIssue]` | LATENT: LockManager has no list_held; always [] |
 | core/comm/doctor.py | 1584 | `noqa: BLE001` | fail-soft: falls back to a default value |
+| core/comm/engine_vitals.py | 76 | `noqa: BLE001` |  |
+| core/comm/liveness.py | 164 | `noqa: BLE001` |  |
+| core/comm/liveness.py | 203 | `noqa: BLE001` |  |
 | core/comm/mailbox.py | 866 | `noqa: A001` | public API name (mailbox.open) |
 | core/comm/operator_reply.py | 151 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | core/comm/operator_reply.py | 200 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | core/comm/promoter.py | 75 | `ty: ignore[redundant-cast]` | pyright sees object here; events_for_ref: list of event dicts |
+| core/comm/resume_on_deaf.py | 342 | `noqa: SIM115` | handle outlives this block: inherited by the Popen child, parent copy closed on GC |
 | core/comm/shift_turn.py | 67 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | core/comm/shift_turn.py | 75 | `noqa: BLE001` | fail-soft: falls back to a default value |
-| core/comm/toolbox.py | 1038 | `noqa: A002` | public API name |
-| core/comm/toolbox.py | 1438 | `noqa: A002` | public API name |
-| core/comm/toolbox.py | 1923 | `ty: ignore[unresolved-attribute]` | LATENT: intent.scope_matches never existed; except swallows, tag is always "" |
-| core/comm/toolbox.py | 1923 | `pyright: ignore[reportAttributeAccessIssue]` | LATENT: intent.scope_matches never existed; except swallows, tag is always "" |
-| core/comm/toolbox.py | 2419 | `pyright: ignore[reportPossiblyUnboundVariable]` | bound before any subprocess call can time out |
+| core/comm/toolbox.py | 1115 | `noqa: A002` | public API name |
+| core/comm/toolbox.py | 1557 | `noqa: A002` | public API name |
+| core/comm/toolbox.py | 2554 | `pyright: ignore[reportPossiblyUnboundVariable]` | bound before any subprocess call can time out |
 | core/coord/compare.py | 35 | `noqa: TC003` | runtime-evaluated annotations (annotation_sensitive module) |
-| core/coord/conductor.py | 70 | `ty: ignore[redundant-cast]` | LOST_UPDATE_ATTEMPTS >= 1, so a conflict set it |
+| core/coord/conductor.py | 69 | `ty: ignore[redundant-cast]` | LOST_UPDATE_ATTEMPTS >= 1, so a conflict set it |
 | core/coord/continuity.py | 92 | `ty: ignore[redundant-cast]` | pyright narrows to type[DataclassInstance] too; asdict decides, exactly as before |
 | core/coord/experiment.py | 35 | `noqa: TC003` | runtime-evaluated annotations (annotation_sensitive module) |
 | core/coord/forecast_registry.py | 158 | `noqa: A002` | public API name |
 | core/coord/observations.py | 10 | `noqa: TC003` | runtime-evaluated annotations (annotation_sensitive module) |
+| core/coord/scene.py | 107 | `noqa: BLE001` |  |
+| core/coord/scene.py | 197 | `noqa: BLE001` |  |
+| core/coord/scene.py | 253 | `noqa: BLE001` |  |
+| core/coord/scene.py | 346 | `noqa: BLE001` |  |
+| core/coord/session_id.py | 93 | `noqa: BLE001` |  |
+| core/coord/session_id.py | 117 | `noqa: BLE001` |  |
+| core/coord/session_id.py | 131 | `noqa: BLE001` |  |
 | core/coord/sift.py | 47 | `noqa: TC003` | runtime-evaluated annotations (annotation_sensitive module) |
+| core/coord/target.py | 46 | `noqa: TC003` | runtime-evaluated annotations (annotation_sensitive module) |
 | core/coord/world_savepoint.py | 37 | `noqa: TC003` | runtime-evaluated annotations (annotation_sensitive module) |
+| core/events/touch.py | 37 | `noqa: TC003` | runtime-evaluated annotations (annotation_sensitive module) |
+| core/events/touch.py | 97 | `noqa: BLE001` |  |
+| core/events/touch.py | 147 | `noqa: BLE001` |  |
+| core/events/touch.py | 238 | `noqa: BLE001` |  |
+| core/events/touch.py | 261 | `noqa: BLE001` |  |
+| core/events/touch.py | 285 | `noqa: BLE001` |  |
+| core/events/touch.py | 297 | `noqa: BLE001` |  |
+| core/events/touch_stats.py | 167 | `noqa: BLE001` |  |
+| core/eye/index.py | 646 | `noqa: BLE001` |  |
 | core/fleet/app_package.py | 206 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | core/fleet/app_package.py | 255 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | core/fleet/provenance.py | 149 | `noqa: BLE001` | fail-soft: no transcript means unknown, never an error |
@@ -124,17 +253,23 @@
 | core/fleet/seat_model.py | 183 | `noqa: BLE001` | fail-soft: best effort, skipped on any error |
 | core/fleet/seat_model.py | 185 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | core/foundation/accel.py | 38 | `pyright: ignore[reportMissingImports]` | optional wheel (aurora-rs/py) |
-| core/foundation/embedded_redis.py | 109 | `noqa: F401` | availability probe |
-| core/foundation/embedded_redis.py | 347 | `ty: ignore[unresolved-attribute]` | idempotence marker on a third-party class |
-| core/foundation/embedded_redis.py | 347 | `pyright: ignore[reportAttributeAccessIssue]` | idempotence marker on a third-party class |
-| core/foundation/embedded_redis.py | 546 | `noqa: SIM115` | handle outlives this block: inherited by the Popen child, parent copy closed on GC |
-| core/foundation/redis_connection.py | 207 | `pyright: ignore[reportPossiblyUnboundVariable]` | NameError without redis is caught below |
-| core/foundation/redis_connection.py | 280 | `pyright: ignore[reportPossiblyUnboundVariable]` | REDIS_LIBRARY_AVAILABLE checked above |
+| core/foundation/embedded_redis.py | 110 | `noqa: F401` | availability probe |
+| core/foundation/embedded_redis.py | 345 | `ty: ignore[unresolved-attribute]` | the idempotence marker |
+| core/foundation/embedded_redis.py | 345 | `pyright: ignore[reportAttributeAccessIssue]` | the idempotence marker |
+| core/foundation/embedded_redis.py | 362 | `pyright: ignore[reportPrivateImportUsage]` | guarded by the hardening below |
+| core/foundation/embedded_redis.py | 377 | `pyright: ignore[reportPrivateImportUsage]` | the sandboxed restore path |
+| core/foundation/embedded_redis.py | 378 | `ty: ignore[unresolved-attribute]` | the idempotence marker |
+| core/foundation/embedded_redis.py | 378 | `pyright: ignore[reportAttributeAccessIssue]` | the idempotence marker |
+| core/foundation/embedded_redis.py | 452 | `ty: ignore[unresolved-attribute]` | idempotence marker on a third-party class |
+| core/foundation/embedded_redis.py | 452 | `pyright: ignore[reportAttributeAccessIssue]` | idempotence marker on a third-party class |
+| core/foundation/embedded_redis.py | 677 | `noqa: SIM115` | handle outlives this block: inherited by the Popen child, parent copy closed on GC |
 | core/foundation/sqlite_store.py | 547 | `ty: ignore[invalid-type-form]` | resolves to the class's set() method; annotation value kept unchanged (public API) |
 | core/foundation/store.py | 154 | `ty: ignore[invalid-type-form]` | runtime annotation is Store.set; kept unchanged |
 | core/foundation/store.py | 154 | `pyright: ignore[reportGeneralTypeIssues]` | runtime annotation is Store.set; kept unchanged |
 | core/foundation/store.py | 154 | `noqa: A003` | annotation value must not change (Store.set is public API) |
-| core/learning/learning_store.py | 1412 | `noqa: BLE001` | fail-soft by contract |
+| core/infrastructure/background_stdio.py | 86 | `noqa: BLE001` |  |
+| core/learning/learning_store.py | 367 | `noqa: BLE001` | wish_candidate must never raise after a recorded lesson |
+| core/learning/learning_store.py | 1535 | `noqa: BLE001` | fail-soft by contract |
 | core/learning/scope.py | 158 | `noqa: BLE001` | fail-soft: no context means no filtering |
 | core/learning/scope.py | 334 | `noqa: BLE001` | fail-soft: no events means no evidence |
 | core/learning/scope.py | 341 | `noqa: BLE001` | fail-soft: no repeat counters means no evidence |
@@ -160,6 +295,15 @@
 | core/metaharness/review.py | 469 | `noqa: BLE001` | the page still renders without the store |
 | core/narrative/tag_governance.py | 93 | `ty: ignore[invalid-argument-type]` | default is returned as-is; None is a valid result here |
 | core/narrative/tag_governance.py | 93 | `pyright: ignore[reportArgumentType]` | default is returned as-is; None is a valid result here |
+| core/oneworld/floor.py | 45 | `noqa: TC003` | runtime-evaluated annotations (annotation_sensitive module) |
+| core/oneworld/floor.py | 134 | `noqa: BLE001` |  |
+| core/oneworld/floor.py | 190 | `noqa: BLE001` |  |
+| core/oneworld/sensors.py | 76 | `noqa: BLE001` |  |
+| core/oneworld/sensors.py | 82 | `noqa: BLE001` |  |
+| core/oneworld/sensors.py | 89 | `noqa: BLE001` |  |
+| core/oneworld/surface.py | 83 | `noqa: BLE001` |  |
+| core/oneworld/surface.py | 180 | `noqa: BLE001` |  |
+| core/oneworld/surface.py | 192 | `noqa: BLE001` |  |
 | core/primitives/embedder.py | 82 | `pyright: ignore[reportMissingImports]` | optional dependency, not in the lock |
 | core/primitives/epistemic.py | 32 | `noqa: UP042` | str() of members must stay "Cls.NAME" |
 | core/primitives/epistemic.py | 43 | `noqa: UP042` | str() of members must stay "Cls.NAME" |
@@ -167,8 +311,49 @@
 | core/primitives/epistemic.py | 64 | `noqa: UP042` | str() of members must stay "Cls.NAME" |
 | core/primitives/epistemic.py | 74 | `noqa: UP042` | str() of members must stay "Cls.NAME" |
 | core/primitives/epistemic.py | 83 | `noqa: UP042` | str() of members must stay "Cls.NAME" |
+| core/provenance/delta.py | 46 | `noqa: TC003` | runtime-evaluated annotations (annotation_sensitive module) |
+| core/provenance/delta.py | 80 | `noqa: BLE001` |  |
+| core/provenance/delta.py | 140 | `noqa: BLE001` |  |
+| core/provenance/delta.py | 168 | `noqa: BLE001` |  |
+| core/provenance/delta.py | 258 | `noqa: BLE001` |  |
+| core/provenance/delta.py | 289 | `noqa: BLE001` |  |
+| core/provenance/delta.py | 295 | `noqa: BLE001` |  |
+| core/provenance/delta.py | 307 | `noqa: BLE001` |  |
+| core/provenance/delta.py | 385 | `noqa: BLE001` |  |
 | core/recall/anchors.py | 60 | `noqa: TC003` | runtime-evaluated annotations (annotation_sensitive module) |
-| core/recall/lookback.py | 409 | `pyright: ignore[reportAttributeAccessIssue]` | LATENT: list branch calls list.get (the index is a dict today) |
+| core/recall/bench.py | 156 | `noqa: BLE001` |  |
+| core/recall/lookback.py | 585 | `pyright: ignore[reportAttributeAccessIssue]` | LATENT: list branch calls list.get (the index is a dict today) |
+| core/screenspace/act.py | 55 | `noqa: TC003` | runtime-evaluated annotations (annotation_sensitive module) |
+| core/screenspace/act.py | 62 | `noqa: UP042` | str() of members must stay "Cls.NAME" |
+| core/screenspace/act.py | 243 | `pyright: ignore[reportMissingImports]` | Windows-only dependency (sys_platform == win32) |
+| core/screenspace/act.py | 247 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 295 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 325 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 336 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 346 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 359 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 371 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 380 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 400 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 413 | `type: ignore[attr-defined]` |  |
+| core/screenspace/act.py | 414 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 431 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 440 | `type: ignore[attr-defined]` |  |
+| core/screenspace/act.py | 441 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 458 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 539 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 565 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 611 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 617 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 629 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 705 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 716 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 773 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 798 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 973 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 1017 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 1024 | `noqa: BLE001` |  |
+| core/screenspace/act.py | 1039 | `noqa: BLE001` |  |
 | core/screenspace/canary.py | 44 | `noqa: UP042` | str() of members must stay "Cls.NAME" |
 | core/screenspace/canary.py | 70 | `pyright: ignore[reportMissingImports]` | Windows-only dependency (sys_platform == win32) |
 | core/screenspace/canary.py | 78 | `noqa: BLE001` | the READ failed; that is UNREADABLE, not "unknown" |
@@ -176,15 +361,19 @@
 | core/screenspace/capture.py | 57 | `noqa: BLE001` | fail-soft: falls back to a default value — optional substrate; absence is a contract-relevant fact |
 | core/screenspace/capture.py | 165 | `noqa: BLE001` | fail-soft: falls back to a default value — headless / locked / driver failure |
 | core/screenspace/capture.py | 171 | `noqa: BLE001` | fail-soft: falls back to a default value — PIL absent or bad pixels |
+| core/screenspace/combo.py | 63 | `noqa: BLE001` |  |
+| core/screenspace/combo.py | 310 | `noqa: BLE001` |  |
+| core/screenspace/combo.py | 422 | `noqa: BLE001` |  |
 | core/screenspace/foreground.py | 151 | `pyright: ignore[reportMissingImports]` | Windows-only dependency (sys_platform == win32) |
 | core/screenspace/foreground.py | 155 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | core/screenspace/foreground.py | 165 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | core/signals/coordinator_api.py | 152 | `noqa: LOG015` | root-logger routing kept as-is |
 | core/toolbelt/contest.py | 130 | `ty: ignore[unresolved-attribute]` | LATENT: AgentMemory has no latest(); except returns None |
 | core/toolbelt/contest.py | 130 | `pyright: ignore[reportAttributeAccessIssue]` | LATENT: AgentMemory has no latest(); except returns None |
-| core/tools/everything.py | 545 | `noqa: A002` | public API name |
-| core/tools/everything.py | 679 | `noqa: A002` | public API name |
+| core/tools/everything.py | 640 | `noqa: A002` | public API name |
+| core/tools/everything.py | 792 | `noqa: A002` | public API name |
 | core/trust/capabilities.py | 14 | `noqa: UP042` | str() of members must stay "Cls.NAME" |
+| core/trust/grant_writer.py | 192 | `noqa: BLE001` |  |
 | core/web/door.py | 282 | `noqa: E402` | used by search |
 | core/world.py | 53 | `noqa: TC003` | runtime-evaluated annotations (annotation_sensitive module) |
 | data/play/claude/campfire.py | 72 | `noqa: B005` | strips the char set "- []" by design |
@@ -259,6 +448,11 @@
 | docs/_archive/pre-library/python_old/stack_manager.py | 1228 | `ty: ignore[invalid-argument-type]` | archived dead code |
 | research/drafts/t097-s1-progress-stamp-draft.py | 38 | `ty: ignore[missing-argument]` | LATENT: Bus() now requires agent_id; this research draft predates that |
 | research/drafts/t097-s1-progress-stamp-draft.py | 38 | `pyright: ignore[reportCallIssue]` | LATENT: Bus() now requires agent_id; this research draft predates that |
+| research/in-flight/filing-schema-navi-bench.py | 24 | `noqa: E402` | sys.path bootstrap |
+| research/in-flight/filing-schema-navi-bench.py | 25 | `noqa: E402` | sys.path bootstrap |
+| research/in-flight/filing-schema-navi-bench.py | 26 | `noqa: E402` | sys.path bootstrap |
+| research/in-flight/filing-schema-navi-livebench.py | 13 | `noqa: E402` | sys.path bootstrap |
+| research/in-flight/filing-schema-navi-livebench.py | 14 | `noqa: E402` | sys.path bootstrap |
 | research/in-flight/link-phase0-transport-2026-10-10/control_pypi_iroh.py | 8 | `pyright: ignore[reportMissingImports]` | the control runs in its own venv (see report.md) |
 | research/in-flight/link-phase0-transport-2026-10-10/control_pypi_iroh.py | 8 | `ty: ignore[unresolved-import]` | the control runs in its own venv (see report.md) |
 | research/in-flight/link-phase0-transport-2026-10-10/relay_only_internet.py | 22 | `noqa: SIM115` | held for the daemon's lifetime |
@@ -404,10 +598,84 @@
 | research/in-flight/t342/dead-modules/vision_engine.py | 654 | `ty: ignore[unresolved-attribute, unsupported-operator]` | archived dead code |
 | research/in-flight/wire-capture-deepseek-2026-08-02/probes.py | 25 | `noqa: E402` | fail fast on a missing key before importing the SDK |
 | research/in-flight/wire-capture-deepseek-2026-08-02/probes.py | 26 | `noqa: E402` | fail fast on a missing key before importing the SDK |
+| research/reviewed/reverse-engineering-2026-10-13/graphics-vfx-receipts/aurora_lookread.py | 210 | `noqa: E402` | imported where the dense study starts |
+| scripts/axi_bench/harness.py | 198 | `fmt: skip` |  |
+| scripts/axi_bench/harness.py | 337 | `fmt: skip` |  |
+| scripts/axi_bench/harness.py | 455 | `fmt: skip` |  |
+| scripts/axi_bench/specs/alias.py | 21 | `fmt: skip` |  |
+| scripts/axi_bench/specs/bench.py | 11 | `fmt: skip` |  |
+| scripts/axi_bench/specs/bench.py | 25 | `fmt: skip` |  |
+| scripts/axi_bench/specs/bifrost_sync.py | 13 | `fmt: skip` |  |
+| scripts/axi_bench/specs/boot.py | 15 | `fmt: skip` |  |
+| scripts/axi_bench/specs/capture.py | 12 | `fmt: skip` |  |
+| scripts/axi_bench/specs/college.py | 16 | `noqa: E402` |  |
+| scripts/axi_bench/specs/college.py | 31 | `fmt: skip` |  |
+| scripts/axi_bench/specs/college.py | 38 | `fmt: skip` |  |
+| scripts/axi_bench/specs/college.py | 46 | `fmt: skip` |  |
+| scripts/axi_bench/specs/college.py | 65 | `fmt: skip` |  |
+| scripts/axi_bench/specs/console_log.py | 20 | `fmt: skip` |  |
+| scripts/axi_bench/specs/console_log.py | 30 | `fmt: skip` |  |
+| scripts/axi_bench/specs/defer.py | 26 | `fmt: skip` |  |
+| scripts/axi_bench/specs/events.py | 16 | `fmt: skip` |  |
+| scripts/axi_bench/specs/fence.py | 16 | `noqa: E402` |  |
+| scripts/axi_bench/specs/flow.py | 15 | `fmt: skip` |  |
+| scripts/axi_bench/specs/flow.py | 25 | `fmt: skip` |  |
+| scripts/axi_bench/specs/followup.py | 28 | `fmt: skip` |  |
+| scripts/axi_bench/specs/glance.py | 39 | `fmt: skip` |  |
+| scripts/axi_bench/specs/graduate.py | 14 | `fmt: skip` |  |
+| scripts/axi_bench/specs/graduate.py | 33 | `fmt: skip` |  |
+| scripts/axi_bench/specs/grant.py | 35 | `fmt: skip` |  |
+| scripts/axi_bench/specs/ground.py | 9 | `fmt: skip` |  |
+| scripts/axi_bench/specs/handoff.py | 13 | `fmt: skip` |  |
+| scripts/axi_bench/specs/injections.py | 12 | `fmt: skip` |  |
+| scripts/axi_bench/specs/kata.py | 19 | `fmt: skip` |  |
+| scripts/axi_bench/specs/kata.py | 32 | `fmt: skip` |  |
+| scripts/axi_bench/specs/kit.py | 29 | `fmt: skip` |  |
+| scripts/axi_bench/specs/knowledge_map.py | 19 | `fmt: skip` |  |
+| scripts/axi_bench/specs/learn.py | 8 | `fmt: skip` |  |
+| scripts/axi_bench/specs/learn.py | 14 | `fmt: skip` |  |
+| scripts/axi_bench/specs/list.py | 8 | `fmt: skip` |  |
+| scripts/axi_bench/specs/lookback.py | 17 | `fmt: skip` |  |
+| scripts/axi_bench/specs/loop.py | 14 | `fmt: skip` |  |
+| scripts/axi_bench/specs/mailbox.py | 14 | `fmt: skip` |  |
+| scripts/axi_bench/specs/mailbox.py | 27 | `fmt: skip` |  |
+| scripts/axi_bench/specs/manual.py | 17 | `fmt: skip` |  |
+| scripts/axi_bench/specs/modes.py | 14 | `fmt: skip` |  |
+| scripts/axi_bench/specs/note.py | 12 | `fmt: skip` |  |
+| scripts/axi_bench/specs/packet_stats.py | 10 | `fmt: skip` |  |
+| scripts/axi_bench/specs/packet_stats.py | 21 | `fmt: skip` |  |
+| scripts/axi_bench/specs/packet_trace.py | 19 | `fmt: skip` |  |
+| scripts/axi_bench/specs/precompile.py | 13 | `fmt: skip` |  |
+| scripts/axi_bench/specs/promoted.py | 11 | `fmt: skip` |  |
+| scripts/axi_bench/specs/promoted.py | 24 | `fmt: skip` |  |
+| scripts/axi_bench/specs/recall.py | 20 | `fmt: skip` |  |
+| scripts/axi_bench/specs/recall_at.py | 18 | `fmt: skip` |  |
+| scripts/axi_bench/specs/recall_feedback.py | 13 | `fmt: skip` |  |
+| scripts/axi_bench/specs/recall_prevention.py | 14 | `fmt: skip` |  |
+| scripts/axi_bench/specs/repeat.py | 14 | `fmt: skip` |  |
+| scripts/axi_bench/specs/repeat.py | 20 | `fmt: skip` |  |
+| scripts/axi_bench/specs/replay.py | 13 | `fmt: skip` |  |
+| scripts/axi_bench/specs/resident.py | 16 | `fmt: skip` |  |
+| scripts/axi_bench/specs/run.py | 20 | `fmt: skip` |  |
+| scripts/axi_bench/specs/run.py | 32 | `fmt: skip` |  |
+| scripts/axi_bench/specs/scope.py | 12 | `fmt: skip` |  |
+| scripts/axi_bench/specs/season_score.py | 37 | `fmt: skip` |  |
+| scripts/axi_bench/specs/setup.py | 20 | `fmt: skip` |  |
+| scripts/axi_bench/specs/shadow.py | 27 | `fmt: skip` |  |
+| scripts/axi_bench/specs/story.py | 14 | `fmt: skip` |  |
+| scripts/axi_bench/specs/tag_anti_pattern.py | 7 | `fmt: skip` |  |
+| scripts/axi_bench/specs/tag_anti_pattern.py | 12 | `fmt: skip` |  |
+| scripts/axi_bench/specs/toast.py | 11 | `fmt: skip` |  |
+| scripts/axi_bench/specs/toast.py | 28 | `fmt: skip` |  |
+| scripts/axi_bench/specs/tool.py | 27 | `fmt: skip` |  |
+| scripts/axi_bench/specs/triage.py | 28 | `fmt: skip` |  |
+| scripts/axi_bench/specs/watch.py | 30 | `fmt: skip` |  |
+| scripts/axi_bench/specs/wrap.py | 9 | `fmt: skip` |  |
 | scripts/bifrost_daemon.py | 45 | `noqa: SIM105` | runs before every other import (contextlib included): Popen is patched first |
 | scripts/bifrost_daemon.py | 46 | `noqa: F401` | patches subprocess.Popen |
-| scripts/bifrost_daemon.py | 663 | `noqa: BLE001` | fail-soft: best effort, skipped on any error |
-| scripts/bifrost_daemon.py | 691 | `noqa: BLE001` | fail-soft: best effort, skipped on any error |
+| scripts/bifrost_daemon.py | 380 | `noqa: BLE001` |  |
+| scripts/bifrost_daemon.py | 695 | `noqa: BLE001` | fail-soft: best effort, skipped on any error |
+| scripts/bifrost_daemon.py | 723 | `noqa: BLE001` | fail-soft: best effort, skipped on any error |
 | scripts/bifrost_reports.py | 33 | `noqa: E402` | sys.path bootstrap |
 | scripts/bifrost_runner.py | 38 | `noqa: SIM105` | tests t150/t152 pin a try/except guard here |
 | scripts/bifrost_runner.py | 42 | `noqa: SIM105` | tests t150/t152 pin a try/except guard here |
@@ -415,7 +683,7 @@
 | scripts/bifrost_runner_deepseek.py | 39 | `noqa: F401` | patches subprocess.Popen |
 | scripts/bifrost_runner_deepseek.py | 75 | `noqa: SIM105` | tests t150/t152 pin a try/except guard here |
 | scripts/bifrost_runner_deepseek.py | 79 | `noqa: SIM105` | tests t150/t152 pin a try/except guard here |
-| scripts/bifrost_runner_deepseek.py | 1450 | `noqa: BLE001` | fail-soft: logged, caller continues |
+| scripts/bifrost_runner_deepseek.py | 1489 | `noqa: BLE001` | fail-soft: logged, caller continues |
 | scripts/bifrost_runner_discord.py | 41 | `noqa: SIM105` | tests t150/t152 pin a try/except guard here |
 | scripts/bifrost_runner_discord.py | 45 | `noqa: SIM105` | tests t150/t152 pin a try/except guard here |
 | scripts/bifrost_runner_discord.py | 63 | `noqa: E402` | streams are forced to UTF-8 before the import |
@@ -454,13 +722,23 @@
 | scripts/bifrost_runner_gemini.py | 66 | `noqa: SIM105` | tests t150/t152 pin a try/except guard here |
 | scripts/bifrost_runner_kimi.py | 62 | `noqa: SIM105` | tests t150/t152 pin a try/except guard here |
 | scripts/bifrost_runner_kimi.py | 66 | `noqa: SIM105` | tests t150/t152 pin a try/except guard here |
-| scripts/bifrost_runner_kimi.py | 869 | `noqa: BLE001` | fail-soft: logged, caller continues |
+| scripts/bifrost_runner_kimi.py | 882 | `noqa: BLE001` | fail-soft: logged, caller continues |
 | scripts/bifrost_runner_sol.py | 69 | `noqa: SIM105` | tests t150/t152 pin a try/except guard here |
 | scripts/bifrost_runner_sol.py | 73 | `noqa: SIM105` | tests t150/t152 pin a try/except guard here |
-| scripts/bifrost_ui.py | 1595 | `pyright: ignore[reportMissingImports]` | optional package |
+| scripts/bifrost_ui.py | 53 | `noqa: BLE001` |  |
+| scripts/bifrost_ui.py | 63 | `noqa: BLE001` |  |
+| scripts/bifrost_ui.py | 1764 | `pyright: ignore[reportMissingImports]` | optional package |
 | scripts/capture_apple_hig.py | 46 | `noqa: BLE001` | fail-soft: logged, caller continues — log and retry; the summary reports misses |
-| scripts/checkers/check_comprehensibility.py | 215 | `noqa: BLE001` | fail-soft: falls back to a default value |
+| scripts/checkers/check_comprehensibility.py | 220 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | scripts/checkers/check_ports.py | 48 | `noqa: E402` | sys.path bootstrap |
+| scripts/checkers/check_preregistration.py | 38 | `noqa: E402` |  |
+| scripts/checkers/check_session_resolvers.py | 90 | `noqa: BLE001` | fail-soft: falls back to a default value |
+| scripts/checkers/check_session_resolvers.py | 100 | `noqa: BLE001` | fail-soft: falls back to a default value |
+| scripts/checkers/check_unbound_names.py | 521 | `noqa: BLE001` | fail-soft: falls back to a default value |
+| scripts/checkers/check_unbound_names.py | 528 | `noqa: BLE001` | fail-soft: falls back to a default value |
+| scripts/checkers/check_unbound_names.py | 542 | `noqa: BLE001` | fail-soft: best effort, skipped on any error |
+| scripts/checkers/check_unbound_names.py | 614 | `noqa: BLE001` | an unreadable file is REPORTED as unchecked, never skipped |
+| scripts/checkers/check_unbound_names.py | 641 | `noqa: BLE001` | any parse failure is reported, never fatal (see below) |
 | scripts/codex_bifrost_wake.py | 16 | `noqa: E402` | sys.path bootstrap |
 | scripts/codex_bifrost_wake.py | 26 | `noqa: E402` | sys.path bootstrap |
 | scripts/deepseek_chat.py | 121 | `noqa: F401,E402` | compat re-export |
@@ -478,20 +756,29 @@
 | scripts/gemini_web.py | 214 | `pyright: ignore[reportMissingImports]` | optional dependency |
 | scripts/gemini_web.py | 214 | `noqa: F401` | availability probe |
 | scripts/generators/gen_arch_index.py | 22 | `noqa: E402` | sys.path bootstrap |
+| scripts/generators/gen_library.py | 261 | `noqa: BLE001` | any failure to load the guard must fail CLOSED |
 | scripts/generators/gen_master_map.py | 22 | `noqa: E402` | sys.path bootstrap |
 | scripts/generators/gen_master_map.py | 28 | `noqa: E402` | sys.path bootstrap |
 | scripts/generators/gen_master_map.py | 29 | `noqa: E402` | sys.path bootstrap |
 | scripts/generators/gen_ports.py | 27 | `noqa: E402` | sys.path bootstrap |
 | scripts/generators/gen_prior_art_register.py | 35 | `noqa: E402` | sys.path bootstrap |
 | scripts/generators/gen_requirements.py | 1 | `pyright: strict` |  |
-| scripts/githooks/pre_commit.py | 130 | `noqa: S603` | argv is the resolved prek binary plus fixed flags and the repo's own config path; no user input reaches it |
-| scripts/kimi_chat.py | 91 | `ty: ignore[invalid-argument-type]` | LATENT: no key passes None; the SDK then reads OPENAI_API_KEY |
-| scripts/kimi_chat.py | 91 | `pyright: ignore[reportArgumentType]` | LATENT: no key passes None; the SDK then reads OPENAI_API_KEY |
+| scripts/generators/gen_verb_skills.py | 30 | `noqa: E402` |  |
+| scripts/githooks/pre_commit.py | 131 | `noqa: S603` | argv is the resolved prek binary plus fixed flags and the repo's own config path; no user input reaches it |
+| scripts/kimi_chat.py | 105 | `ty: ignore[invalid-argument-type]` | LATENT: no key passes None; the SDK then reads OPENAI_API_KEY |
+| scripts/kimi_chat.py | 105 | `pyright: ignore[reportArgumentType]` | LATENT: no key passes None; the SDK then reads OPENAI_API_KEY |
+| scripts/measure_credit_join.py | 64 | `noqa: BLE001` | fail-soft: best effort, skipped on any error |
+| scripts/measure_lesson_fields.py | 96 | `noqa: BLE001` | fail-soft: falls back to a default value |
+| scripts/measure_rel_floor.py | 111 | `noqa: BLE001` | fail-soft: logged, caller continues |
+| scripts/measure_target_join.py | 71 | `noqa: BLE001` | fail-soft: best effort, skipped on any error |
+| scripts/measure_target_join.py | 120 | `noqa: BLE001` | fail-soft: logged, exits 2 |
 | scripts/ops/archive_ephemeral.py | 63 | `noqa: E402` | sys.path bootstrap |
 | scripts/ops/archive_ephemeral.py | 141 | `noqa: BLE001` | contained + confessed, never silent |
 | scripts/ops/archive_transcripts.py | 63 | `noqa: E402` | sys.path bootstrap |
+| scripts/ops/eye_ingest_task.py | 75 | `noqa: BLE001` | a crash becomes a receipt (see below) |
 | scripts/ops/failsafe_watcher.py | 41 | `noqa: BLE001` | fail-soft: falls back to a default value |
 | scripts/ops/failsafe_watcher.py | 59 | `noqa: BLE001` | fail-soft: falls back to a default value |
+| scripts/piano_card_art.py | 920 | `noqa: B023` | ctx (and this page) closes before the loop rebinds errs |
 | scripts/piano_follow_frames.py | 31 | `noqa: E402` | sys.path bootstrap |
 | scripts/piano_roll_pack.py | 22 | `noqa: E402,F401` | sys.path bootstrap; re-export |
 | scripts/release/build_bundle.py | 34 | `noqa: E402` | sys.path bootstrap |
@@ -519,10 +806,12 @@
 | seat_topology.py | 227 | `noqa: BLE001` | fail-soft: best effort, skipped on any error |
 | tests/conftest.py | 69 | `noqa: F401` | side-effect: temp AI_SETUP + db 15 + flush |
 | tests/conftest.py | 168 | `noqa: BLE001` | fail-soft: falls back to a default value |
+| tests/conftest.py | 185 | `noqa: BLE001` | fail-soft: module absent/renamed |
 | tests/drill_succession_live.py | 96 | `ty: ignore[invalid-argument-type]` | deliberate bad input: the drill proves hours=None is refused |
 | tests/drill_succession_live.py | 96 | `pyright: ignore[reportArgumentType]` | deliberate bad input: the drill proves hours=None is refused |
 | tests/drill_succession_live.py | 147 | `ty: ignore[missing-argument]` | fallback for the pre-reason revoke() signature |
 | tests/drill_succession_live.py | 147 | `pyright: ignore[reportCallIssue]` | fallback for the pre-reason revoke() signature |
+| tests/fixtures/vj/make_joy_take.py | 28 | `noqa: E402` | imported after the path and feature checks above |
 | tests/isolate_canonical.py | 21 | `noqa: F401` | side-effect: isolates + flushes |
 | tests/manual/door_parity_probe.py | 20 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
 | tests/manual/door_parity_probe.py | 25 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
@@ -550,13 +839,18 @@
 | tests/spine_probes.py | 202 | `ty: ignore[invalid-argument-type]` | deliberate garbage input |
 | tests/spine_probes.py | 202 | `pyright: ignore[reportArgumentType]` | deliberate garbage input |
 | tests/test_9e1bc7ce78_standalone_runner_warns.py | 46 | `noqa: E402` | sys.path bootstrap |
+| tests/test_a_trigger_may_only_help.py | 60 | `noqa: E402` | after the sys.path bootstrap |
 | tests/test_acl_floor_is_loud.py | 38 | `noqa: E402` | sys.path bootstrap |
+| tests/test_agent_cli_has_no_unbound_names.py | 66 | `noqa: E402` | after the sys.path bootstrap |
 | tests/test_agent_interface.py | 24 | `noqa: F401` | db 15 + temp AI_SETUP, flushed (child inherits via env) |
 | tests/test_aggregator.py | 11 | `noqa: F401` | isolates file store (AI_SETUP) + Redis db 15 BEFORE foundation import |
+| tests/test_ambient_session_id_has_one_resolver.py | 61 | `noqa: F401` | the import IS the pin: both names must exist |
 | tests/test_arc_thread.py | 18 | `noqa: E402` | sys.path bootstrap |
 | tests/test_archive_ephemeral_hostile_stream_names.py | 48 | `noqa: A002` | mirrors the redis-py xrange(min=, max=) keyword API |
 | tests/test_arsenal_band.py | 23 | `noqa: E402` | sys.path bootstrap |
 | tests/test_arsenal_band.py | 24 | `noqa: E402` | sys.path bootstrap |
+| tests/test_arsenal_edit_ui_smoke.py | 34 | `noqa: E402` | after the sys.path bootstrap |
+| tests/test_arsenal_edit_ui_smoke.py | 35 | `noqa: E402` | after the sys.path bootstrap |
 | tests/test_arsenal_fl_vfx.py | 139 | `noqa: B006` | deliberate: a call counter that persists across calls |
 | tests/test_arsenal_jam_cli.py | 22 | `noqa: E402` | sys.path bootstrap |
 | tests/test_arsenal_jam_cli.py | 23 | `noqa: E402` | sys.path bootstrap |
@@ -597,6 +891,11 @@
 | tests/test_arsenal_kernel.py | 66 | `pyright: ignore[reportArgumentType]` | deliberate wrong type: the test pins the runtime refusal |
 | tests/test_arsenal_looks_route.py | 18 | `noqa: E402` | sys.path bootstrap |
 | tests/test_arsenal_looks_route.py | 19 | `noqa: E402` | sys.path bootstrap |
+| tests/test_arsenal_media_edit.py | 472 | `noqa: BLE001` | the assertion below shows it |
+| tests/test_arsenal_media_editapi.py | 25 | `noqa: E402` | after the sys.path bootstrap |
+| tests/test_arsenal_media_editapi.py | 27 | `noqa: E402` | after the sys.path bootstrap |
+| tests/test_arsenal_media_editapi.py | 28 | `noqa: E402` | after the sys.path bootstrap |
+| tests/test_arsenal_media_probe.py | 227 | `noqa: SIM115` | held open on purpose (Windows refuses the replace meanwhile); the Timer closes it |
 | tests/test_arsenal_nashville.py | 17 | `noqa: E402` | sys.path bootstrap |
 | tests/test_arsenal_performance.py | 18 | `noqa: E402` | sys.path bootstrap |
 | tests/test_arsenal_performance.py | 19 | `noqa: E402` | sys.path bootstrap |
@@ -642,11 +941,51 @@
 | tests/test_arsenal_replay_decay.py | 25 | `noqa: E402` | sys.path bootstrap |
 | tests/test_arsenal_replay_decay.py | 147 | `noqa: F811` | pytest injects the imported fixture by name |
 | tests/test_arsenal_serve.py | 15 | `noqa: E402` | sys.path bootstrap |
+| tests/test_arsenal_story_corpus.py | 23 | `noqa: E402` | after the sys.path bootstrap |
+| tests/test_arsenal_story_corpus.py | 24 | `noqa: E402` | after the sys.path bootstrap |
+| tests/test_arsenal_story_corpus.py | 25 | `noqa: E402` | after the sys.path bootstrap |
 | tests/test_arsenal_tiktok.py | 25 | `noqa: E402` | sys.path bootstrap |
 | tests/test_arsenal_tiktok.py | 26 | `noqa: E402` | sys.path bootstrap |
 | tests/test_arsenal_tiktok.py | 27 | `noqa: E402` | sys.path bootstrap |
 | tests/test_ask_as_resident.py | 42 | `noqa: F401` | db 15 + temp AI_SETUP, flushed (child inherits via env) |
 | tests/test_ask_as_resident.py | 47 | `noqa: E402` | sys.path bootstrap |
+| tests/test_axi_bench.py | 17 | `fmt: skip` |  |
+| tests/test_axi_bifrost_sync.py | 83 | `fmt: skip` |  |
+| tests/test_axi_capture.py | 19 | `noqa: A002` | the redis-py signature |
+| tests/test_axi_doc.py | 41 | `fmt: skip` |  |
+| tests/test_axi_doctor.py | 29 | `fmt: skip` |  |
+| tests/test_axi_find.py | 32 | `fmt: skip` |  |
+| tests/test_axi_fleet.py | 19 | `fmt: skip` |  |
+| tests/test_axi_fleet.py | 40 | `fmt: skip` |  |
+| tests/test_axi_flow.py | 17 | `fmt: skip` |  |
+| tests/test_axi_flow.py | 91 | `fmt: skip` |  |
+| tests/test_axi_focus.py | 61 | `fmt: skip` |  |
+| tests/test_axi_forecast.py | 36 | `fmt: skip` |  |
+| tests/test_axi_forecast.py | 47 | `fmt: skip` |  |
+| tests/test_axi_grade.py | 25 | `fmt: skip` |  |
+| tests/test_axi_grant.py | 19 | `fmt: skip` |  |
+| tests/test_axi_grant.py | 35 | `fmt: skip` |  |
+| tests/test_axi_knowledge_map.py | 15 | `fmt: skip` |  |
+| tests/test_axi_lookback.py | 15 | `fmt: skip` |  |
+| tests/test_axi_loop.py | 25 | `fmt: skip` |  |
+| tests/test_axi_mailbox.py | 50 | `fmt: skip` |  |
+| tests/test_axi_mailbox.py | 59 | `fmt: skip` |  |
+| tests/test_axi_mailbox.py | 85 | `fmt: skip` |  |
+| tests/test_axi_manual.py | 33 | `fmt: skip` |  |
+| tests/test_axi_packet_stats.py | 25 | `fmt: skip` |  |
+| tests/test_axi_precompile.py | 47 | `fmt: skip` |  |
+| tests/test_axi_recall_at.py | 40 | `fmt: skip` |  |
+| tests/test_axi_recall_curate.py | 37 | `fmt: skip` |  |
+| tests/test_axi_replay.py | 26 | `fmt: skip` |  |
+| tests/test_axi_resident.py | 15 | `fmt: skip` |  |
+| tests/test_axi_resident.py | 43 | `fmt: skip` |  |
+| tests/test_axi_review.py | 25 | `fmt: skip` |  |
+| tests/test_axi_season_score.py | 25 | `fmt: skip` |  |
+| tests/test_axi_setup.py | 40 | `fmt: skip` |  |
+| tests/test_axi_setup.py | 75 | `fmt: skip` |  |
+| tests/test_axi_status.py | 18 | `fmt: skip` |  |
+| tests/test_axi_timeline.py | 32 | `fmt: skip` |  |
+| tests/test_axi_wrap.py | 41 | `fmt: skip` |  |
 | tests/test_b_cutover_red_fence.py | 246 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
 | tests/test_boot_reports_reachability.py | 39 | `noqa: E402` | sys.path bootstrap |
 | tests/test_ci_instance_local_refs_pins.py | 37 | `noqa: E402` | sys.path bootstrap |
@@ -666,7 +1005,7 @@
 | tests/test_comprehensibility_index_pins.py | 47 | `noqa: E402` | sys.path bootstrap |
 | tests/test_context_loaders.py | 12 | `noqa: F401` | isolates file store (AI_SETUP) + Redis db 15 BEFORE foundation import |
 | tests/test_corpus_gap_honesty.py | 36 | `noqa: E402` | sys.path bootstrap |
-| tests/test_cwd_guard_pins.py | 80 | `noqa: F401` | git_veto |
+| tests/test_cwd_guard_pins.py | 103 | `noqa: F401` | git_veto |
 | tests/test_discord_feed_pins.py | 20 | `noqa: E402` | sys.path bootstrap |
 | tests/test_discord_feed_pins.py | 45 | `noqa: A002` | mirrors the redis-py xrange(min=, max=) keyword API |
 | tests/test_discord_feed_swallow.py | 44 | `noqa: E402` | sys.path bootstrap |
@@ -689,6 +1028,8 @@
 | tests/test_event_promoter.py | 18 | `noqa: F401` | re-export or side-effect import |
 | tests/test_event_query.py | 17 | `noqa: F401` | re-export or side-effect import |
 | tests/test_event_query.py | 137 | `pyright: ignore[reportArgumentType]` | bad input on purpose: None query falls back |
+| tests/test_every_draining_door_names_its_lane.py | 130 | `noqa: F401` | importing the CLI must be enough to settle the default |
+| tests/test_expected_silent_attendance.py | 36 | `noqa: E402` | after the sys.path bootstrap |
 | tests/test_eye_seat_capture.py | 59 | `noqa: E402` | sys.path bootstrap |
 | tests/test_failsafe_watcher.py | 37 | `noqa: E402` | sys.path bootstrap |
 | tests/test_failsafe_watcher.py | 39 | `noqa: E402` | sys.path bootstrap |
@@ -697,19 +1038,75 @@
 | tests/test_find_ergonomics.py | 24 | `noqa: E402` | sys.path bootstrap |
 | tests/test_find_full_capability_surface.py | 121 | `ty: ignore[unresolved-attribute]` | strict-xfail pin: journal() seam not built yet |
 | tests/test_find_full_capability_surface.py | 121 | `pyright: ignore[reportAttributeAccessIssue]` | strict-xfail pin: journal() seam not built yet |
+| tests/test_find_honors_the_sort_it_was_asked_for.py | 69 | `noqa: E402` | after the sys.path bootstrap |
 | tests/test_g5_latent_prior_art_launcher.py | 22 | `noqa: S603` | argv is sys.executable plus a fixed in-file snippet; no external input |
 | tests/test_git_guard.py | 71 | `ty: ignore[invalid-argument-type]` | deliberate bad input: garbage (incl. None) must not raise |
+| tests/test_glsl_atlas.py | 889 | `noqa: F401` | registers the verb |
+| tests/test_glsl_atlas.py | 1068 | `noqa: PT011` | each malformed case words its own refusal; refusing is the pin |
+| tests/test_glsl_atlas.py | 1229 | `noqa: PT011` | the pin is that a refused draft writes nothing, whatever the wording |
+| tests/test_glsl_twins_2d.py | 209 | `noqa: RUF005` | pts is an ndarray: + adds elementwise, it does not concatenate |
+| tests/test_glsl_twins_2d.py | 210 | `noqa: RUF005` | pts is an ndarray: + adds elementwise, it does not concatenate |
+| tests/test_glsl_twins_3d_rays.py | 191 | `noqa: E731` | one-line SDF handed to the twin, as the GLSL reads |
+| tests/test_glsl_twins_3d_rays.py | 195 | `noqa: E731` | one-line SDF handed to the twin, as the GLSL reads |
+| tests/test_glsl_twins_3d_rays.py | 885 | `noqa: E731` | one-line SDF handed to the twin, as the GLSL reads: plane y = -1 |
+| tests/test_glsl_twins_3d_rays.py | 896 | `noqa: E731` | one-line SDF handed to the twin, as the GLSL reads: \|z + 3\| - 0.02 |
+| tests/test_glsl_twins_3d_rays.py | 947 | `noqa: E731` | one-line SDF handed to the twin, as the GLSL reads |
+| tests/test_glsl_twins_3d_rays.py | 979 | `noqa: E731` | one-line SDF handed to the twin, as the GLSL reads |
+| tests/test_glsl_twins_3d_rays.py | 985 | `noqa: E731` | one-line SDF handed to the twin, as the GLSL reads |
+| tests/test_glsl_twins_3d_rays.py | 1003 | `noqa: E731` | one-line SDF handed to the twin, as the GLSL reads |
+| tests/test_glsl_twins_3d_rays.py | 1004 | `noqa: E731` | one-line SDF handed to the twin, as the GLSL reads |
+| tests/test_glsl_twins_3d_rays.py | 1007 | `noqa: E731` | one-line SDF handed to the twin, as the GLSL reads |
+| tests/test_glsl_twins_3d_rays.py | 1302 | `noqa: E731` | one-line type tag for the case table |
+| tests/test_glsl_twins_3d_rays.py | 1303 | `noqa: E731` | one-line type tag for the case table |
+| tests/test_glsl_twins_3d_rays.py | 1304 | `noqa: E731` | one-line type tag for the case table |
+| tests/test_glsl_twins_3d_rays.py | 1305 | `noqa: E731` | one-line type tag for the case table |
+| tests/test_glsl_twins_colour.py | 470 | `noqa: E731` | one-line helper, as the GLSL reads: what the piano's canvas shows |
+| tests/test_glsl_twins_colour.py | 545 | `noqa: E731` | one-line type tag for the case table |
+| tests/test_glsl_twins_colour.py | 546 | `noqa: E731` | one-line type tag for the case table |
+| tests/test_glsl_twins_light.py | 353 | `noqa: RUF005` | c is an ndarray: + adds elementwise, it does not concatenate; height never counts |
+| tests/test_glsl_twins_light.py | 354 | `noqa: RUF005` | c is an ndarray: + adds elementwise, it does not concatenate |
+| tests/test_glsl_twins_light.py | 355 | `noqa: RUF005` | c is an ndarray: + adds elementwise, it does not concatenate |
+| tests/test_glsl_twins_light.py | 385 | `noqa: E731` | one-line helper, as the GLSL reads |
+| tests/test_glsl_twins_light.py | 434 | `noqa: RUF005` | flat is an ndarray: + adds elementwise |
+| tests/test_glsl_twins_light.py | 663 | `noqa: E731` | one-line type tag for the case table |
+| tests/test_glsl_twins_light.py | 664 | `noqa: E731` | one-line type tag for the case table |
+| tests/test_glsl_twins_light.py | 667 | `noqa: E731` | one-line helper, as the GLSL reads |
+| tests/test_glsl_twins_light.py | 908 | `noqa: E731` | one-line helper, as the GLSL reads |
 | tests/test_graduation.py | 12 | `noqa: F401` | isolate file store + Redis db BEFORE foundation import |
 | tests/test_heal_clobbers_richer_redis_list.py | 59 | `noqa: E402` | sys.path bootstrap |
 | tests/test_hook_shims.py | 17 | `noqa: E402` | sys.path bootstrap |
-| tests/test_intake_clip_confession.py | 58 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
 | tests/test_intake_clip_confession.py | 59 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
 | tests/test_intake_clip_confession.py | 60 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
-| tests/test_intake_clip_confession.py | 68 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
-| tests/test_intake_clip_confession.py | 172 | `ty: ignore[missing-argument]` | LATENT: __main__ runner predates its fixtures |
-| tests/test_intake_clip_confession.py | 172 | `pyright: ignore[reportCallIssue]` | LATENT: __main__ runner predates its fixtures |
+| tests/test_intake_clip_confession.py | 61 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
+| tests/test_intake_clip_confession.py | 69 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
+| tests/test_intake_clip_confession.py | 173 | `ty: ignore[missing-argument]` | LATENT: __main__ runner predates its fixtures |
+| tests/test_intake_clip_confession.py | 173 | `pyright: ignore[reportCallIssue]` | LATENT: __main__ runner predates its fixtures |
 | tests/test_isolation_flag_is_not_proof.py | 46 | `noqa: F401` | re-export or side-effect import |
 | tests/test_k1_kimi_seat.py | 14 | `noqa: E402` | sys.path bootstrap |
+| tests/test_keylab_beatbench_round2.py | 66 | `pyright: ignore[reportFunctionMemberAccess]` | a test-only call counter on the factory |
+| tests/test_keylab_beatbench_round2.py | 71 | `pyright: ignore[reportFunctionMemberAccess]` | a test-only call counter on the factory |
+| tests/test_keylab_beatbench_round2.py | 87 | `pyright: ignore[reportFunctionMemberAccess]` | the counter the factory records |
+| tests/test_keylab_beatbench_round2.py | 141 | `pyright: ignore[reportAttributeAccessIssue]` | the optional predict hook the tracker contract allows |
+| tests/test_keylab_beatbench_round2.py | 264 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| tests/test_keylab_beatbench_round2.py | 696 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| tests/test_keylab_beatbench_round2.py | 899 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| tests/test_keylab_beatsync_timing.py | 109 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| tests/test_keylab_chordsense.py | 611 | `pyright: ignore[reportMissingImports]` | optional analysis dependency, not in the lock |
+| tests/test_keylab_chordsense.py | 988 | `pyright: ignore[reportMissingImports]` | optional analysis dependency, not in the lock |
+| tests/test_keylab_chordsense.py | 1031 | `pyright: ignore[reportMissingImports]` | optional analysis dependency, not in the lock |
+| tests/test_keylab_fl_script.py | 118 | `pyright: ignore[reportAttributeAccessIssue]` | a stub module for the FL API |
+| tests/test_keylab_fl_script.py | 122 | `pyright: ignore[reportAttributeAccessIssue]` | a stub module for the FL API |
+| tests/test_keylab_fl_script.py | 123 | `pyright: ignore[reportAttributeAccessIssue]` | a stub module for the FL API |
+| tests/test_keylab_fl_script.py | 125 | `pyright: ignore[reportAttributeAccessIssue]` | a stub module for the FL API |
+| tests/test_keylab_fl_script.py | 126 | `pyright: ignore[reportAttributeAccessIssue]` | a stub module for the FL API |
+| tests/test_keylab_fl_script.py | 128 | `pyright: ignore[reportAttributeAccessIssue]` | a stub module for the FL API |
+| tests/test_keylab_fl_script.py | 129 | `pyright: ignore[reportAttributeAccessIssue]` | a stub module for the FL API |
+| tests/test_keylab_fl_script.py | 141 | `pyright: ignore[reportAttributeAccessIssue]` | a stub module for the FL API |
+| tests/test_keylab_screen.py | 247 | `pyright: ignore[reportAttributeAccessIssue]` | a stub module for the FL API |
+| tests/test_keylab_screen.py | 785 | `pyright: ignore[reportIncompatibleMethodOverride]` | the parent names the first argument format; a test log is silent |
+| tests/test_keylab_vj.py | 803 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| tests/test_keylab_vj.py | 1319 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| tests/test_keylab_vj.py | 1454 | `pyright: ignore[reportMissingImports]` | a test fixture module beside the test, not a package on the path |
 | tests/test_learning_index_derives.py | 47 | `ty: ignore[unknown-argument]` | LATENT: dead branch, FileStore has no base_dir |
 | tests/test_learning_index_derives.py | 47 | `pyright: ignore[reportCallIssue]` | LATENT: dead branch, FileStore has no base_dir |
 | tests/test_learning_index_derives.py | 168 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
@@ -737,6 +1134,9 @@
 | tests/test_link_python_units.py | 34 | `noqa: E402` | sys.path bootstrap |
 | tests/test_link_python_units.py | 35 | `noqa: E402` | sys.path bootstrap |
 | tests/test_liveness_bare_id_finds_its_incarnation.py | 39 | `noqa: E402` | sys.path bootstrap |
+| tests/test_local_authorship_ledger.py | 23 | `noqa: E402` |  |
+| tests/test_local_authorship_ledger.py | 24 | `noqa: E402` |  |
+| tests/test_match_surface_spans_every_text_field.py | 48 | `noqa: E402` | after the sys.path bootstrap |
 | tests/test_metaharness_compress.py | 29 | `noqa: E402` | sys.path bootstrap |
 | tests/test_metaharness_corpus.py | 28 | `noqa: E402` | sys.path bootstrap |
 | tests/test_metaharness_graders.py | 25 | `noqa: E402` | sys.path bootstrap |
@@ -756,14 +1156,18 @@
 | tests/test_metaharness_replay.py | 26 | `noqa: E402` | sys.path bootstrap |
 | tests/test_metaharness_review.py | 25 | `noqa: E402` | sys.path bootstrap |
 | tests/test_metaharness_review.py | 27 | `noqa: E402` | sys.path bootstrap |
+| tests/test_mutation_runner.py | 66 | `noqa: E402` | after the sys.path bootstrap |
 | tests/test_narrative_health.py | 63 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
 | tests/test_newborn_gauntlet.py | 200 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double; never touch the real bus -- we test the ACL verdict only |
+| tests/test_operator_identity.py | 27 | `noqa: E402` |  |
 | tests/test_ops_archive_ephemeral.py | 55 | `noqa: A002` | mirrors the redis-py xrange(min=, max=) keyword API |
+| tests/test_params_schema.py | 21 | `noqa: E402` | after the sys.path bootstrap |
 | tests/test_pointer_promises.py | 45 | `noqa: E402` | sys.path bootstrap |
 | tests/test_provenance.py | 23 | `noqa: E402` | sys.path bootstrap |
 | tests/test_provenance.py | 189 | `ty: ignore[invalid-assignment]` | instance monkeypatch: the capability gate is not what this pins |
 | tests/test_r9_daemon_respawn_gate.py | 18 | `noqa: E402` | sys.path bootstrap |
 | tests/test_r9_daemon_respawn_gate.py | 20 | `noqa: E402` | sys.path bootstrap |
+| tests/test_ratchet_announces_a_fall.py | 36 | `noqa: E402` | after the sys.path bootstrap |
 | tests/test_rb25_amendment2.py | 105 | `ty: ignore[invalid-assignment]` | LATENT: online is a read-only property; fails at base |
 | tests/test_rb25_amendment2.py | 105 | `pyright: ignore[reportAttributeAccessIssue]` | LATENT: online is a read-only property; fails at base |
 | tests/test_rb25_amendment2.py | 148 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
@@ -772,8 +1176,12 @@
 | tests/test_reasoning_trace_reaches_the_bus.py | 72 | `pyright: ignore[reportArgumentType]` | no toolbox: the canned stream never calls a tool |
 | tests/test_recall_agent_scope.py | 26 | `noqa: F401` | db 15 + temp AI_SETUP, flushed (child inherits via env) |
 | tests/test_recall_agent_scope.py | 31 | `noqa: E402` | sys.path bootstrap |
-| tests/test_recall_at.py | 260 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double; both equally relevant to "consolidator"; B is proven-useful |
+| tests/test_recall_at.py | 229 | `noqa: ERA001` | the retired contract, quoted verbatim on purpose |
+| tests/test_recall_at.py | 281 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double; both equally relevant to "consolidator"; B is proven-useful |
 | tests/test_recall_error_is_not_silence.py | 33 | `noqa: E402` | sys.path bootstrap |
+| tests/test_recall_query_ignores_checkout_location.py | 27 | `noqa: E402` |  |
+| tests/test_redis_client_reuse.py | 19 | `noqa: E402` |  |
+| tests/test_redis_client_reuse.py | 21 | `noqa: E402` |  |
 | tests/test_resident_identity.py | 40 | `noqa: F401` | db 15 + temp AI_SETUP, flushed (child inherits via env) |
 | tests/test_resident_identity.py | 45 | `noqa: E402` | sys.path bootstrap |
 | tests/test_resident_placement.py | 29 | `noqa: F401` | db 15 + temp AI_SETUP, flushed (child inherits via env) |
@@ -782,12 +1190,30 @@
 | tests/test_resident_roles.py | 40 | `noqa: E402` | sys.path bootstrap |
 | tests/test_revive_per_agent_observation.py | 39 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
 | tests/test_runner_clean_exit_retracts_card.py | 54 | `noqa: E402` | sys.path bootstrap |
+| tests/test_screenspace_canary_read_red.py | 46 | `noqa: BLE001` | any import failure is the RED, reported by the skipif |
+| tests/test_screenspace_fg_tracker_red.py | 41 | `noqa: F401` |  |
+| tests/test_screenspace_fg_tracker_red.py | 44 | `noqa: BLE001` |  |
+| tests/test_screenspace_g4_injection_red.py | 46 | `noqa: F401` | imported to prove the seam exists; a failure is reported by the skipif |
+| tests/test_screenspace_g4_injection_red.py | 53 | `noqa: BLE001` | any import failure is the RED, reported by the skipif |
+| tests/test_screenspace_latency_bars_red.py | 37 | `noqa: F401` | imported to prove the seam exists; a failure is reported by the skipif |
+| tests/test_screenspace_latency_bars_red.py | 44 | `noqa: BLE001` | any import failure is the RED, reported by the skipif |
+| tests/test_screenspace_ref_gen_currency_red.py | 36 | `noqa: F401` | imported to prove the seam exists; a failure is reported by the skipif |
+| tests/test_screenspace_ref_gen_currency_red.py | 42 | `noqa: BLE001` | any import failure is the RED, reported by the skipif |
+| tests/test_screenspace_refusal_matrix_red.py | 42 | `noqa: F401` | imported to prove the seam exists; a failure is reported by the skipif |
+| tests/test_screenspace_refusal_matrix_red.py | 49 | `noqa: BLE001` | the module may not exist yet, and that IS the red |
+| tests/test_screenspace_resize_budget_red.py | 41 | `noqa: F401` | imported to prove the seam exists; a failure is reported by the skipif |
+| tests/test_screenspace_resize_budget_red.py | 45 | `noqa: BLE001` | any import failure is the RED, reported by the skipif |
+| tests/test_session_id_prefers_the_harness_native_var.py | 58 | `noqa: E402` | after the sys.path bootstrap |
 | tests/test_session_seat_steer_drain.py | 34 | `noqa: E402` | sys.path bootstrap |
+| tests/test_shader_harness.py | 1074 | `noqa: PT011` | each bad input words its own refusal; refusing is the pin |
 | tests/test_shift_turn_boundary.py | 47 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
 | tests/test_shift_turn_boundary.py | 62 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
 | tests/test_spawn_already_up.py | 26 | `noqa: E402` | sys.path bootstrap |
 | tests/test_subprocess_stdin_sever.py | 69 | `noqa: F401` | installs the membrane |
 | tests/test_subprocess_stdin_sever.py | 118 | `ty: ignore[invalid-assignment]` | monkeypatch: trace every Popen |
+| tests/test_supervised_seat_autolaunch.py | 43 | `noqa: E402` | scripts/ on sys.path first |
+| tests/test_supervised_seat_autolaunch.py | 45 | `noqa: E402` |  |
+| tests/test_supervised_seat_autolaunch.py | 46 | `noqa: E402` |  |
 | tests/test_sync_reconciler.py | 21 | `noqa: E402` | AI_SETUP env (mkdtemp) must exist before import |
 | tests/test_t077_a3_runner_visibility.py | 88 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
 | tests/test_t077_a3_runner_visibility.py | 104 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
@@ -842,7 +1268,7 @@
 | tests/test_t191_llm_round_archive_keeps_player_report.py | 27 | `noqa: E402` | sys.path bootstrap |
 | tests/test_t194_scoreboard_v2_separates_truth_exposure_integrity.py | 36 | `noqa: E402` | sys.path bootstrap |
 | tests/test_t195_replication_vs_positional_sharding.py | 31 | `noqa: E402` | sys.path bootstrap |
-| tests/test_t201_unread_counter_honesty.py | 132 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
+| tests/test_t201_unread_counter_honesty.py | 138 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
 | tests/test_t219_oracle_does_not_void_a_reasoning_player.py | 52 | `noqa: E402` | sys.path bootstrap |
 | tests/test_t220_a_clipped_body_carries_its_address.py | 31 | `noqa: E402` | sys.path bootstrap |
 | tests/test_t221_confidence_must_not_be_a_free_option.py | 47 | `noqa: E402` | sys.path bootstrap |
@@ -890,8 +1316,16 @@
 | tests/test_t414_organ_canaries.py | 29 | `noqa: E402` | sys.path bootstrap |
 | tests/test_task_ledger.py | 232 | `pyright: ignore[reportAttributeAccessIssue]` | optional surface, hasattr-probed |
 | tests/test_task_ledger.py | 236 | `ty: ignore[redundant-condition]` | ledger_view is an optional, hasattr-probed surface |
+| tests/test_the_actuator_refuses_before_it_acts.py | 81 | `noqa: BLE001` | any import failure is the first RED pin, failed by the fixture below |
+| tests/test_the_actuator_refuses_before_it_acts.py | 82 | `type: ignore[assignment]` | None stands for "the module did not import" |
+| tests/test_the_actuator_refuses_before_it_acts.py | 161 | `type: ignore[misc]` | writing to the frozen token is the point |
+| tests/test_the_eye_waits_instead_of_crashing.py | 111 | `noqa: BLE001` | recorded and asserted on below, never swallowed |
+| tests/test_the_new_session_combo_has_a_door.py | 45 | `noqa: E402` | after the sys.path bootstrap |
+| tests/test_the_wake_says_who_woke_you.py | 158 | `noqa: ERA001` | the producer's line, quoted verbatim on purpose |
 | tests/test_tooling_upgrade_oracle.py | 1 | `pyright: strict` |  |
 | tests/test_tooling_upgrade_oracle.py | 423 | `noqa: FBT001, RUF100` | pytest parametrize value, passed by pytest; FBT is ratchet-only |
+| tests/test_touch_v1.py | 50 | `noqa: E402` | after the sys.path bootstrap |
+| tests/test_touch_v1.py | 51 | `noqa: E402` | after the sys.path bootstrap |
 | tests/test_vault_refuses_mangled_paste.py | 30 | `noqa: E402` | sys.path bootstrap |
 | tests/test_w06_stdin_send.py | 15 | `noqa: E402` | sys.path bootstrap |
 | tests/test_w06_stdin_send.py | 63 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
@@ -906,6 +1340,7 @@
 | tests/test_wake_lane_pending_reads_lane_cursor.py | 49 | `noqa: E402` | sys.path bootstrap |
 | tests/test_wake_lane_pending_reads_lane_cursor.py | 50 | `noqa: E402` | sys.path bootstrap |
 | tests/test_wake_pending_spin.py | 34 | `noqa: E402` | sys.path bootstrap |
+| tests/test_windowed_tasks_can_still_speak.py | 68 | `noqa: E402` | after the sys.path bootstrap |
 | tests/test_wrap_routing.py | 29 | `noqa: F401` | db 15 + temp AI_SETUP, flushed (child inherits via env) |
 | tests/test_wrap_routing.py | 34 | `noqa: E402` | sys.path bootstrap |
 | tests/test_write_door_acl_scope.py | 48 | `noqa: E402` | sys.path bootstrap |

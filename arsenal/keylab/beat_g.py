@@ -37,64 +37,63 @@ real BPM-labelled loops (hip-hop octave, humanised and swung drums), so it is NO
 `py -m arsenal.keylab beat --engine g`. Record: research/reviewed/keylab-liberation-2026-10-22/
 grid-tracker-scoring-2026-10-22.md.
 """
+
 from __future__ import annotations
 
+import itertools
 import math
-from typing import List, Optional
 
 import numpy as np
 
 BPM_LO, BPM_HI = 60.0, 200.0
-EDGES_HZ = (0.0, 150.0, 400.0, 2500.0)     # sub/kick, snare body, mids, hats
-HIST_S = 6.0                # onset evidence window for the grid search
-MAX_HIST_S = 10.0           # ... stretched up to this for sparse music, so it holds at least MIN_NOTES notes
+EDGES_HZ = (0.0, 150.0, 400.0, 2500.0)  # sub/kick, snare body, mids, hats
+HIST_S = 6.0  # onset evidence window for the grid search
+MAX_HIST_S = 10.0  # ... stretched up to this for sparse music, so it holds at least MIN_NOTES notes
 MIN_NOTES = 16
-ALARM_WINDOW_S = 2.5        # window right after a change alarm
-INDUCE_EVERY_S = 0.5        # how often the grid search re-runs
-MIN_EVIDENCE_S = 3.0        # before the first lock
-SIGMA_T = 0.012             # onset timing tolerance on a grid line (s)
-OFF_GRID_EPS = 0.08         # share of onsets allowed to be off-grid: small, so the grid must fit (nearly) ALL notes
-PRIOR_CENTER, PRIOR_OCT = 120.0, 0.9        # log-normal tempo prior (octaves)
-SEED_OCT = 0.08             # how close (octaves, folded) a tempo must be to count as the seed's family
-SEED_FIT_SLACK = 0.3        # the seed's grid may fit the notes this much worse (mean LLR) and still compete
-SEED_FAMILY_W = 1.0         # prior bonus for the seed's tempo family (any octave)
-SEED_OCTAVE_W = 0.4         # ... and for the seed's own octave
+ALARM_WINDOW_S = 2.5  # window right after a change alarm
+INDUCE_EVERY_S = 0.5  # how often the grid search re-runs
+MIN_EVIDENCE_S = 3.0  # before the first lock
+SIGMA_T = 0.012  # onset timing tolerance on a grid line (s)
+OFF_GRID_EPS = 0.08  # share of onsets allowed to be off-grid: small, so the grid must fit (nearly) ALL notes
+PRIOR_CENTER, PRIOR_OCT = 120.0, 0.9  # log-normal tempo prior (octaves)
+SEED_OCT = 0.08  # how close (octaves, folded) a tempo must be to count as the seed's family
+SEED_FIT_SLACK = 0.3  # the seed's grid may fit the notes this much worse (mean LLR) and still compete
+SEED_FAMILY_W = 1.0  # prior bonus for the seed's tempo family (any octave)
+SEED_OCTAVE_W = 0.4  # ... and for the seed's own octave
 SEED_OCTAVE_OCT = 0.12
-SEED_HALF_LIFE_S = 600.0    # the seed fades slowly: a database tempo stays good for the whole track
-LEVEL_SWITCH_AFTER = 3      # consecutive inductions a rival master must win before it takes over
-OCTAVE_SWITCH_AFTER = 8     # ... and for an octave relative (same grid, other level: 70 <-> 140), about 4 s
-PRIOR_W = 1.0               # weight of the (log) priors against accent contrast when choosing the beat level
-COARSE_COST = 0.5           # per level of beat beyond 4 tatums (16ths read as half-time 8ths of 32nds)
-SUBDIV_COST = 0.3           # per level of beat subdivision the notes do not show (see _level_table)
-TERNARY_MARGIN = 0.05       # the accent pattern must repeat in threes by this much more than in twos
-DESCEND_MIN = 0.10          # a subdivided lattice must explain the notes this much better (mean log-likelihood ratio)
-ESTABLISH_AFTER = 3         # a first reading must win this many inductions running before hysteresis protects it
-LEVEL_BY_ACCENT = True      # tempo level judged on the combined accent, beat slot on the clearest band
-COVER_W = 0.8               # weight of pulse continuity (share of beat lines holding a note) in the level choice
-CONFIRM_S = 0.09            # an expected beat is confirmed this long after it is due
-CUSUM_K, CUSUM_H = 0.5, 6.0 # alarm drift and threshold, in units of normalized innovation
-SILENCE_S = 2.5             # no onsets this long = coast, then re-acquire without hysteresis
-BAND_FLOOR = 0.02           # minimum band scale (log-flux units), so a near-silent band cannot blow up
-RISE_Z = 0.35               # a band "rises" at an onset when its flux reaches 35 % of its typical peak
+SEED_HALF_LIFE_S = 600.0  # the seed fades slowly: a database tempo stays good for the whole track
+LEVEL_SWITCH_AFTER = 3  # consecutive inductions a rival master must win before it takes over
+OCTAVE_SWITCH_AFTER = 8  # ... and for an octave relative (same grid, other level: 70 <-> 140), about 4 s
+PRIOR_W = 1.0  # weight of the (log) priors against accent contrast when choosing the beat level
+COARSE_COST = 0.5  # per level of beat beyond 4 tatums (16ths read as half-time 8ths of 32nds)
+SUBDIV_COST = 0.3  # per level of beat subdivision the notes do not show (see _level_table)
+TERNARY_MARGIN = 0.05  # the accent pattern must repeat in threes by this much more than in twos
+DESCEND_MIN = 0.10  # a subdivided lattice must explain the notes this much better (mean log-likelihood ratio)
+ESTABLISH_AFTER = 3  # a first reading must win this many inductions running before hysteresis protects it
+LEVEL_BY_ACCENT = True  # tempo level judged on the combined accent, beat slot on the clearest band
+COVER_W = 0.8  # weight of pulse continuity (share of beat lines holding a note) in the level choice
+CONFIRM_S = 0.09  # an expected beat is confirmed this long after it is due
+CUSUM_K, CUSUM_H = 0.5, 6.0  # alarm drift and threshold, in units of normalized innovation
+SILENCE_S = 2.5  # no onsets this long = coast, then re-acquire without hysteresis
+BAND_FLOOR = 0.02  # minimum band scale (log-flux units), so a near-silent band cannot blow up
+RISE_Z = 0.35  # a band "rises" at an onset when its flux reaches 35 % of its typical peak
 
 # IMM: steady / ramp / step. Process noise on the period (s per beat); Markov switching per beat.
 Q_PERIOD = (0.00015, 0.0012, 0.030)
 Q_PHASE = (0.0008, 0.002, 0.010)
-PI = np.array([[0.990, 0.008, 0.002],
-               [0.040, 0.950, 0.010],
-               [0.100, 0.100, 0.800]])
+PI = np.array([[0.990, 0.008, 0.002], [0.040, 0.950, 0.010], [0.100, 0.100, 0.800]])
 
 
 class Tracker:
-    def __init__(self, rate: int, hop: int, seed_bpm: Optional[float] = None):
+    def __init__(self, rate: int, hop: int, seed_bpm: float | None = None):
         self.rate, self.hop = int(rate), int(hop)
         self.n_fft = 1024 if rate <= 48000 else 2048
         self.win = np.hanning(self.n_fft).astype(np.float32)
         self.ring = np.zeros(self.n_fft, dtype=np.float32)
         self.pending = np.zeros(0, dtype=np.float32)
         freqs = np.fft.rfftfreq(self.n_fft, 1.0 / self.rate)
-        edges = list(EDGES_HZ) + [self.rate / 2 + 1]
-        self.bands = [np.where((freqs >= lo) & (freqs < hi))[0] for lo, hi in zip(edges[:-1], edges[1:])]
+        edges = [*list(EDGES_HZ), self.rate / 2 + 1]
+        self.bands = [np.where((freqs >= lo) & (freqs < hi))[0] for lo, hi in itertools.pairwise(edges)]
         self.prev = None
         self.frames = 0
         self.fr = self.rate / self.hop
@@ -102,29 +101,29 @@ class Tracker:
         n = int(4.0 * self.fr)
         self.flux = np.zeros((n, 4), dtype=np.float64)
         # onsets: time, strength, accent (bands rising together)
-        self.on_t: List[float] = []
-        self.on_w: List[float] = []
-        self.on_a: List[float] = []
-        self.on_z: List[np.ndarray] = []      # per-band strength of each onset (in units of the band's typical peak)
+        self.on_t: list[float] = []
+        self.on_w: list[float] = []
+        self.on_a: list[float] = []
+        self.on_z: list[np.ndarray] = []  # per-band strength of each onset (in units of the band's typical peak)
         self.last_onset_t = -1e9
         # grid / master
         self.seed = float(seed_bpm) if seed_bpm else None
         # lattice periods to scan: a 16th at 200 BPM up to a whole 4-beat bar at 60 BPM (a kick only on each bar)
         self.tau_grid = np.geomspace(60.0 / (BPM_HI * 4), 4 * 60.0 / BPM_LO, 900)
         self.tau_min = 60.0 / (BPM_HI * 4)
-        self.master: Optional[dict] = None
+        self.master: dict | None = None
         self._rival, self._rival_wins = None, 0
         self.master_age = 0
         self.next_induce = MIN_EVIDENCE_S
         self.window_s = HIST_S
         self.alarm_until = -1.0
         # IMM state
-        self.x = None                      # per-model [last beat time, period]
-        self.P = None                      # per-model 2x2 covariance
+        self.x = None  # per-model [last beat time, period]
+        self.P = None  # per-model 2x2 covariance
         self.mu = np.array([0.94, 0.05, 0.01])
-        self.ref_x, self.ref_P = None, None   # the unmixed steady reference predictor
+        self.ref_x, self.ref_P = None, None  # the unmixed steady reference predictor
         self.cusum_pos = self.cusum_neg = 0.0
-        self.next_beat: Optional[float] = None
+        self.next_beat: float | None = None
         self.beat_index = 0
         self.slot_accent = np.zeros(4)
         self.conf = 0.0
@@ -139,16 +138,16 @@ class Tracker:
         return ((idx + 1) * self.hop - self.n_fft / 2) / self.rate
 
     # --- the stream -----------------------------------------------------------------------------------------
-    def feed(self, block) -> List[dict]:
+    def feed(self, block) -> list[dict]:
         x = np.asarray(block, dtype=np.float32).reshape(-1)
         self.pending = np.concatenate([self.pending, x]) if len(self.pending) else x
-        out: List[dict] = []
+        out: list[dict] = []
         while len(self.pending) >= self.hop:
-            frame, self.pending = self.pending[: self.hop], self.pending[self.hop:]
+            frame, self.pending = self.pending[: self.hop], self.pending[self.hop :]
             out.extend(self._frame(frame))
         return out
 
-    def predict(self, now: Optional[float] = None) -> List[dict]:
+    def predict(self, now: float | None = None) -> list[dict]:
         if self.next_beat is None or self.x is None:
             return []
         now = self.now if now is None else now
@@ -156,13 +155,15 @@ class Tracker:
         t = self.next_beat
         while t <= now:
             t += period
-        return [{"t_beat": float(t + k * period), "bpm": 60.0 / period, "phase": 0.0,
-                 "confidence": round(self.conf, 3)} for k in range(4)]
+        return [
+            {"t_beat": float(t + k * period), "bpm": 60.0 / period, "phase": 0.0, "confidence": round(self.conf, 3)}
+            for k in range(4)
+        ]
 
     # --- per frame -----------------------------------------------------------------------------------------
-    def _frame(self, samples: np.ndarray) -> List[dict]:
+    def _frame(self, samples: np.ndarray) -> list[dict]:
         self.ring = np.roll(self.ring, -len(samples))
-        self.ring[-len(samples):] = samples
+        self.ring[-len(samples) :] = samples
         mag = np.log1p(100.0 * np.abs(np.fft.rfft(self.ring * self.win)))
         flux = np.zeros_like(mag) if self.prev is None else np.maximum(mag - self.prev, 0.0)
         self.prev = mag
@@ -171,7 +172,7 @@ class Tracker:
         self.flux[-1] = bands
         self.frames += 1
         self._pick_onset()
-        out: List[dict] = []
+        out: list[dict] = []
         if self.now >= self.next_induce:
             self._induce()
             self.next_induce = self.now + INDUCE_EVERY_S
@@ -194,10 +195,10 @@ class Tracker:
         scale = np.maximum(np.percentile(hist, 95, axis=0), BAND_FLOOR)
         z = hist / scale
         odf = z.sum(axis=1)
-        c = len(odf) - 3                                     # the candidate frame
+        c = len(odf) - 3  # the candidate frame
         if not (odf[c] >= odf[c - 1] and odf[c] > odf[c + 1] and odf[c] >= odf[c - 2] and odf[c] >= odf[c + 2]):
             return
-        local = odf[max(0, c - int(0.8 * self.fr)):c + 1]
+        local = odf[max(0, c - int(0.8 * self.fr)) : c + 1]
         thr = np.median(local) + 1.5 * (np.percentile(local, 75) - np.percentile(local, 25)) + 0.15
         if odf[c] < thr:
             return
@@ -206,7 +207,7 @@ class Tracker:
         delta = 0.5 * (y0 - y2) / den if den < 0 else 0.0
         idx = (self.frames - n) + c + float(np.clip(delta, -0.5, 0.5))
         t = self._frame_time(idx)
-        if t - self.last_onset_t < 0.03:                    # one onset per 30 ms
+        if t - self.last_onset_t < 0.03:  # one onset per 30 ms
             return
         rising = z[c] > RISE_Z
         accent = float(odf[c]) * (0.5 + 0.5 * max(0, int(rising.sum()) - 1))
@@ -217,7 +218,10 @@ class Tracker:
         self.last_onset_t = t
         horizon = self.now - MAX_HIST_S - 1.0
         while self.on_t and self.on_t[0] < horizon:
-            self.on_t.pop(0); self.on_w.pop(0); self.on_a.pop(0); self.on_z.pop(0)
+            self.on_t.pop(0)
+            self.on_w.pop(0)
+            self.on_a.pop(0)
+            self.on_z.pop(0)
 
     # --- the grid search ------------------------------------------------------------------------------------
     def _evidence(self, window_s: float, stretch: bool = True):
@@ -314,7 +318,7 @@ class Tracker:
         for L in range(2, K // 2 + 1):
             if K - L < 8:
                 break
-            x, y = occ[:K - L], occ[L:]
+            x, y = occ[: K - L], occ[L:]
             den = math.sqrt(float(x @ x) * float(y @ y))
             r = float(x @ y) / den if den > 0 else 0.0
             if self._smooth(L):
@@ -349,9 +353,9 @@ class Tracker:
         K = len(s)
 
         def r(L):
-            if K - L < max(8, L // 2):
+            if max(8, L // 2) > K - L:
                 return None
-            x, y = s[:K - L], s[L:]
+            x, y = s[: K - L], s[L:]
             den = math.sqrt(float(x @ x) * float(y @ y))
             return float(x @ y) / den if den > 0 else 0.0
 
@@ -359,7 +363,7 @@ class Tracker:
         ternary = [v for v in (r(3), r(6), r(12)) if v is not None]
         return (max(binary) if binary else 0.0), (max(ternary) if ternary else 0.0)
 
-    def _level_table(self, t, a, w, tau, anchor, window_s, ternary: Optional[bool] = None, Z=None):
+    def _level_table(self, t, a, w, tau, anchor, window_s, ternary: bool | None = None, Z=None):
         """Every (multiple, slot) reading of one lattice, scored. Rows: (score, bpm, m, slot, contrast, prior,
         cost). Multiples below 1 are beats the lattice only implies (a kick on every bar implies four beats in it)."""
         if ternary is None:
@@ -370,10 +374,7 @@ class Tracker:
         pos = np.round((t - anchor) / tau).astype(int)
         near = np.abs((t - anchor) / tau - pos) < 0.3
         occupied = np.unique(pos[near])
-        if len(occupied):
-            all_lines = np.arange(occupied.min(), occupied.max() + 1)
-        else:
-            all_lines = np.zeros(0, dtype=int)
+        all_lines = np.arange(occupied.min(), occupied.max() + 1) if len(occupied) else np.zeros(0, dtype=int)
         lattice_cover = len(occupied) / max(1, len(all_lines))
         # per (multiple, slot): accent contrast of its lines against the other tatum lines, and pulse continuity
         # (the share of its lines holding a note: a beat is felt on EVERY beat line, so loud syncopated bass that
@@ -423,18 +424,39 @@ class Tracker:
             if m < 2:
                 # pulse continuity for a beat at or below the lattice: the share of its lines holding a note
                 cover = min(1.0, m) * lattice_cover
-                rows.append((float(PRIOR_W * prior - cost + COVER_W * cover), float(bpm), m, 0, 0.0, float(prior),
-                             float(cost), float(cover)))
+                rows.append(
+                    (
+                        float(PRIOR_W * prior - cost + COVER_W * cover),
+                        float(bpm),
+                        m,
+                        0,
+                        0.0,
+                        float(prior),
+                        float(cost),
+                        float(cover),
+                    )
+                )
                 continue
-            mi = int(round(m))
+            mi = round(m)
             for slot in range(mi):
                 c_max, c_acc, cover = stats[mi][slot]
                 # WHICH slot is the beat: the clearest band; HOW FAST the beat is: the combined accent (hats on
                 # every 8th are the clearest band in a boom-bap loop, yet they mark its subdivision, not its beat)
                 phase = c_max + COVER_W * cover
                 level = (c_acc if LEVEL_BY_ACCENT else c_max) + COVER_W * cover + PRIOR_W * prior - cost
-                rows.append((float(level), float(bpm), mi, slot, float(c_max), float(prior), float(cost),
-                             float(cover), float(phase)))
+                rows.append(
+                    (
+                        float(level),
+                        float(bpm),
+                        mi,
+                        slot,
+                        float(c_max),
+                        float(prior),
+                        float(cost),
+                        float(cover),
+                        float(phase),
+                    )
+                )
         if LEVEL_BY_ACCENT:
             # one row per level: its best slot by phase evidence, scored by level evidence
             keep = {}
@@ -446,7 +468,7 @@ class Tracker:
         rows.sort(key=lambda r: -r[0])
         return rows
 
-    def _levels(self, t, a, w, tau, anchor, window_s, ternary: Optional[bool] = None, Z=None):
+    def _levels(self, t, a, w, tau, anchor, window_s, ternary: bool | None = None, Z=None):
         """Question 2 -- which multiple of the lattice is the BEAT, and which tatum is beat one? Every
         (multiple, slot) is a permutation of the same grid; they are scored by accent CONTRAST (beat lines vs
         the other tatum lines, accent = bands rising together), the tempo prior and the seed, and a cost for
@@ -456,8 +478,7 @@ class Tracker:
         if not rows:
             return None
         total, bpm, m, slot, contrast = rows[0][:5]
-        h = {"total": total, "bpm": bpm, "div": m, "slot": slot, "tat": tau, "anchor": anchor,
-             "contrast": contrast}
+        h = {"total": total, "bpm": bpm, "div": m, "slot": slot, "tat": tau, "anchor": anchor, "contrast": contrast}
         h["seed_family"] = any(self._in_seed_family(r[1]) for r in rows)
         return h
 
@@ -475,8 +496,10 @@ class Tracker:
             # is usually right, but strong evidence for the other octave (a seed off by an octave) must still win
             d = math.log2(bpm / self.seed)
             fam_d = d - round(d)
-            lp += fade * (SEED_FAMILY_W * math.exp(-0.5 * (fam_d / SEED_OCT) ** 2)
-                          + SEED_OCTAVE_W * math.exp(-0.5 * (d / SEED_OCTAVE_OCT) ** 2))
+            lp += fade * (
+                SEED_FAMILY_W * math.exp(-0.5 * (fam_d / SEED_OCT) ** 2)
+                + SEED_OCTAVE_W * math.exp(-0.5 * (d / SEED_OCTAVE_OCT) ** 2)
+            )
         return lp
 
     def _induce(self) -> None:
@@ -550,10 +573,7 @@ class Tracker:
         if abs(math.log2(h["bpm"] / ref["bpm"])) >= 0.03:
             return False
         period = 60.0 / ref["bpm"]
-        if ref is self.master and self.next_beat is not None:
-            line = self.next_beat
-        else:
-            line = self._beat_line(ref)
+        line = self.next_beat if ref is self.master and self.next_beat is not None else self._beat_line(ref)
         off = ((self._beat_line(h) - line) / period + 0.5) % 1.0 - 0.5
         return abs(off) < 0.15
 
@@ -566,7 +586,7 @@ class Tracker:
         k = math.floor((self.now - first) / period)
         last_beat = first + k * period
         x0 = np.array([last_beat, period])
-        P0 = np.diag([0.01 ** 2, (0.01 * period) ** 2])
+        P0 = np.diag([0.01**2, (0.01 * period) ** 2])
         self.x = np.array([x0.copy() for _ in range(3)])
         self.P = np.array([P0.copy() for _ in range(3)])
         self.mu = np.array([0.94, 0.05, 0.01])
@@ -588,12 +608,13 @@ class Tracker:
         """Robust timing error of ALL recent onsets snapped to the master tatum grid around the expected beat."""
         if not self.on_t:
             return None, None
-        t = np.array(self.on_t); w = np.array(self.on_w)
+        t = np.array(self.on_t)
+        w = np.array(self.on_w)
         sel = (t >= expected - period * 1.5) & (t <= expected + period * 0.6)
         if sel.sum() < 2:
             return None, None
         div = self.master["div"] if self.master else 4
-        tat = period / max(1, div)        # a beat the lattice only implies (div < 1) snaps to the beat itself
+        tat = period / max(1, div)  # a beat the lattice only implies (div < 1) snaps to the beat itself
         r = ((t[sel] - expected) / tat + 0.5) % 1.0 - 0.5
         r_s = r * tat
         ws = w[sel]
@@ -601,15 +622,19 @@ class Tracker:
         cw = np.cumsum(ws[order])
         med = float(r_s[order][np.searchsorted(cw, cw[-1] / 2)])
         spread = float(np.sqrt(np.average((r_s - med) ** 2, weights=ws)))
-        n_eff = ws.sum() ** 2 / (np.sum(ws ** 2) + 1e-9)
+        n_eff = ws.sum() ** 2 / (np.sum(ws**2) + 1e-9)
         R = max(0.003, min(0.03, spread)) ** 2 / max(1.0, n_eff)
         return expected + med, R
 
-    def _imm_step(self, z: Optional[float], R: Optional[float]) -> None:
+    def _imm_step(self, z: float | None, R: float | None) -> None:
+        assert self.x is not None  # set once a beat is locked
+        assert self.P is not None
+        assert self.mu is not None
+        R = 0.0 if R is None else R  # a missing measurement has no variance to add; z is None then
         F = np.array([[1.0, 1.0], [0.0, 1.0]])
         H = np.array([[1.0, 0.0]])
         cbar = PI.T @ self.mu
-        mix = (PI * self.mu[:, None]) / (cbar[None, :] + 1e-12)            # mix[i, j] = P(i | j)
+        mix = (PI * self.mu[:, None]) / (cbar[None, :] + 1e-12)  # mix[i, j] = P(i | j)
         x0 = np.einsum("ij,ik->jk", mix, self.x)
         P0 = np.zeros_like(self.P)
         for j in range(3):
@@ -656,9 +681,10 @@ class Tracker:
         """A real tempo change: cut the evidence to the last few seconds and re-search at any ratio."""
         self.alarm_until = self.now + 3.0
         self.cusum_pos = self.cusum_neg = 0.0
-        self.next_induce = self.now           # re-search on the very next frame
+        self.next_induce = self.now  # re-search on the very next frame
 
-    def _confirm(self) -> Optional[dict]:
+    def _confirm(self) -> dict | None:
+        assert self.next_beat is not None  # the caller only confirms an expected beat
         expected = self.next_beat
         period = self._period()
         z, R = self._measure(expected, period)
@@ -682,12 +708,12 @@ class Tracker:
             down = bool(self.beat_index % 4 == int(np.argmax(self.slot_accent)))
         steady = float(self.mu[0])
         conf = float(np.clip(0.6 * self.conf + 0.4 * steady, 0.0, 1.0))
-        return {"t_beat": beat_t, "bpm": 60.0 / period, "phase": 0.0, "confidence": round(conf, 3),
-                "is_downbeat": down}
+        return {"t_beat": beat_t, "bpm": 60.0 / period, "phase": 0.0, "confidence": round(conf, 3), "is_downbeat": down}
 
     def _accent_near(self, t0: float, tol: float) -> float:
         if not self.on_t:
             return 0.0
-        t = np.array(self.on_t); a = np.array(self.on_a)
+        t = np.array(self.on_t)
+        a = np.array(self.on_a)
         sel = np.abs(t - t0) <= tol
         return float(a[sel].sum())

@@ -7,9 +7,9 @@ no relative imports into arsenal.keylab, no GPL/AGPL/non-commercial code or weig
 Contract::
 
     tracker = Tracker(rate, hop, seed_bpm=None)
-    events  = tracker.feed(block)       # float32 mono numpy array of `hop` samples
+    events = tracker.feed(block)  # float32 mono numpy array of `hop` samples
     # -> [{"t_beat", "bpm", "phase", "confidence", "is_downbeat"}]   OBSERVED beats
-    ahead   = tracker.predict(now)      # EXPECTED beats with t_beat > now (seconds of audio fed)
+    ahead = tracker.predict(now)  # EXPECTED beats with t_beat > now (seconds of audio fed)
 
 Design (clean-room from the published DSP equations, per the algorithm research report):
 
@@ -36,29 +36,30 @@ speed (1.14 s vs 1.76 s), edges CMLt (0.539 vs 0.498), and adds predict() (pred_
 lacks; it trails raw F-measure (0.631 vs 0.712) and Acc1 (0.571 vs 0.714), lagging mostly on sparse/click/
 noisy material where the flux peak-picker has nothing stable to latch onto.
 """
+
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Sequence
 
 import numpy as np
 
 # --- constants ----------------------------------------------------------------------------------
 
-FOLD_LO, FOLD_HI = 62.0, 188.0        # band the tempo is folded into before clustering (a normal music range)
+FOLD_LO, FOLD_HI = 62.0, 188.0  # band the tempo is folded into before clustering (a normal music range)
 BPM_MIN, BPM_MAX = 40.0, 300.0
 OCTAVE_FACTORS = (0.5, 2.0 / 3.0, 1.0, 1.5, 2.0)
-SEED_SIGMA = 0.10                     # log2-period prior width (fraction of an octave) when seeded
-UNSEEDED_SIGMA = 0.55                 # wide prior when nothing is known -- lets the bank find its own peak
-CONF_TAU = 0.999                     # confidence low-pass time constant (per hop)
-MIN_ONSET_ENV = 1e-6                  # onset envelope floor (avoids div-by-zero on near-silence)
-SILENCE_STD = 1e-4                    # blocks quieter than this do not steer anything
-PRIOR_FLOOR = 0.05                   # weakest the prior may become -- the bank always has some pull
-DEFAULT_NFFT = 2048                   # FFT window; per hop (512) the block is zero-padded to this
-FIRST_SKIP_HOPS = 8                   # no beats announced over the first few hops (let the flux window fill)
+SEED_SIGMA = 0.10  # log2-period prior width (fraction of an octave) when seeded
+UNSEEDED_SIGMA = 0.55  # wide prior when nothing is known -- lets the bank find its own peak
+CONF_TAU = 0.999  # confidence low-pass time constant (per hop)
+MIN_ONSET_ENV = 1e-6  # onset envelope floor (avoids div-by-zero on near-silence)
+SILENCE_STD = 1e-4  # blocks quieter than this do not steer anything
+PRIOR_FLOOR = 0.05  # weakest the prior may become -- the bank always has some pull
+DEFAULT_NFFT = 2048  # FFT window; per hop (512) the block is zero-padded to this
+FIRST_SKIP_HOPS = 8  # no beats announced over the first few hops (let the flux window fill)
 
 
 # --- pure maths (clean-room) ---------------------------------------------------------------------
+
 
 def _fold_to_band(bpm: float, lo: float = FOLD_LO, hi: float = FOLD_HI) -> float:
     """Halve/double a tempo until it lands in [lo, hi); half and double collapse to one octave."""
@@ -94,41 +95,42 @@ def _hann(n: int) -> np.ndarray:
 
 # --- the tracker ---------------------------------------------------------------------------------
 
+
 class Tracker:
     """Real-time clean-room beat tracker: spectral-flux onset -> seeded comb-filter bank -> phase-locked loop."""
 
-    def __init__(self, rate: int, hop: int, seed_bpm: Optional[float] = None):
+    def __init__(self, rate: int, hop: int, seed_bpm: float | None = None):
         self.rate = int(rate)
         self.hop = int(hop)
         self.nfft = DEFAULT_NFFT
         self.seed_bpm = float(seed_bpm) if seed_bpm and seed_bpm > 0 else None
 
         # onset flux: previous magnitude spectrum (for rectified spectral flux)
-        self._prev_mag: Optional[np.ndarray] = None
+        self._prev_mag: np.ndarray | None = None
         self._win = _hann(self.nfft)
 
         # a decimated onset envelope, indexed in hops, kept so the comb bank can sample it at any tau
         self._env: np.ndarray = np.zeros(1024, dtype=np.float32)
         self._env_i = 0
         self._hop_s = hop / self.rate
-        self._t_audio = 0.0             # seconds of audio fed so far (= the bench's `at` after each block)
+        self._t_audio = 0.0  # seconds of audio fed so far (= the bench's `at` after each block)
         self._n_hops = 0
 
         # tempo state (period in seconds). Seed pins it; no seed = start at a dance-music default.
         self._period = 60.0 / (self.seed_bpm if self.seed_bpm else 120.0)
         self._sigma = SEED_SIGMA if self.seed_bpm else UNSEEDED_SIGMA
-        self._conf = 0.5                # running confidence 0..1
+        self._conf = 0.5  # running confidence 0..1
 
         # phase state: the time of the next expected beat (absolute audio-seconds), kept in step with
         # the most recently observed beat so predict() can look ahead.
         self._next_beat = self._hop_s * (FIRST_SKIP_HOPS + 2)  # first emission a little after the skip window
-        self._last_beat: Optional[float] = None
-        self._phase = 0.5               # place-holder; recomputed per emission
-        self._thresh = MIN_ONSET_ENV    # adaptive onset-peak threshold
-        self._ioi_hist: List[float] = []  # recent inter-beat intervals (seconds), for the BPM lock
+        self._last_beat: float | None = None
+        self._phase = 0.5  # place-holder; recomputed per emission
+        self._thresh = MIN_ONSET_ENV  # adaptive onset-peak threshold
+        self._ioi_hist: list[float] = []  # recent inter-beat intervals (seconds), for the BPM lock
 
         # downbeat (bar) state -- coarse accent ratio, emitted honestly
-        self._accents = [0.0, 0.0, 0.0, 0.0]   # rolling onset-energy sum per bar position
+        self._accents = [0.0, 0.0, 0.0, 0.0]  # rolling onset-energy sum per bar position
         self._accent_n = 0
 
     # -- onset ---------------------------------------------------------------
@@ -161,14 +163,14 @@ class Tracker:
 
     # -- feed ----------------------------------------------------------------
 
-    def feed(self, block: np.ndarray) -> List[dict]:
+    def feed(self, block: np.ndarray) -> list[dict]:
         block = np.asarray(block, dtype=np.float32)
         if block.ndim > 1:
             block = block.mean(axis=1)
         self._n_hops += 1
         self._t_audio += self._hop_s
 
-        out: List[dict] = []
+        out: list[dict] = []
 
         # near-silence: no onset, no emit; just advance the clock (and the silent-ring write).
         if float(np.std(block) if block.size else 0.0) < SILENCE_STD:
@@ -208,7 +210,7 @@ class Tracker:
                 back = k * tau_h
                 if back > have_hops - 1:
                     break
-                idx = self._env_i - 1 - int(round(back))
+                idx = self._env_i - 1 - round(back)
                 acc += env_norm[idx % len(env)]
                 n_terms += 1
             if n_terms:
@@ -236,9 +238,11 @@ class Tracker:
             sharpness = float(np.max(resp) / (np.mean(resp) + 1e-9))
             target_conf = float(np.clip(0.2 + 0.8 * math.tanh(sharpness / 3.0), 0.0, 1.0))
             self._conf = CONF_TAU * self._conf + (1.0 - CONF_TAU) * target_conf
-            self._sigma = max(PRIOR_FLOOR,
-                              SEED_SIGMA if self.seed_bpm else UNSEEDED_SIGMA,
-                              self._sigma * (1.0 - 0.02 * (self._conf - 0.5)))
+            self._sigma = max(
+                PRIOR_FLOOR,
+                SEED_SIGMA if self.seed_bpm else UNSEEDED_SIGMA,
+                self._sigma * (1.0 - 0.02 * (self._conf - 0.5)),
+            )
 
         # ---- onset peak -> observed beat (seed-gated peak picker) ----
         # A beat fires when the onset function is a LOCAL peak, above an adaptive threshold, outside a
@@ -263,9 +267,8 @@ class Tracker:
         t_peak = self._t_audio - self._hop_s
 
         # refractory blanking and (if seeded) grid gating
-        if self._last_beat is not None:
-            if (t_peak - self._last_beat) < self._period * 0.5:
-                return out
+        if self._last_beat is not None and (t_peak - self._last_beat) < self._period * 0.5:
+            return out
 
         # grid gate: if we have a period estimate, only accept peaks near the expected beat time.
         # This is where the seed (via the period) turns an onset into a *beat* rather than any transient.
@@ -284,7 +287,7 @@ class Tracker:
         # a bank peak, and it converges to the true tempo as soon as a few beats have fired.
         if self._last_beat is not None:
             ioi = t_beat - self._last_beat
-            if 0.1 < ioi < 2.0:                       # plausible single-beat interval (30..600 bpm)
+            if 0.1 < ioi < 2.0:  # plausible single-beat interval (30..600 bpm)
                 self._ioi_hist.append(ioi)
                 if len(self._ioi_hist) > 16:
                     self._ioi_hist.pop(0)
@@ -301,23 +304,25 @@ class Tracker:
         self._last_beat = t_beat
 
         # downbeat: coarse 4/4 accent model keyed to the beat's absolute grid index
-        beat_index = int(round(t_beat / self._period))
+        beat_index = round(t_beat / self._period)
         self._accents[beat_index % 4] += flux_prev
         self._accent_n += 1
-        is_downbeat: Optional[bool] = None
+        is_downbeat: bool | None = None
         if self._accent_n >= 8:
             acc = np.array(self._accents, dtype=float)
             m = float(np.mean(acc)) + 1e-9
             strongest = int(np.argmax(acc))
             is_downbeat = (beat_index % 4 == strongest) if acc[strongest] / m > 1.30 else None
 
-        out.append({
-            "t_beat": float(t_beat),
-            "bpm": round(float(bpm), 3),
-            "phase": round(float(self._phase), 4),
-            "confidence": round(float(self._conf), 3),
-            "is_downbeat": is_downbeat,
-        })
+        out.append(
+            {
+                "t_beat": float(t_beat),
+                "bpm": round(float(bpm), 3),
+                "phase": round(float(self._phase), 4),
+                "confidence": round(float(self._conf), 3),
+                "is_downbeat": is_downbeat,
+            }
+        )
         # keep the forward grid in step for predict()
         self._next_beat = t_beat + self._period
 
@@ -325,7 +330,7 @@ class Tracker:
 
     # -- predict --------------------------------------------------------------
 
-    def predict(self, now: float) -> List[dict]:
+    def predict(self, now: float) -> list[dict]:
         """Expected beats after `now` (seconds of audio fed). The hub paints from this, ahead of the beat."""
         if self._period <= 0:
             return []
@@ -336,11 +341,13 @@ class Tracker:
                 t += self._period
         out = []
         for _ in range(2):
-            out.append({
-                "t_beat": float(t),
-                "bpm": round(60.0 / self._period, 3),
-                "phase": round((t % self._period) / self._period, 4),
-                "confidence": round(float(self._conf), 3),
-            })
+            out.append(
+                {
+                    "t_beat": float(t),
+                    "bpm": round(60.0 / self._period, 3),
+                    "phase": round((t % self._period) / self._period, 4),
+                    "confidence": round(float(self._conf), 3),
+                }
+            )
             t += self._period
         return out

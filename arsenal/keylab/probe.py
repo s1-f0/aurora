@@ -21,27 +21,57 @@ Steps (each can be run alone with --only):
   fl         P1: FL Studio and our tools on the same DAW port
 Freeze risk lives only in `burst`, which asks first.
 """
+
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
 from . import protocol as P
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+    from typing import Any, Protocol
+
+    class OutPort(Protocol):
+        """What a probe needs from an output: the governor, a SysEx send and close."""
+
+        governor: Any
+
+        def send_sysex(self, data: bytes) -> None: ...
+
+        def close(self) -> None: ...
+
+    class InPort(Protocol):
+        """What a probe needs from an input: its name, and a stop/close pair."""
+
+        name: str
+
+        def stop(self) -> None: ...
+
+        def close(self) -> None: ...
+
 
 YES, NO, SKIP = "yes", "no", "skip"
 ANSWER_PADS = {1: YES, 2: NO, 4: SKIP}
 ANSWER_COLOURS = {1: (0, 255, 0), 2: (255, 0, 0), 4: (255, 255, 255)}
 OFF = (0, 0, 0)
 STEPS = ["calibrate", "p5", "colour", "gamut", "census", "p17", "screens", "lcdspeed", "webmidi", "burst", "fl"]
-RAMP_RATES = [120, 160, 200, 260, 330]     # packets per second, the P24 ladder
+RAMP_RATES = [120, 160, 200, 260, 330]  # packets per second, the P24 ladder
 
 
-def default_receipt_path(now: Optional[float] = None) -> str:
+def default_receipt_path(now: float | None = None) -> str:
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
-    root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                        "state", "arsenal", "keylab", "receipts")
+    root = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "state",
+        "arsenal",
+        "keylab",
+        "receipts",
+    )
     return os.path.join(root, f"probe-{stamp}.json")
 
 
@@ -49,13 +79,18 @@ class Rig:
     """The device side of a session: one governed DAW output, the inputs, the current pad frame. Ports come from an
     injected `open_ports()` so tests run on fakes and the burst step can reopen them after a power cycle."""
 
-    def __init__(self, open_ports: Callable[[], Tuple[object, Dict[str, object]]],
-                 clock: Callable[[], float] = time.perf_counter, sleep: Callable[[float], None] = time.sleep):
+    def __init__(
+        self,
+        open_ports: Callable[[], tuple[OutPort, Mapping[str, InPort]]],
+        clock: Callable[[], float] = time.perf_counter,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
         self._open_ports, self.clock, self.sleep = open_ports, clock, sleep
-        self.out, self.inputs = open_ports()
-        self.frame_now: List[Tuple[int, int, int]] = [OFF] * 12
-        self._sent: List[Optional[Tuple[int, int, int]]] = [None] * 12
-        self.answer_notes: Dict[Tuple[int, int], str] = {}   # (status & 0xF0 | channel, note) -> yes/no/skip
+        self.out, ports = open_ports()
+        self.inputs: dict[str, InPort] = dict(ports)
+        self.frame_now: list[tuple[int, int, int]] = [OFF] * 12
+        self._sent: list[tuple[int, int, int] | None] = [None] * 12
+        self.answer_notes: dict[tuple[int, int], str] = {}  # (status & 0xF0 | channel, note) -> yes/no/skip
 
     # --- output ---
     def lcd(self, line1, line2="", c1=(0, 200, 160), c2=(255, 255, 255)) -> None:
@@ -77,17 +112,24 @@ class Rig:
         self._sent = [None] * 12
 
     # --- input ---
-    def drain(self) -> List[dict]:
+    def drain(self) -> list[dict]:
         evs = []
         for port, inp in self.inputs.items():
             ev_list = getattr(inp, "events", [])
             while ev_list:
                 t, data, kind = ev_list.pop(0)
-                evs.append({"port": port, "t_dev": round(t, 4), "t": round(self.clock(), 4), "kind": kind,
-                            "data": list(bytes(data))})
+                evs.append(
+                    {
+                        "port": port,
+                        "t_dev": round(t, 4),
+                        "t": round(self.clock(), 4),
+                        "kind": kind,
+                        "data": list(bytes(data)),
+                    }
+                )
         return evs
 
-    def listen(self, secs: float, until: Optional[Callable[[dict], bool]] = None) -> List[dict]:
+    def listen(self, secs: float, until: Callable[[dict], bool] | None = None) -> list[dict]:
         end, got = self.clock() + secs, []
         while self.clock() < end:
             for ev in self.drain():
@@ -98,21 +140,21 @@ class Rig:
         return got
 
     @staticmethod
-    def note_on(ev: dict) -> Optional[Tuple[int, int]]:
+    def note_on(ev: dict) -> tuple[int, int] | None:
         d = ev["data"]
         if ev["kind"] == "short" and len(d) >= 3 and d[0] & 0xF0 == 0x90 and d[2] > 0:
             return d[0], d[1]
         return None
 
-    def ask(self, line1: str, timeout: float = 90.0, line2: str = "1 yes   2 no   4 skip") -> Optional[str]:
+    def ask(self, line1: str, timeout: float = 90.0, line2: str = "1 yes   2 no   4 skip") -> str | None:
         """Show a question, light the answer pads over the current frame, wait for a calibrated answer pad."""
         shown = list(self.frame_now)
         for pad, rgb in ANSWER_COLOURS.items():
             shown[pad - 1] = rgb
         self.pads(shown)
         self.lcd(line1, line2, c1=(255, 255, 255), c2=(0, 200, 160))
-        self.drain()                                    # stale presses do not count
-        found: List[str] = []
+        self.drain()  # stale presses do not count
+        found: list[str] = []
 
         def is_answer(ev):
             key = self.note_on(ev)
@@ -127,14 +169,13 @@ class Rig:
     def reopen(self, timeout: float = 180.0) -> bool:
         """After a power cycle the old handles are dead: close them and retry opening until the device is back."""
         for h in [self.out, *self.inputs.values()]:
-            try:
+            with contextlib.suppress(Exception):
                 h.close()
-            except Exception:
-                pass
         end = self.clock() + timeout
         while self.clock() < end:
             try:
-                self.out, self.inputs = self._open_ports()
+                self.out, ports = self._open_ports()
+                self.inputs = dict(ports)
                 self.resync()
                 return True
             except Exception:
@@ -143,10 +184,8 @@ class Rig:
 
     def close(self) -> None:
         for h in [self.out, *self.inputs.values()]:
-            try:
+            with contextlib.suppress(Exception):
                 h.close()
-            except Exception:
-                pass
 
 
 class Session:
@@ -177,13 +216,21 @@ class Session:
         r.pads([OFF] * 12)
         learned = {}
         for pad, answer in ANSWER_PADS.items():
-            frame = [OFF] * 12
+            frame: list[tuple[int, int, int]] = [OFF] * 12
             frame[pad - 1] = ANSWER_COLOURS[pad]
             r.pads(frame)
             r.lcd(f"PROBE: hit pad {pad}", f"the lit one = {answer}", c1=(0, 200, 160))
             r.drain()
-            hit: List[Tuple[int, int]] = []
-            r.listen(120.0, until=lambda ev: bool(r.note_on(ev)) and not hit.append(r.note_on(ev)))
+            hit: list[tuple[int, int]] = []
+
+            def _is_answer(ev, hit=hit):
+                note = r.note_on(ev)
+                if note is None:
+                    return False
+                hit.append(note)
+                return True
+
+            r.listen(120.0, until=_is_answer)
             if not hit:
                 self.note("calibrate", ok=False, missing=pad)
                 return False
@@ -199,19 +246,28 @@ class Session:
         r.pads(frame)
         r.out.send_sysex(P.set_led(P.pad_led(5, "DAW"), (255, 0, 0), req=0x00))
         r.out.send_sysex(P.set_led(P.pad_led(6, "DAW"), (255, 0, 0), req=0x04))
-        r._sent[4] = r._sent[5] = None                  # bypassed the renderer: forget what we think is lit
+        r._sent[4] = r._sent[5] = None  # bypassed the renderer: forget what we think is lit
         r.frame_now[4] = r.frame_now[5] = (255, 0, 0)
         a = r.ask("P5: are pads 5 AND 6 both red?")
-        self.note("p5", answer=a, pad5_req=0x00, pad6_req=0x04,
-                  meaning="0x04 also works" if a == YES else "only 0x00 renders" if a == NO else "unknown")
+        self.note(
+            "p5",
+            answer=a,
+            pad5_req=0x00,
+            pad6_req=0x04,
+            meaning="0x04 also works" if a == YES else "only 0x00 renders" if a == NO else "unknown",
+        )
 
     def colour(self) -> None:
         from . import chordview as CV
         from .theory import analyze
+
         r = self.rig
-        for label, notes, scheme in (("Cmaj roles", [60, 64, 67], "roles"), ("Cmin roles", [60, 63, 67], "roles"),
-                                     ("Cmaj mood", [60, 64, 67], "quality")):
-            name, root, qual = analyze(notes)
+        for label, notes, scheme in (
+            ("Cmaj roles", [60, 64, 67], "roles"),
+            ("Cmin roles", [60, 63, 67], "roles"),
+            ("Cmaj mood", [60, 64, 67], "quality"),
+        ):
+            _name, root, qual = analyze(notes)
             frame = CV.pad_colors(set(notes), root, qual, scheme, (0, 200, 160))
             r.pads(frame)
             r.lcd(f"{label}: photo now", "root=white, 3rd=red/magenta")
@@ -224,7 +280,8 @@ class Session:
 
         def hsv(h, s=1.0, v=1.0):
             import colorsys
-            return tuple(int(round(c * 255)) for c in colorsys.hsv_to_rgb(h, s, v))
+
+            return tuple(round(c * 255) for c in colorsys.hsv_to_rgb(h, s, v))
 
         frames = [
             ("hue wheel", [hsv(i / 12) for i in range(12)]),
@@ -234,6 +291,7 @@ class Session:
             ("white levels", [tuple([int(255 * (1 - i / 12))] * 3) for i in range(12)]),
         ]
         from . import chordview as CV
+
         palette = [CV.ROLE_COLORS[k] for k in (0, 3, 4, 7, 10, 11, 2, 1, 5, 6, 8, 9)]
         frames.append(("chord palette", palette))
         for i, (label, frame) in enumerate(frames, 1):
@@ -275,7 +333,7 @@ class Session:
         r.lcd("Pad switch LEFT>pad1 RIGHT>pad1", "then MIDDLE>pad1 (30 s)")
         r.drain()
         evs = r.listen(30.0)
-        hits = [r.note_on(e) for e in evs if r.note_on(e)]
+        hits = [n for e in evs if (n := r.note_on(e)) is not None]
         self.note("p17", order="left, right, middle", note_ons=[list(h) for h in hits], events=evs)
         a = r.ask("Back in the MIDDLE (DAW)?")
         self.note("p17_back_in_daw", answer=a)
@@ -305,8 +363,12 @@ class Session:
         evs = r.listen(25.0)
         keys = [e for e in evs if e["port"] == "midi" and r.note_on(e) and (e["data"][0] & 0x0F) == 0]
         a = r.ask("Did the piano page show them?")
-        self.note("webmidi", our_side_heard=len(keys), page_heard=a,
-                  meaning="shared" if a == YES and keys else "page blocked while we hold it" if a == NO else "unclear")
+        self.note(
+            "webmidi",
+            our_side_heard=len(keys),
+            page_heard=a,
+            meaning="shared" if a == YES and keys else "page blocked while we hold it" if a == NO else "unclear",
+        )
 
     def burst(self) -> None:
         r = self.rig
@@ -332,13 +394,11 @@ class Session:
             froze_at = "kill-40"
             self.note("burst", kill_drill_sent=40, answer=r.ask("Frozen now? (no answer = yes)", timeout=20))
         if froze_at is None:
-            self.note("burst", summary="no freeze up to %d/s" % RAMP_RATES[-1])
+            self.note("burst", summary=f"no freeze up to {RAMP_RATES[-1]}/s")
             return
         self.log("[probe] POWER-CYCLE THE KEYLAB now; then set DAW mode (Prog + 6th screen button) and hit pad 1")
-        try:
+        with contextlib.suppress(Exception):
             r.lcd("Power-cycle me now", "(the screen may go dark)")
-        except Exception:
-            pass
         t0 = r.clock()
         back = r.reopen()
         restored = None
@@ -382,7 +442,7 @@ class Session:
             self.note("fl", skipped=True)
             return
         complained = r.ask("Did FL complain about a port?")
-        frame = [OFF] * 12
+        frame: list[tuple[int, int, int]] = [OFF] * 12
         frame[4] = (0, 255, 0)
         r.pads(frame)
         r.sleep(3.0)
@@ -390,10 +450,10 @@ class Session:
         self.note("fl", fl_port_error=complained, our_pad_survived=stayed)
 
     # --- run ---------------------------------------------------------------------------------------------
-    def run(self, only: Optional[List[str]] = None) -> str:
+    def run(self, only: list[str] | None = None) -> str:
         steps = only or STEPS
         if "calibrate" not in steps:
-            steps = ["calibrate"] + list(steps)
+            steps = ["calibrate", *list(steps)]
         try:
             for name in steps:
                 if name == "calibrate":
@@ -403,7 +463,7 @@ class Session:
                     continue
                 try:
                     getattr(self, name)()
-                except Exception as exc:                 # one broken step must not lose the others' receipts
+                except Exception as exc:  # one broken step must not lose the others' receipts
                     self.note(name, error=f"{type(exc).__name__}: {exc}")
             try:
                 self.rig.lcd("PROBE done. Thank you!", "receipts saved")
@@ -418,29 +478,40 @@ class Session:
         return self.path
 
 
-def summarize(evs: List[dict]) -> List[dict]:
+def summarize(evs: list[dict]) -> list[dict]:
     """Group a census window by (port, status, data1): which controls spoke, on which port, with what values."""
-    groups: Dict[Tuple[str, int, int], dict] = {}
+    groups: dict[tuple[str, int, int], dict] = {}
     for e in evs:
         d = e["data"]
         if e["kind"] != "short" or len(d) < 3:
             continue
         key = (e["port"], d[0], d[1])
-        g = groups.setdefault(key, {"port": e["port"], "status": d[0], "d1": d[1], "count": 0, "values": set(),
-                                    "first_t": e["t"], "last_t": e["t"]})
+        g = groups.setdefault(
+            key,
+            {
+                "port": e["port"],
+                "status": d[0],
+                "d1": d[1],
+                "count": 0,
+                "values": set(),
+                "first_t": e["t"],
+                "last_t": e["t"],
+            },
+        )
         g["count"] += 1
         g["values"].add(d[2])
         g["last_t"] = e["t"]
     out = []
     for g in sorted(groups.values(), key=lambda g: (g["port"], g["first_t"])):
         vals = sorted(g.pop("values"))
-        out.append({**g, "values": vals if len(vals) <= 12 else vals[:6] + ["..."] + vals[-6:]})
+        out.append({**g, "values": vals if len(vals) <= 12 else [*vals[:6], "...", *vals[-6:]]})
     return out
 
 
 def open_real_ports():
     """The real device: a governed DAW output, the MIDI input, and the DAW input only if Windows lists one."""
     from . import winmidi as W
+
     out = W.MidiOut(prefer="daw")
     inputs = {"midi": W.MidiIn(prefer="midi")}
     if any("daw" in n.lower() for n in W.inputs()):

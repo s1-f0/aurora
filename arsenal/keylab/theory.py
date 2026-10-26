@@ -1,12 +1,13 @@
 """Name a chord from a set of held MIDI notes. Small, not a jazz oracle -- common triads/7ths/sus/add9 + slashes."""
+
 from __future__ import annotations
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 # intervals-from-root (pitch classes) -> quality symbol
 QUALITIES = {
-    frozenset({0, 7}): "5",            # power chord
-    frozenset({0, 4, 7}): "",          # major
+    frozenset({0, 7}): "5",  # power chord
+    frozenset({0, 4, 7}): "",  # major
     frozenset({0, 3, 7}): "m",
     frozenset({0, 3, 6}): "dim",
     frozenset({0, 4, 8}): "aug",
@@ -33,7 +34,7 @@ def analyze(notes):
     notes = sorted(notes)
     if not notes:
         return (None, None, None)
-    pcs = sorted(set(n % 12 for n in notes))
+    pcs = sorted({n % 12 for n in notes})
     if len(pcs) == 1:
         return (NOTE_NAMES[pcs[0]], pcs[0], "note")
     bass = notes[0] % 12
@@ -44,12 +45,12 @@ def analyze(notes):
             continue
         name = NOTE_NAMES[root] + sym
         if root == bass:
-            return (name, root, sym)                       # root-position: the clean read
+            return (name, root, sym)  # root-position: the clean read
         if fallback is None:
-            fallback = (name + "/" + NOTE_NAMES[bass], root, sym)   # inversion: name/bass
+            fallback = (name + "/" + NOTE_NAMES[bass], root, sym)  # inversion: name/bass
     if fallback:
         return fallback
-    return (" ".join(NOTE_NAMES[p] for p in pcs), None, None)       # unknown set: just list the notes
+    return (" ".join(NOTE_NAMES[p] for p in pcs), None, None)  # unknown set: just list the notes
 
 
 def name_chord(notes) -> str | None:

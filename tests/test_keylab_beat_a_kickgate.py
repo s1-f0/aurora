@@ -2,6 +2,7 @@
 hats-only synthetic and a sustained tone low. Plus a mutation receipt: mutating the relative-sharpness sign (the
 load-bearing axis) flips the drum verdict and the pin goes RED. stdlib + numpy only, matching the licence firewall.
 """
+
 import numpy as np
 
 from arsenal.keylab import beat_a as A
@@ -20,7 +21,7 @@ def test_kick_likeness_rates_synthetic_drums_high():
     # A kick loop: low band is SPIKY (one sharp pulse per beat), hats band is STEADY.
     n = 256
     low = np.zeros(n, dtype=np.float32)
-    low[::32] = 10.0                        # sparse, tall kick spikes
+    low[::32] = 10.0  # sparse, tall kick spikes
     hat = np.full(n, 1.0, dtype=np.float32)  # steady hats
     h = _band_hist_from_env(low, hat, n)
     assert A.kick_likeness(h) >= A.KICK_GATE
@@ -57,4 +58,5 @@ def test_mutation_receipt_breaks_on_sign_flip():
     # Mutate: swap low/hat roles (make hats spiky, low steady) -- the opposite material.
     h_swap = _band_hist_from_env(hat, low, n)
     mutated = A.kick_likeness(h_swap)
-    assert base >= A.KICK_GATE and mutated < A.KICK_GATE, (base, mutated)
+    assert base >= A.KICK_GATE, (base, mutated)
+    assert mutated < A.KICK_GATE, (base, mutated)

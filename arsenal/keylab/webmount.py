@@ -27,10 +27,10 @@ shell thickness, sphere->cube, torus, spin, breathe and saturation (each catchin
 scenes on pads 1-8 and the dial; pads 9-12 hold snapshots. Every slider stays live for the mouse, and the bench's
 hand-off row (emit) and presets keep working, because the mount sets the same av.target / av.cur fields its sliders set.
 """
+
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 #: The files the console may serve under /keylab/, and nothing else: the mount, what it imports, and the param schema
 #: the client formats values with. Each maps to its repo-relative path.
@@ -44,7 +44,7 @@ ALLOWED = {
 _ROUTE = re.compile(r"^/keylab/([a-z0-9-]+\.js)$")
 
 
-def keylab_route(path: str) -> Optional[str]:
+def keylab_route(path: str) -> str | None:
     """The repo-relative file for a /keylab/<name>.js request path (query already stripped), or None.
 
     Only the names in ALLOWED: no directories, no traversal, no other extension, no case games."""

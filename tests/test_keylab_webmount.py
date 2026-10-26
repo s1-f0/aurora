@@ -1,5 +1,6 @@
 """The /keylab/ hook for the VFX Bench (arsenal/keylab/webmount.py): it serves exactly the mount and what the mount
 imports, and every one of those files exists and imports only files in the same allowlist."""
+
 import re
 from pathlib import Path
 
@@ -15,9 +16,20 @@ def test_each_allowed_name_maps_to_a_real_file():
 
 
 def test_refuses_everything_else():
-    for path in ["/keylab/", "/keylab/../scripts/bifrost_ui.py", "/keylab/keylab-mount.js/x", "/keylab/KEYLAB-MOUNT.JS",
-                 "/keylab/params-ui.js", "/keylab/keylab-mount.mjs", "/keylab/%2e%2e/x.js", "/web/lib/keylab-mount.js",
-                 "/keylab/keylab-mount.js?x=1", "", None, "/keylab/sub/keylab-client.js"]:
+    for path in [
+        "/keylab/",
+        "/keylab/../scripts/bifrost_ui.py",
+        "/keylab/keylab-mount.js/x",
+        "/keylab/KEYLAB-MOUNT.JS",
+        "/keylab/params-ui.js",
+        "/keylab/keylab-mount.mjs",
+        "/keylab/%2e%2e/x.js",
+        "/web/lib/keylab-mount.js",
+        "/keylab/keylab-mount.js?x=1",
+        "",
+        None,
+        "/keylab/sub/keylab-client.js",
+    ]:
         assert keylab_route(path) is None, path
 
 

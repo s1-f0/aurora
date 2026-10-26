@@ -11,9 +11,11 @@ This scans every worktree's inbound-media dir (and known fallbacks), newest firs
 
 stdout is paths only (one per line) so it reads/pipes clean; size+age go to stderr.
 """
+
 from __future__ import annotations
 
 import argparse
+import contextlib
 import glob
 import os
 import sys
@@ -33,10 +35,8 @@ def candidates():
         for d in glob.glob(pattern):
             for f in glob.glob(os.path.join(d, "*")):
                 if os.path.isfile(f):
-                    try:
+                    with contextlib.suppress(OSError):
                         found[f] = os.path.getmtime(f)
-                    except OSError:
-                        pass
     return sorted(found.items(), key=lambda kv: kv[1], reverse=True)
 
 
@@ -64,7 +64,7 @@ def main(argv=None) -> int:
         print("no inbound media found (looked in: " + " | ".join(ROOTS) + ")", file=sys.stderr)
         return 1
 
-    for f, m in items[:max(1, a.n)]:
+    for f, m in items[: max(1, a.n)]:
         try:
             size = os.path.getsize(f)
         except OSError:
@@ -74,6 +74,7 @@ def main(argv=None) -> int:
 
     if a.copy:
         import shutil
+
         shutil.copy2(items[0][0], a.copy)
         print(f"copied newest -> {a.copy}", file=sys.stderr)
     return 0

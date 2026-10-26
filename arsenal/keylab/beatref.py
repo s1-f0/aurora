@@ -17,18 +17,18 @@ for it, as a phase in [-0.5, 0.5) of a beat. Over the last few beats (strength-w
 It assumes the kick marks the beat, which holds for most electronic dance music (hardstyle, house, techno, DnB) and
 much pop; on music without a kick it says "no kick" rather than guessing. Pure numpy, causal, cheap.
 """
+
 from __future__ import annotations
 
 import math
 from collections import deque
-from typing import Deque, Dict, List, Optional
 
 import numpy as np
 
-KICK_HZ = 150.0          # the kick band's upper edge
-WINDOW_BEATS = 8         # judge over about this many beats
-MIN_KICKS = 4            # fewer onsets than this in the window: no verdict
-AGREE_TOL = 0.02         # tempo agreement within 2 %, octave-folded
+KICK_HZ = 150.0  # the kick band's upper edge
+WINDOW_BEATS = 8  # judge over about this many beats
+MIN_KICKS = 4  # fewer onsets than this in the window: no verdict
+AGREE_TOL = 0.02  # tempo agreement within 2 %, octave-folded
 
 
 class Referee:
@@ -41,10 +41,10 @@ class Referee:
         self.low = np.where((freqs > 30.0) & (freqs < KICK_HZ))[0]
         self.prev = None
         self.frames = 0
-        self.flux: Deque[float] = deque(maxlen=int(3.0 * rate / hop))
-        self.cand: Deque[float] = deque(maxlen=3)          # last flux values, for a 1-frame-late peak pick
-        self.kicks: Deque[tuple] = deque(maxlen=64)         # (time, strength, phase vs predicted beat)
-        self.pred: Deque[float] = deque(maxlen=64)          # predicted beat times, as announced BEFORE they came
+        self.flux: deque[float] = deque(maxlen=int(3.0 * rate / hop))
+        self.cand: deque[float] = deque(maxlen=3)  # last flux values, for a 1-frame-late peak pick
+        self.kicks: deque[tuple] = deque(maxlen=64)  # (time, strength, phase vs predicted beat)
+        self.pred: deque[float] = deque(maxlen=64)  # predicted beat times, as announced BEFORE they came
         self.period = None
         self.streak = 0
         self.last_agree_check = 0.0
@@ -53,7 +53,7 @@ class Referee:
     def now(self) -> float:
         return self.frames * self.hop / self.rate
 
-    def predicted(self, beats: List[dict]) -> None:
+    def predicted(self, beats: list[dict]) -> None:
         """Hand the referee what the tracker predicts (call with predict()'s output, before the audio arrives)."""
         for b in beats or []:
             t = float(b["t_beat"])
@@ -71,7 +71,7 @@ class Referee:
     def feed(self, block: np.ndarray) -> None:
         x = np.asarray(block, dtype=np.float32).reshape(-1)
         self.ring = np.roll(self.ring, -len(x))
-        self.ring[-len(x):] = x[-self.n_fft:] if len(x) > self.n_fft else x
+        self.ring[-len(x) :] = x[-self.n_fft :] if len(x) > self.n_fft else x
         mag = np.log1p(100.0 * np.abs(np.fft.rfft(self.ring * self.win)))
         f = 0.0 if self.prev is None else float(np.maximum(mag[self.low] - self.prev[self.low], 0.0).mean())
         self.prev = mag
@@ -91,11 +91,11 @@ class Referee:
         # the nearest PREDICTED beat (predictions are kept only as announced in advance)
         p = min(self.pred, key=lambda x: abs(x - t))
         ph = ((t - p) / self.period + 0.5) % 1.0 - 0.5
-        if abs(t - p) > self.period:          # no prediction near this kick (gap, track change)
+        if abs(t - p) > self.period:  # no prediction near this kick (gap, track change)
             return
         self.kicks.append((t, strength, ph))
 
-    def verdict(self) -> Dict:
+    def verdict(self) -> dict:
         if self.period is None:
             return {"state": "no prediction yet"}
         horizon = self.now - WINDOW_BEATS * self.period
@@ -106,11 +106,16 @@ class Referee:
         ph = np.array([p for _, _, p in recent])
         z = (w * np.exp(2j * math.pi * ph)).sum() / w.sum()
         consistency = float(abs(z))
-        offset = float(np.angle(z) / (2 * math.pi))           # beats
+        offset = float(np.angle(z) / (2 * math.pi))  # beats
         on_beat = consistency * math.cos(2 * math.pi * offset)
-        out = {"state": "ok", "kicks": len(recent), "consistency": round(consistency, 3),
-               "offset_ms": round(offset * self.period * 1000, 1), "on_beat": round(on_beat, 3),
-               "tracker_bpm": round(60.0 / self.period, 2)}
+        out = {
+            "state": "ok",
+            "kicks": len(recent),
+            "consistency": round(consistency, 3),
+            "offset_ms": round(offset * self.period * 1000, 1),
+            "on_beat": round(on_beat, 3),
+            "tracker_bpm": round(60.0 / self.period, 2),
+        }
         kp = self._kick_period(recent)
         if kp:
             r = (60.0 / kp) / (60.0 / self.period)
@@ -122,7 +127,7 @@ class Referee:
             out.update({"kick_bpm": round(60.0 / kp, 2), "agree": agree, "agree_streak": self.streak})
         return out
 
-    def _kick_period(self, recent) -> Optional[float]:
+    def _kick_period(self, recent) -> float | None:
         """The kick band's OWN repetition period, independent of the tracker -- the second witness. The kick-band
         flux of the last few seconds is compared with itself shifted by every lag near the tracker's beat (and
         its half and double): the lag where it matches itself best is how often the kicks repeat. (Counting
@@ -135,7 +140,7 @@ class Referee:
         best = None
         for mult in (0.5, 1.0, 2.0):
             base = self.period * mult * fps
-            lo, hi = int(base * 0.8), int(math.ceil(base * 1.2))
+            lo, hi = int(base * 0.8), math.ceil(base * 1.2)
             if hi >= len(env) // 2 or lo < 2:
                 continue
             lags = np.arange(lo, hi + 1)
@@ -147,7 +152,7 @@ class Referee:
                 shift = 0.5 * (y0 - y2) / den if den < 0 else 0.0
             else:
                 shift = 0.0
-            lag_s = (lags[i] + shift) / fps / mult          # folded back to the tracker's beat octave
+            lag_s = (lags[i] + shift) / fps / mult  # folded back to the tracker's beat octave
             score = ac[i] / (float(env @ env) / len(env) + 1e-12)
             if best is None or score > best[0]:
                 best = (score, lag_s)
