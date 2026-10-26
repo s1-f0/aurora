@@ -2,7 +2,7 @@
   "info": {
     "description": "The local channel between Aurora's Python side and its fleet-link daemon.",
     "title": "aurora-linkd",
-    "version": "0.1.0"
+    "version": "0.2.1"
   },
   "methods": [
     {
