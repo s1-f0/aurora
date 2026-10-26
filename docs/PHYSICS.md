@@ -4,12 +4,12 @@ Status: current
 Class: reference
 
 > Do NOT edit by hand. Regenerate with `py scripts/generators/gen_physics_sheet.py`.
-> Derived at fbada110. A bound you discover by collision is not awareness -- this sheet
+> Derived at b5ff25b7. A bound you discover by collision is not awareness -- this sheet
 > exists so every clip, cap, timeout and flag is READABLE before it is HIT.
 > Dynamic envelopes (throughput, latency, limits-under-load) are NOT here: they require
 > measurement, not grep -- see the master-map charter M2b (benchmark half).
 
-## Configuration flags (315 names)
+## Configuration flags (317 names)
 
 | Flag | Default (as written) | Read sites |
 |---|---|---|
@@ -266,6 +266,8 @@ Class: reference
 | `GEMINI_WEB_TIMEOUT_MS` | `"120000"` | scripts/gemini_web.py |
 | `GEMINI_WEB_TZ` | `"America/New_York"` | scripts/gemini_web.py |
 | `GEMMA_URL` | `"http://localhost:5000"` | research/in-flight/t342/dead-modules/_archive__python_old__health_check_session_pipeline.py |
+| `GETSONGBPM_API_KEY` | `` | arsenal/keylab/tempo.py |
+| `GET_SONG_BPM_KEY` | `` | arsenal/keylab/tempo.py |
 | `GITHUB_ACTIONS` | `` | scripts/rust_gate.py |
 | `GIT_AUTHOR_NAME` | `` | scripts/mirror.py |
 | `KIMI_API_KEY` | `` | scripts/kimi_chat.py |
@@ -329,7 +331,7 @@ Class: reference
 | `TMP` | `` | agent/harness/hooks/snippet_autofile.py |
 | `XDG_CACHE_HOME` | `` | core/tools/locate.py |
 
-## Mechanical bounds (384 numeric constants)
+## Mechanical bounds (394 numeric constants)
 
 | Constant | Value | Site | Note |
 |---|---|---|---|
@@ -366,6 +368,7 @@ Class: reference
 | `BUILD_MAX_MS` | 4,000 | arsenal/practice.py | a window this short whose notes all ring on under one pedal into the next, which only adds |
 | `BULLET_MIN` | 6 | scripts/checkers/check_bus_atom_pointers.py | or this many list items |
 | `BURST_CAP_S` | 150 | arsenal/shaders/render.py |  |
+| `BURST_LIMIT` | 12 | arsenal/keylab/fl/device_AuroraKeyLab.py |  |
 | `CACHE_TTL` | 3,600 | research/in-flight/t342/dead-modules/_archive__python_old__vision_engine.py | 1 hour |
 | `CACHE_TTL` | 3,600 | research/in-flight/t342/dead-modules/_archive__python_old__vision_engine_comfy.py |  |
 | `CACHE_TTL` | 300 | research/in-flight/t342/dead-modules/core__foundation__fast_cache.py | 5 minutes default |
@@ -480,6 +483,7 @@ Class: reference
 | `LEGACY_NET_SCAN_BUDGET` | 5,000 | core/comm/bifrost_api.py |  |
 | `LINE_BUDGET` | 120 | core/coord/task_costs.py |  |
 | `LINE_FULL_MAX` | 70 | arsenal/practice_riff.py | ...or above backing full's top voice, at most A4 + 1 |
+| `LINE_LEN` | 32 | arsenal/keylab/screen.py | every _get_line_bytes(..., 32) call in KL3Display.py |
 | `LINE_LEN_CAP_BEATS` | 2 | arsenal/practice_riff.py | a note's length is capped here (the pedal never stretches it) |
 | `LINE_MIN_NOTE` | 60 | arsenal/practice_riff.py | C4: the top line starts here... |
 | `LINE_MIN_ONSETS` | 3 | arsenal/practice.py | a pedalled treble passage (nothing below middle C) of at least this many single notes... |
@@ -523,6 +527,7 @@ Class: reference
 | `MAX_NAME` | 60 | arsenal/pianolooks.py |  |
 | `MAX_NOTES` | 88 | arsenal/pianocue.py |  |
 | `MAX_NOTES_PER_LANE` | 4,096 | arsenal/fl/vfx/arsenal_band.py |  |
+| `MAX_PADS_BODY` | 4,096 | arsenal/keylab/vj.py |  |
 | `MAX_PATTERNS` | 64 | arsenal/fl/vfx/arsenal_band.py |  |
 | `MAX_PER_PUMP` | 20 | core/comm/discord_feed.py |  |
 | `MAX_PINNED` | 24 | arsenal/present/scene.py |  |
@@ -559,11 +564,14 @@ Class: reference
 | `MIN_EVENTS` | 5 | core/metaharness/review.py |  |
 | `MIN_EVENTS_PER_WINDOW` | 4 | arsenal/media/avsync.py |  |
 | `MIN_FAMILY` | 3 | arsenal/shaders/census.py | smaller clusters are reported as loners |
+| `MIN_KICKS` | 4 | arsenal/keylab/beatref.py | fewer onsets than this in the window: no verdict |
 | `MIN_MOVE_MS` | 120 | arsenal/performance.py | chord segments shorter than this are passing shapes: kept in the timeline, not in moves |
 | `MIN_N` | 3 | core/comm/turn_metrics.py |  |
+| `MIN_NOTES` | 16 | arsenal/keylab/beat_g.py |  |
 | `MIN_ONSETS` | 8 | arsenal/practice_riff.py |  |
 | `MIN_SCENARIOS` | 2 | core/metaharness/graders.py |  |
 | `MIN_SPAN_S` | 300 | core/narrative/episode_suggester.py | a just-opened episode never suggests (anti rapid-fire after each close) |
+| `MIN_TAPS` | 5 | arsenal/keylab/beathand.py | this many steady taps make a tempo |
 | `MIN_USEFUL` | 3 | core/metaharness/precompile.py |  |
 | `MIN_VERIFIED` | 5 | core/coord/lens_ledger.py |  |
 | `MIN_WINDOW_MS` | 400 | arsenal/practice.py | shorter windows are transients |
@@ -656,11 +664,13 @@ Class: reference
 | `T5_MIN` | 2 | arsenal/practice_riff.py |  |
 | `T6_MIN_NOTES` | 100 | arsenal/practice_riff.py |  |
 | `T7_MIN` | 3 | arsenal/practice_riff.py |  |
+| `TAP_MIN_TAPS` | 8 | arsenal/keylab/beatbench.py | a stretch needs this many taps to count |
 | `TEMPLATE_MAX_NOTES` | 16 | arsenal/jam/cards.py |  |
 | `TEMPO_WINDOW_MS` | 25 | arsenal/performance.py | a gap's cluster is every in-range gap within 25 ms of it |
 | `TF_LEN_UNIT` | 4,000 | core/recall/lookback.py | chars of text per EXPECTED occurrence of a matched stem: a 12KB doc |
 | `THRESHOLD` | 1,500 | scripts/checkers/check_bus_atom_pointers.py | chars: below this a body is "a pointer with manners" |
 | `TIMEOUT` | 15 | research/in-flight/t342/dead-modules/enterprise_web_fetch.py | seconds |
+| `TIMING_KEEP` | 4,096 | arsenal/keylab/vj.py | per-block processing times kept for the state route's percentiles |
 | `TOKEN_BUDGET` | 4,000 | core/narrative/chronicler.py |  |
 | `TOOL_SEND_TEXT_MAX` | 8,000 | core/comm/packet_spec.py | D3 (deepseek verdict 2026-07-19): the 4000 door |
 | `TOUCH_MIN_MS` | 10,000 | arsenal/practice.py | a session shorter than this has no notes-a-minute rate |
@@ -680,6 +690,7 @@ Class: reference
 | `WATCH_CAP` | 2 | core/coord/task_ledger.py |  |
 | `WINDOW` | 30 | core/coord/method_drift.py |  |
 | `WINDOW` | 240 | scripts/checkers/check_pointer_promises.py |  |
+| `WINDOW_BEATS` | 8 | arsenal/keylab/beatref.py | judge over about this many beats |
 | `WINDOW_PENALTY_MS` | 600 | arsenal/practice.py | the cost of one more window, in pitch-class-milliseconds |
 | `WINDOW_TICKS` | 2,048 | arsenal/analysis.py |  |
 | `_ANSWERED_KEY_CAP` | 20,000 | core/comm/mailbox.py |  |
@@ -708,6 +719,7 @@ Class: reference
 | `_RATE_LIMIT_MAX_RETRIES` | 3 | core/comm/discord_bridge.py |  |
 | `_REASK_WINDOW_S` | 1,800 | core/comm/bus.py | 30 min; BIFROST_REASK_WINDOW_S overrides |
 | `_RECYCLE_SLACK_MS` | 1,000 | core/comm/wake_seat.py | parent may not be YOUNGER than child by more |
+| `_SCORE_CAP` | 6 | arsenal/keylab/vj.py |  |
 | `_SHA_LEN` | 24 | core/comm/blobs.py | 96 bits of sha256 -- ample for a single-user blob store |
 | `_STALE_DAYS` | 7 | agent/harness/context.py | W5: note-derived lines gain [STALE] at this age |
 | `_SWITCH_MIN_BEATS` | 2 | core/narrative/episode_suggester.py | ...and needs >=2 of them, unanimous, on a non-episode track |

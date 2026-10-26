@@ -954,6 +954,7 @@ class Handler(BaseHTTPRequestHandler):
         # allowlist lives in webmount.keylab_route: five files, no traversal, no other extension.
         # It returns a repo-relative path, which feeds the existing _static helper unchanged.
         from arsenal.keylab.webmount import keylab_route
+
         hit = keylab_route(path)
         if hit:
             return self._static(hit, "application/javascript")
@@ -1092,25 +1093,36 @@ class Handler(BaseHTTPRequestHandler):
             "narration": control.get_narration_level(),
         }  # claude reasoning visibility: off|key|full
 
-    def _vitals(self):
+    def _vitals(self, agents=None):
         """T079-E4: engine-room vitals for all known agents (heartbeat + runtimes +
-        tokens + pages + daemon_live + lane depths + fence phase). Polled at 2s."""
+        tokens + pages + daemon_live + lane depths + fence phase). Polled at 2s.
+
+        `agents` bounds the gauge set to the seats the caller will RENDER. /api/now passes
+        the console's own curated set (`status.known` + online); without it this fell back
+        to every ACL grant, so 12 retired/revoked ids each cost a gauge + lane read on a
+        2s poll -- and an abandoned poll keeps working after the client hangs up, piling
+        connections on the embedded backend until a 2s poll took 47s."""
         try:
             from core.comm.engine_vitals import gauge_snapshot
             from core.comm.fence_phase import fence_phase
             from core.comm.lane_depths import lane_depths
 
             known = {"claude": None, "deepseek": None}  # default agents
-            try:
-                for g in registry.grants():
-                    known[g.agent_id] = None
-                agents = BUS.presence()
+            if agents is not None:
                 for a in agents:
-                    aid = a.get("agent")
-                    if aid and aid not in known:
-                        known[aid] = None
-            except Exception:
-                pass
+                    if a:
+                        known[str(a)] = None
+            else:
+                try:
+                    for g in registry.grants():
+                        known[g.agent_id] = None
+                    agents = BUS.presence()
+                    for a in agents:
+                        aid = a.get("agent")
+                        if aid and aid not in known:
+                            known[aid] = None
+                except Exception:
+                    pass
             result = {}
             for a in known:
                 snap = gauge_snapshot(a)
@@ -1146,7 +1158,13 @@ class Handler(BaseHTTPRequestHandler):
             # ---- status half (presence + control) -------------------------------
             status = self._status()
             # ---- vitals half (engine-room gauges, per-agent) ---------------------
-            vitals = self._vitals()
+            # Bound the fan-out to the seats the console will RENDER: the curated
+            # `known` set (residents + online) plus anything requested, plus the
+            # defaults _vitals always keeps. Every extra id was a full gauge + lane
+            # read at ~0.13s on the embedded backend, on a 2s poll.
+            seated = set(requested or []) | {a.get("agent") or "" for a in status.get("agents", [])}
+            seated |= set(status.get("known") or [])
+            vitals = self._vitals(agents=seated)
             # ---- seat-class honesty: per-agent seat type for honest vocab -------
             from core.comm import daemon_state, runner_lock
 
@@ -1196,7 +1214,9 @@ class Handler(BaseHTTPRequestHandler):
                 from core.comm import roster as _roster
 
                 _ns = _os.environ.get("BIFROST_NAMESPACE", "bifrost")
-                rows = _roster.roster(_ns)
+                # ONLY this seat's rows: the full roster's per-row cursor summaries were
+                # 12s of every poll, spent to render one card about one agent.
+                rows = _roster.roster(_ns, only={"dsh_agent"})
                 # find the dsh_agent row (best = LIVE > STALE > DEAD), honoring the
                 # roster's own state rank so a corpse never masquerades as the seat.
                 dsh_rows = [r for r in rows if r.get("agent") == "dsh_agent"]

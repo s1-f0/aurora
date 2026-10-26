@@ -327,9 +327,15 @@ def by_agent(rows, *, churn_window_s: float | None = None, churn_at: int | None 
     return out
 
 
-def roster(ns: str, *, client=None, now: float | None = None) -> list[dict[str, Any]]:
+def roster(ns: str, *, client=None, now: float | None = None, only: set[str] | None = None) -> list[dict[str, Any]]:
     """Every known seat in `ns`, with its PROVEN state. Read-only; derives everything from
-    worklive keys + cursor hashes (a projection -- rebuild-safe by construction)."""
+    worklive keys + cursor hashes (a projection -- rebuild-safe by construction).
+
+    `only` bounds the read to a set of AGENT ids. The per-row `have` summary is several
+    round trips each, so a caller that wants one seat's row (the console's DSH card) paid
+    for every seat in the fleet on every poll -- 12s of a 2s poll on the embedded backend.
+    Filtering here is the same projection over a smaller row set, never a different one.
+    """
     client = client or _connect()
     now = float(now if now is not None else time.time())
     rows: list[dict[str, Any]] = []
@@ -345,6 +351,8 @@ def roster(ns: str, *, client=None, now: float | None = None) -> list[dict[str, 
     seen_tails = {k.rsplit(":seatseen:", 1)[-1] for k in seen_keys if "#" in k.rsplit(":seatseen:", 1)[-1]}
     for tail in sorted(live_tails | seen_tails):
         agent, _, sid8 = tail.partition("#")
+        if only is not None and agent not in only:
+            continue
         doc: dict[str, Any] = {}
         dead = tail not in live_tails
         try:

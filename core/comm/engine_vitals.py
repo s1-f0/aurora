@@ -21,6 +21,7 @@ import contextlib
 import json
 import os
 import time
+from datetime import datetime
 from typing import Any
 
 IDLE_AFTER_S = 300  # his Zone-1 table: active < 5m <= idle
@@ -47,12 +48,21 @@ def _client(c=None, allow_fallback: bool = True):
 def _heartbeat(card: dict[str, Any] | None, now: float) -> str:
     if not card:
         return "offline"
+    raw = str(card.get("ts") or "")
     try:
-        ts = str(card.get("ts") or "")[:19]
-        then = time.mktime(time.strptime(ts, _TS_FMT))
-        return "active" if (now - then) < IDLE_AFTER_S else "idle"
-    except Exception:
-        return "idle"  # a card with an unreadable stamp is present but unproven
+        parsed = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        try:
+            # Legacy naive stamp: it was written by time.strftime() in THIS host's zone,
+            # so the old local-time read is the correct one for that shape.
+            parsed = datetime.strptime(raw[:19], _TS_FMT)
+        except (TypeError, ValueError):
+            return "idle"  # a card with an unreadable stamp is present but unproven
+    try:
+        then = time.mktime(parsed.timetuple()) if parsed.tzinfo is None else parsed.timestamp()
+    except (OverflowError, OSError, ValueError):
+        return "idle"
+    return "active" if (now - then) < IDLE_AFTER_S else "idle"
 
 
 def _today_journal(agent: str, journal_dir: str | None) -> dict[str, int]:
