@@ -428,13 +428,58 @@ class FileStore(Store):
         base.mkdir(parents=True, exist_ok=True)
         self._path = Path(path) if path else base / "store_state.json"
         self._lock = threading.RLock()
-        self._data: dict[str, dict[str, Any]] = {b: {} for b in self.DATA_BUCKETS}
-        self._expiry: dict[str, float] = {}  # key -> unix expiry timestamp
+        self._data = {b: {} for b in self.DATA_BUCKETS}
+        self._expiry = {}  # key -> unix expiry timestamp
         # Set when the on-disk state could not be read. While set, this store serves reads
         # and writes from memory but REFUSES to persist -- it will not overwrite bytes it
         # was unable to parse. See _load().
-        self._degraded: str | None = None
-        self._load()
+        self._degraded = None
+        # The file is parsed on first use, not here: HybridStore builds a FileStore on every
+        # create_store() and, with Redis up, may never touch it. Parsing an 18MB mirror per
+        # construction cost the console ~0.2s per poll (2026-10-26).
+        self._loaded = False
+
+    # Lazy state. Assigning any of these takes ownership of the state, so it also marks it
+    # loaded: a later first read must not merge the file over what the caller put there.
+    _loaded = True  # subclasses that skip __init__ (DictStore) never load
+
+    def _ensure_loaded(self) -> None:
+        if self._loaded:
+            return
+        with self._lock:
+            if not self._loaded:
+                self._loaded = True
+                self._load()
+
+    @property
+    def _data(self) -> dict[str, dict[str, Any]]:
+        self._ensure_loaded()
+        return self._data_mem
+
+    @_data.setter
+    def _data(self, v: dict[str, dict[str, Any]]) -> None:
+        self._data_mem = v
+        self._loaded = True
+
+    @property
+    def _expiry(self) -> dict[str, float]:
+        self._ensure_loaded()
+        return self._expiry_mem
+
+    @_expiry.setter
+    def _expiry(self, v: dict[str, float]) -> None:
+        self._expiry_mem = v
+        self._loaded = True
+
+    @property
+    def _degraded(self) -> str | None:
+        self._ensure_loaded()
+        return self._degraded_mem
+
+    @_degraded.setter
+    def _degraded(self, v: str | None) -> None:
+        self._degraded_mem = v
+        self._loaded = True
 
     def is_available(self) -> bool:
         return True
