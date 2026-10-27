@@ -292,6 +292,8 @@ repos:
       - id: check-yaml
       - id: check-merge-conflict
       - id: check-added-large-files
+        # A generated lockfile cannot be made smaller; uv.lock is already past the limit.
+        exclude: ^bun\.lock$
 
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
     rev: fa412071e4f5d44d44f9e365f4676f9df92456a2  # v1.30.1

@@ -293,3 +293,13 @@ charters/daniel/*
 
 # Rust build output (aurora-rs/, the Cargo workspace)
 aurora-rs/target/
+
+# --- JS workspace (bun: apps/web, apps/docs, apps/bifrost, packages/, config/) ---
+.next/
+.cache/
+.content-collections/
+.vercel/
+.env*.local
+next-env.d.ts
+*.tsbuildinfo
+coverage.json

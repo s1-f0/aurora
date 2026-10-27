@@ -28,9 +28,9 @@ uv run poe test    # the full test suite
 The docs site lives in `apps/docs`. Run it locally, and each page reloads as you save it:
 
 ```bash
-pnpm -C apps/docs install
-pnpm -C apps/docs dev
-pnpm -C apps/docs check:docs    # the checks a docs change must pass
+bun install                           # once, from the repo root
+bun run --filter docs dev
+bun run --filter docs check:docs     # the checks a docs change must pass
 ```
 
 ## What your agent reads
