@@ -7,12 +7,15 @@ stream is proxied to it (`next.config.ts`, `app/events/route.ts`). Point it else
 
 Runs on 127.0.0.1:8789 (`config.PORT_UI_NEXT`), localhost only like the original. Needs Node 22.
 
+It is a member of the repo's bun workspace: install once from the repo root, then run its
+scripts with `bun run --filter bifrost <script>` or from this directory:
+
 ```sh
-pnpm install
-pnpm dev          # http://127.0.0.1:8789, hot reload
-pnpm test         # unit tests (feed folding, markdown safety, fleet pulse)
-pnpm e2e          # Playwright against the live backend; sends are intercepted
-pnpm build && systemctl --user restart aurora-bifrost-next   # update the running service
+bun install       # from the repo root
+bun run dev       # http://127.0.0.1:8789, hot reload
+bun run test      # unit tests (feed folding, markdown safety, fleet pulse)
+bun run e2e       # Playwright against the live backend; sends are intercepted
+bun run build && systemctl --user restart aurora-bifrost-next   # update the running service
 ```
 
 Ported so far: live message stream with trace folding and 1:1 threads, agent presence pills,

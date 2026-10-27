@@ -3,14 +3,12 @@
 This is a Next.js application generated with
 [Create Fumadocs](https://github.com/fuma-nama/fumadocs).
 
-Run development server:
+It is a member of the repo's bun workspace. Install from the repo root, then run the
+development server:
 
 ```bash
-npm run dev
-# or
-pnpm dev
-# or
-yarn dev
+bun install
+bun run --filter docs dev
 ```
 
 Open http://localhost:3000 with your browser to see the result.

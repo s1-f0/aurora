@@ -185,6 +185,12 @@ PORT_REGISTRY = {
         "what": "Rill's DSH harness (dsh_agent seat); the launcher probes it",
         "owner": "core/fleet/seat_launchers.py",
     },
+    3090: {
+        "world": "dev",
+        "bound_by": "app",
+        "what": "Aurora website dev server (next dev); no bus or world data",
+        "owner": "apps/web",
+    },
     # Found by check_ports on its FIRST run, and it was live-broken rather than merely
     # undocumented: model_roster's default_host said 11435, nothing listens there, and a real
     # call to an installed model failed with WinError 10061. Registering the port is what
