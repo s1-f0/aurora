@@ -61,6 +61,24 @@ Run anything else with `uv run <script>` or `uv run python ...`. Tool configurat
 basedpyright, ty, pytest, coverage, the poe tasks, deptry) lives **only** in `pyproject.toml`: no
 `ruff.toml`, `pyrightconfig.json`, `setup.cfg`, `tox.ini`, `pytest.ini` or `.coveragerc`.
 
+### The JS workspace (website, docs, Bifrost console)
+
+`apps/web` (the public website), `apps/docs` (the docs site) and `apps/bifrost` (the Next.js
+Bifrost console) are one bun workspace, together with the website's packages in `packages/` and
+config in `config/`. The root `package.json` declares the workspace and pins bun 1.4.2.
+`bun.lock` is the lockfile. `bunfig.toml` keeps `node_modules` hoisted. Use bun here, not pnpm or
+npm.
+
+```bash
+bun install                      # once, from the repo root
+bun run --filter web dev         # the website on http://localhost:3090 (apps/web/README.md)
+bun run format                   # prettier check (also: lint, typecheck, test, build)
+bun run --filter docs check:docs # the docs checks
+```
+
+The root scripts run each task through turbo over `apps/`, `packages/` and `config/` only, so
+they never start the Python tasks. CI's `web` job runs the same commands.
+
 ### Git hooks
 
 The repo has its **own** hook framework in `scripts/githooks`. Install it once per clone:

@@ -33,6 +33,19 @@ bun run --filter docs dev
 bun run --filter docs check:docs     # the checks a docs change must pass
 ```
 
+## Work on the website
+
+The public website lives in `apps/web`, in the same bun workspace as these docs:
+
+```bash
+bun install                                     # once, from the repo root
+cp apps/web/.env.example apps/web/.env.local    # local settings
+bun run --filter web dev                        # http://localhost:3090
+bun run lint && bun run typecheck && bun run test && bun run build
+```
+
+[`apps/web/README.md`](https://github.com/balanced7/akashic-aurora/blob/master/apps/web/README.md) covers the production build and how the site is deployed.
+
 ## What your agent reads
 
 Agents working in the repo start from [`AGENTS.md`](https://github.com/balanced7/akashic-aurora/blob/master/AGENTS.md). It tells them to boot, learn and recall, and which command to use for what.
