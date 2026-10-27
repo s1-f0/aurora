@@ -4,7 +4,7 @@ Status: current
 Class: reference
 
 > Do NOT edit by hand. Regenerate with `py scripts/generators/gen_physics_sheet.py`.
-> Derived at 6c59e3fbe. A bound you discover by collision is not awareness -- this sheet
+> Derived at f25dc0444. A bound you discover by collision is not awareness -- this sheet
 > exists so every clip, cap, timeout and flag is READABLE before it is HIT.
 > Dynamic envelopes (throughput, latency, limits-under-load) are NOT here: they require
 > measurement, not grep -- see the master-map charter M2b (benchmark half).
@@ -331,7 +331,7 @@ Class: reference
 | `TMP` | `` | agent/harness/hooks/snippet_autofile.py |
 | `XDG_CACHE_HOME` | `` | core/tools/locate.py |
 
-## Mechanical bounds (395 numeric constants)
+## Mechanical bounds (401 numeric constants)
 
 | Constant | Value | Site | Note |
 |---|---|---|---|
@@ -485,6 +485,7 @@ Class: reference
 | `LINE_FULL_MAX` | 70 | arsenal/practice_riff.py | ...or above backing full's top voice, at most A4 + 1 |
 | `LINE_LEN` | 32 | arsenal/keylab/screen.py | every _get_line_bytes(..., 32) call in KL3Display.py |
 | `LINE_LEN_CAP_BEATS` | 2 | arsenal/practice_riff.py | a note's length is capped here (the pedal never stretches it) |
+| `LINE_MIN` | 5 | arsenal/keylab/beatgrid.py | ... at least this many of them on it |
 | `LINE_MIN_NOTE` | 60 | arsenal/practice_riff.py | C4: the top line starts here... |
 | `LINE_MIN_ONSETS` | 3 | arsenal/practice.py | a pedalled treble passage (nothing below middle C) of at least this many single notes... |
 | `LIT_DELTA_MAX` | 12 | arsenal/tiktok.py | (raised to the ring's noise, but never past this) |
@@ -540,6 +541,7 @@ Class: reference
 | `MAX_RETRIES` | 3 | research/in-flight/t342/dead-modules/enterprise_web_fetch.py |  |
 | `MAX_ROWS` | 40 | arsenal/media/door.py |  |
 | `MAX_ROWS` | 12 | core/coord/scene.py |  |
+| `MAX_SCENE_BODY` | 1,024 | arsenal/keylab/vj.py |  |
 | `MAX_SETTINGS` | 64 | arsenal/pianolooks.py |  |
 | `MAX_SIDE` | 2,048 | arsenal/shaders/render.py |  |
 | `MAX_STARTUP_WAIT` | 120 | research/in-flight/t342/dead-modules/deployment_framework.py |  |
@@ -632,6 +634,7 @@ Class: reference
 | `SAME_HARMONY_SHORT_MS` | 1,000 | arsenal/practice.py | ...or when the new bass is shorter than this, on a note the chord already holds |
 | `SAY_MAX` | 120 | arsenal/jam/schemas.py |  |
 | `SCALE_MIN_NOTES` | 12 | arsenal/practice_riff.py |  |
+| `SCENE_NAME_MAX` | 40 | arsenal/keylab/vj.py |  |
 | `SCHEMA_KNOWN_MAX` | 1 | core/library/atoms.py |  |
 | `SEATSEEN_TTL_S` | 86,400 | core/comm/roster.py | kimi F1: death must outlive the worklive TTL to be RENDERABLE |
 | `SECTION_GAP_MS` | 5,000 | arsenal/practice.py | this long with nothing sounding and the pedal up ends a section: key areas, key changes, |
@@ -704,6 +707,8 @@ Class: reference
 | `_FAILURE_WINDOW_S` | 120 | core/comm/operator_reply.py |  |
 | `_INSTRUCTIONS_CAP` | 4,096 | ai_setup_mcp.py |  |
 | `_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION` | 9 | scripts/run_job.py |  |
+| `_KEEP_MAX` | 64 | arsenal/keylab/governor.py |  |
+| `_LIMIT_MAX` | 128 | arsenal/keylab/governor.py | the most slot times one bucket file holds with room to spare |
 | `_MAX` | 4,000 | agent_cli.py | clamp absurdly long fields an agent might paste |
 | `_MAX_BLOB` | 3,000,000 | scripts/checkers/check_secrets.py |  |
 | `_MAX_DETAIL_CHARS` | 8,000 | core/events/event_log.py | raw is rich, but a single payload is still bounded |
@@ -723,6 +728,7 @@ Class: reference
 | `_SCORE_CAP` | 6 | arsenal/keylab/vj.py |  |
 | `_SHA_LEN` | 24 | core/comm/blobs.py | 96 bits of sha256 -- ample for a single-user blob store |
 | `_STALE_DAYS` | 7 | agent/harness/context.py | W5: note-derived lines gain [STALE] at this age |
+| `_STATE_BYTES` | 16,384 | arsenal/keylab/governor.py | the bucket file's fixed size: JSON padded with spaces, mapped and rewritten in place |
 | `_SWITCH_MIN_BEATS` | 2 | core/narrative/episode_suggester.py | ...and needs >=2 of them, unanimous, on a non-episode track |
 | `_SWITCH_WINDOW` | 3 | core/narrative/episode_suggester.py | switch looks at the last N routed beats... |
 | `_TEXT_PREVIEW_CHARS` | 240 | core/coord/intent_shadow.py |  |
