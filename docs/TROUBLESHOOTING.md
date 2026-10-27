@@ -48,6 +48,10 @@ The container is **`akashic-redis`** (redis:7-alpine, publishes container 6379 -
 docker start akashic-redis
 ```
 
+**On the Linux box** (native Valkey since 2026-10-27, no container): `systemctl --user status aurora-redis`,
+then `systemctl --user start aurora-redis` and `journalctl --user -u aurora-redis`. Check it with
+`valkey-cli -p 16379 PING`. Do not start the embedded server there; see `~/.aurora/prod/redis/README.md`.
+
 **If it reports Up but the port is still refused** (seen 2026-08-08 after a host reboot):
 the container can come up attached to NO network, so it has no IP and Docker publishes
 nothing. `Status` says `Up`, which is why this reads as a client-side problem and is not.

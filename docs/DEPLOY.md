@@ -99,6 +99,13 @@ To use a real Redis instead:
 
   (maps host port 16379 → Redis's in-container 6379). Or point the system at any Redis you already run:
   `REDIS_PORT=6379 py agent_cli.py status`.
+- **A native server under systemd (Linux):** since 2026-10-27 the Linux prod box runs Valkey 7.2 from
+  apt as the `aurora-redis` user unit on 127.0.0.1:16379 (AOF everysec, an ACL that denies admin
+  commands to `default`). Prefer this to the embedded server on any shared machine: fakeredis's Lua
+  can run Python, so any local process that reaches the embedded port can run code as you. The
+  marker says `external` and the seat units set `AKASHIC_REDIS_BACKEND=external`, so nothing respawns
+  an embedded server while Valkey restarts. The install, rehearsal, cutover and rollback runbook lives
+  outside the repo, in `~/.aurora/prod/redis/README.md` on that box.
 - **Sandbox for experiments:** set `REDIS_DB=15` to keep all reads/writes off the canonical database (db 0).
 
 ## 6. Recall-at-action (harness hooks)
