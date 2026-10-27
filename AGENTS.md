@@ -281,5 +281,5 @@ Missing/empty arguments are sanitized, not fatal -- but `learn` needs at least
 | ask another model | `agent_cli.py ask` (one question), `sift` (needs more reading than one context) | `scripts/ask_*.py`, the per-provider bridges those verbs call |
 | fetch a web page | `agent_cli.py web` (MCP: `web_fetch`) | -- |
 | snapshot state | `scripts/ops/snapshot_knowledge.py` (the knowledge store), `scripts/snapshot.py` (one bus session), `scripts/world_savepoint.py` (the whole world before a risky change) | -- |
-| work on the website, docs site or Bifrost console (JS) | `bun install` at the root, then `bun run --filter web dev`; checks: `bun run lint` / `typecheck` / `test` / `build` (see `apps/web/README.md`) | `pnpm` or `npm install` inside an app |
+| work on the website, docs site or Bifrost console (JS) | `bun install` at the root, copy `apps/web/.env.example` to `.env.local`, then `bun run dev:web` (it builds the workspace packages first); checks: `bun run lint` / `typecheck` / `test` / `build` (see `apps/web/README.md`) | `pnpm` or `npm install` inside an app |
 | change hook wiring | `agent_cli.py hooks status` / `install` / `uninstall` / `enable` / `disable` | hand-editing settings files |
