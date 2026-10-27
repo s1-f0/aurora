@@ -58,9 +58,10 @@ def fake(monkeypatch):
 # --- the headline: processes ---------------------------------------------------------------------------------------
 
 CHILD = r"""
-import json, sys, threading, time
+import json, os, sys, threading, time
 repo, tests, start_at, n, out_path, busy = (sys.argv[1], sys.argv[2], float(sys.argv[3]), int(sys.argv[4]),
                                             sys.argv[5], int(sys.argv[6]))
+go = sys.argv[7]                              # the busy sender creates it after its first send; the others wait for it
 sys.path[:0] = [repo, tests]
 import keylab_fake_winmm as F
 from arsenal.keylab import winmidi as W
@@ -81,10 +82,12 @@ spinners = [threading.Thread(target=spin, daemon=True) for _ in range(busy)]
 for s in spinners:
     s.start()
 ready = time.perf_counter()
-while time.perf_counter() < start_at:
+while time.perf_counter() < start_at or (not busy and not os.path.exists(go)):
     time.sleep(0.001)
 for i in range(n):                            # an unpaced flood
     out.send_sysex(bytes([0xF0, 0x00, 0x20, 0x6B, 0x7F, 0x42, 0x00, 0x02, 0x03, 0x52, i & 0x7F, 0, 0, 0, 0xF7]))
+    if busy and i == 0:
+        open(go, "w").close()
 stop = True
 out.close()
 with open(out_path, "w") as f:                # "driver": when each midiOutLongMsg reached the (fake) driver
@@ -96,6 +99,9 @@ def test_three_processes_on_one_port_never_exceed_the_ceiling_together_at_the_dr
     # One sender's Python is busy (two spinning threads): its sends reach the driver well after their slots. Before
     # 2026-10-27 round 2 the slots held 12 per 100 ms while the driver saw 13 (scratchpad adversarial run, 6 of 6).
     n, k, busy = 36, 3, (2, 0, 0)
+    # The idle senders start once the busy one has made its first send. Started together on the clock, they often
+    # finished (~0.5 s) before its GIL-starved Python reached that send (up to ~0.9 s on a loaded Linux box), and the
+    # floods did not overlap.
     script = tmp_path / "child.py"
     script.write_text(CHILD, encoding="utf-8")
     env = dict(os.environ, **{G.GOVERNOR_DIR_ENV: str(tmp_path / "shared-governor")})
@@ -111,6 +117,7 @@ def test_three_processes_on_one_port_never_exceed_the_ceiling_together_at_the_dr
                 str(n),
                 str(tmp_path / f"child{i}.json"),
                 str(busy[i]),
+                str(tmp_path / "go"),
             ],
             env=env,
             stdout=subprocess.PIPE,
