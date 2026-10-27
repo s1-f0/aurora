@@ -91,9 +91,9 @@
 | arsenal/fl/vfx/arsenal_band.py | 463 | `pyright: ignore[reportAttributeAccessIssue]` | unset until on_tick reads FL's PPQ |
 | arsenal/fl/vfx/flvfx_mock.py | 497 | `ty: ignore[redundant-cast]` | pyright narrows callable(Any) to a callable returning object; the cast keeps int() well typed there |
 | arsenal/jam/schemas.py | 942 | `ty: ignore[invalid-return-type]` | an id-less card keys as None; callers pass cards that validate_card already gave ids |
-| arsenal/keylab/__main__.py | 638 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
-| arsenal/keylab/__main__.py | 650 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
-| arsenal/keylab/__main__.py | 1320 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/__main__.py | 642 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/__main__.py | 654 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
+| arsenal/keylab/__main__.py | 1361 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
 | arsenal/keylab/beatbench.py | 568 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
 | arsenal/keylab/beatbench.py | 925 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
 | arsenal/keylab/beatbench.py | 954 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
@@ -101,13 +101,13 @@
 | arsenal/keylab/beatbench.py | 1927 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
 | arsenal/keylab/beatbench.py | 1993 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
 | arsenal/keylab/beatbench.py | 2141 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
-| arsenal/keylab/beatsync.py | 100 | `pyright: ignore[reportMissingImports]` | Windows-only dependency, not in the lock |
-| arsenal/keylab/beatsync.py | 279 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
-| arsenal/keylab/beatsync.py | 280 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
-| arsenal/keylab/beatsync.py | 396 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
-| arsenal/keylab/beatsync.py | 501 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
-| arsenal/keylab/beatsync.py | 704 | `pyright: ignore[reportMissingImports]` | optional beat-tracker dependency, not in the lock |
-| arsenal/keylab/beatsync.py | 706 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 103 | `pyright: ignore[reportMissingImports]` | Windows-only dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 282 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 283 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 399 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 509 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 712 | `pyright: ignore[reportMissingImports]` | optional beat-tracker dependency, not in the lock |
+| arsenal/keylab/beatsync.py | 714 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
 | arsenal/keylab/chordsense.py | 105 | `pyright: ignore[reportMissingImports]` | optional analysis dependency, not in the lock |
 | arsenal/keylab/chordsense.py | 108 | `pyright: ignore[reportMissingImports]` | optional analysis dependency, not in the lock |
 | arsenal/keylab/fl/device_AuroraKeyLab.py | 50 | `pyright: ignore[reportMissingImports]` | FL Studio's embedded module, exists only inside FL |
@@ -118,9 +118,9 @@
 | arsenal/keylab/tempo.py | 295 | `pyright: ignore[reportMissingImports]` | optional beat-tracker dependency, not in the lock |
 | arsenal/keylab/tempo.py | 429 | `pyright: ignore[reportMissingImports]` | optional beat-tracker dependency, not in the lock |
 | arsenal/keylab/tempo.py | 521 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
-| arsenal/keylab/vj.py | 1032 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
-| arsenal/keylab/vj.py | 1095 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
-| arsenal/keylab/vj.py | 1613 | `pyright: ignore[reportIncompatibleMethodOverride]` | the parent names it format, which ruff's A002 forbids shadowing |
+| arsenal/keylab/vj.py | 1238 | `pyright: ignore[reportMissingImports]` | Windows-only audio dependency, not in the lock |
+| arsenal/keylab/vj.py | 1301 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| arsenal/keylab/vj.py | 1819 | `pyright: ignore[reportIncompatibleMethodOverride]` | the parent names it format, which ruff's A002 forbids shadowing |
 | arsenal/lanes/hwdecode_soak.py | 124 | `noqa: BLE001` | record and stop, never crash the soak |
 | arsenal/media/cut.py | 582 | `type: ignore[attr-defined]` |  |
 | arsenal/media/cut.py | 587 | `type: ignore[attr-defined]` |  |
@@ -1103,10 +1103,10 @@
 | tests/test_keylab_fl_script.py | 129 | `pyright: ignore[reportAttributeAccessIssue]` | a stub module for the FL API |
 | tests/test_keylab_fl_script.py | 141 | `pyright: ignore[reportAttributeAccessIssue]` | a stub module for the FL API |
 | tests/test_keylab_screen.py | 247 | `pyright: ignore[reportAttributeAccessIssue]` | a stub module for the FL API |
-| tests/test_keylab_screen.py | 785 | `pyright: ignore[reportIncompatibleMethodOverride]` | the parent names the first argument format; a test log is silent |
-| tests/test_keylab_vj.py | 803 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
-| tests/test_keylab_vj.py | 1319 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
-| tests/test_keylab_vj.py | 1454 | `pyright: ignore[reportMissingImports]` | a test fixture module beside the test, not a package on the path |
+| tests/test_keylab_screen.py | 829 | `pyright: ignore[reportIncompatibleMethodOverride]` | the parent names the first argument format; a test log is silent |
+| tests/test_keylab_vj.py | 964 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| tests/test_keylab_vj.py | 1505 | `pyright: ignore[reportMissingImports]` | optional audio dependency, not in the lock |
+| tests/test_keylab_vj.py | 1640 | `pyright: ignore[reportMissingImports]` | a test fixture module beside the test, not a package on the path |
 | tests/test_learning_index_derives.py | 47 | `ty: ignore[unknown-argument]` | LATENT: dead branch, FileStore has no base_dir |
 | tests/test_learning_index_derives.py | 47 | `pyright: ignore[reportCallIssue]` | LATENT: dead branch, FileStore has no base_dir |
 | tests/test_learning_index_derives.py | 168 | `ty: ignore[invalid-assignment]` | monkeypatch with a test double |
