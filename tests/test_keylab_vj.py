@@ -773,7 +773,7 @@ def test_scene_route_publishes_the_page_scene_validates_and_rate_limits():
         rr = c.getresponse()
         rr.read()
         assert rr.status == 204
-        assert "POST" in rr.getheader("Access-Control-Allow-Methods")
+        assert "POST" in (rr.getheader("Access-Control-Allow-Methods") or "")
         c.close()
     finally:
         eng.stop()
@@ -793,7 +793,9 @@ def test_scene_route_holds_a_flood_to_eight_a_second():
     assert eng.scene_counts["limited"] == codes.count(429)
     assert len([e for e in seen if e["t"] == "scene"]) == codes.count(202)
     assert eng.scene_request({"name": "Later"}, now=102.0)[0] == 202, "the bucket refills"
-    assert V.parse_scene({"name": "A\x07B"})[0]["name"] == "AB"
+    scene = V.parse_scene({"name": "A\x07B"})[0]
+    assert scene is not None
+    assert scene["name"] == "AB"
 
 
 def test_scene_route_answers_with_retry_after_when_flooded():

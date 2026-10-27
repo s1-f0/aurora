@@ -157,6 +157,7 @@ def test_midiout_governs_by_the_port_it_opened(fake):
 def test_two_outputs_in_one_process_share_the_ceiling(fake):
     outs = [W.MidiOut(prefer="daw"), W.MidiOut(prefer="daw")]
     for o in outs:
+        assert o.governor is not None
         o.governor.record = True
 
     def flood(o):
@@ -168,7 +169,10 @@ def test_two_outputs_in_one_process_share_the_ceiling(fake):
         t.start()
     for t in threads:
         t.join(timeout=30)
-    merged = outs[0].governor.log + outs[1].governor.log
+    govs = [o.governor for o in outs]
+    assert govs[0] is not None
+    assert govs[1] is not None
+    merged = govs[0].log + govs[1].log
     assert len(merged) == 60
     assert max_in_window(merged, WINDOW_S) <= SAFE_BURST
     for o in outs:

@@ -43,9 +43,11 @@ def _obj(arg):
     return getattr(arg, "_obj", arg)
 
 
-def buffer_address(hdr) -> int | None:
+def buffer_address(hdr) -> int:
     """The header's lpData as an address, whatever ctypes type the field is declared with."""
-    return ctypes.c_void_p.from_buffer(hdr, type(hdr).lpData.offset).value
+    addr = ctypes.c_void_p.from_buffer(hdr, type(hdr).lpData.offset).value
+    assert addr is not None, "a header with no buffer"
+    return addr
 
 
 class FakeWinMM:
@@ -186,6 +188,7 @@ class FakeWinMM:
     # --- input ---------------------------------------------------------------------------------------------------
     def _midiInOpen(self, handle, index, cb, inst, flags):
         addr = cb.value if isinstance(cb, ctypes.c_void_p) else int(cb)
+        assert addr is not None, "midiInOpen with no callback"
         self.in_cb = MIDIINPROC(addr)
         _obj(handle).value = IN_HANDLE
         self.in_open = True
@@ -242,6 +245,7 @@ class FakeWinMM:
         def run():
             self._tl.in_cb = True
             try:
+                assert self.in_cb is not None, "the device fires only into an open input"
                 self.in_cb(IN_HANDLE, msg, 0, p1, 0)
             finally:
                 self._tl.in_cb = False

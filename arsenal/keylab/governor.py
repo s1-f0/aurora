@@ -111,7 +111,7 @@ class BurstGovernor:
         self._lock = threading.Lock()
         self._recent: deque[float] = deque()  # admit times still inside the window
         self.admitted = 0  # lifetime packets let through
-        self.waited_s = 0.0  # lifetime time spent holding callers back at admit()
+        self.waited_s: float = 0.0  # lifetime time spent holding callers back at admit()
         self.log: list[float] = []  # every admit time, kept only when record=True
         self.record = False
         self._gate_lock = threading.Lock()
@@ -168,7 +168,8 @@ class BurstGovernor:
 
     def _gate_exit(self, token: int | None, waited: float) -> None:
         with self._gate_lock:
-            self._flight.pop(token, None)
+            if token is not None:
+                self._flight.pop(token, None)
             self._ends.append(self._clock())
             self.gated += 1
             self.gate_waited_s += waited
@@ -359,6 +360,7 @@ class PortGovernor(BurstGovernor):
         """Block until this packet's slot under the port's ceiling, then count it. Returns the slot's time."""
         if not self.shared:
             return super().admit()
+        now = slot = 0.0  # set under the lock when it is got; read only then
         with self._lock:  # this instance's file handle, one thread at a time
             got = self._acquire()
             if got:
@@ -372,7 +374,7 @@ class PortGovernor(BurstGovernor):
                     live.append(slot)
                     self._write(st._replace(times=live, total=st.total + 1), now)
                 finally:
-                    _unlock_fd(self._fd)
+                    self._release()
         if not got:  # a frozen holder: be slow rather than stuck
             self._sleep(self.window)
             with self._lock:
@@ -389,7 +391,7 @@ class PortGovernor(BurstGovernor):
     def _gate_enter(self) -> tuple[int | None, float]:
         if not self.shared:
             return super()._gate_enter()
-        waited = 0.0
+        waited = wait = 0.0
         while True:
             with self._lock:
                 got = self._acquire()
@@ -406,7 +408,7 @@ class PortGovernor(BurstGovernor):
                             self._write(st._replace(flight=flight, ends=ends), now)
                             return token, waited
                     finally:
-                        _unlock_fd(self._fd)
+                        self._release()
             if not got:  # a frozen holder: be slow rather than stuck
                 self._sleep(self.window)
                 with self._lock:
@@ -428,7 +430,11 @@ class PortGovernor(BurstGovernor):
                 st = self._read(now)
                 self._write(st._replace(flight=[f for f in st.flight if f[0] != token], ends=[*st.ends, now]), now)
             finally:
-                _unlock_fd(self._fd)
+                self._release()
+
+    def _release(self) -> None:
+        if self._fd is not None:  # _acquire returned True, so it is
+            _unlock_fd(self._fd)
 
     def _acquire(self) -> bool:
         if self._fd is None or self._mm is None:
@@ -444,6 +450,7 @@ class PortGovernor(BurstGovernor):
                 time.sleep(0.0002)
 
     def _read(self, now: float) -> _State:
+        assert self._mm is not None, "read only under the lock _acquire took, which needs the map"
         raw = self._mm[:_STATE_BYTES].rstrip(b" \x00")
         if not raw:
             return _State([], 0, [], [])  # a new bucket
@@ -490,6 +497,7 @@ class PortGovernor(BurstGovernor):
         if len(data) > _STATE_BYTES:  # not reachable at _LIMIT_MAX; keep the newest `limit` of each, never fail
             state["flight"], state["ends"] = state["flight"][-self.limit :], ends[-self.limit :]
             data = json.dumps(state).encode("utf-8")[:_STATE_BYTES]
+        assert self._mm is not None, "written only under the lock _acquire took, which needs the map"
         self._mm[:_STATE_BYTES] = data.ljust(_STATE_BYTES)
 
     def close(self) -> None:

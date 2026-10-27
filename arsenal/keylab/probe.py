@@ -41,18 +41,18 @@ if TYPE_CHECKING:
 
         governor: Any
 
-        def send_sysex(self, data: bytes) -> None: ...
+        def send_sysex(self, data: bytes) -> object: ...  # winmidi's returns the send's codes and timing
 
-        def close(self) -> None: ...
+        def close(self) -> object: ...  # winmidi's returns the close's result codes
 
     class InPort(Protocol):
         """What a probe needs from an input: its name, and a stop/close pair."""
 
         name: str
 
-        def stop(self) -> None: ...
+        def stop(self) -> object: ...  # winmidi's returns midiInStop's result
 
-        def close(self) -> None: ...
+        def close(self) -> object: ...
 
 
 YES, NO, SKIP = "yes", "no", "skip"

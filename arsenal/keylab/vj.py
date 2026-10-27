@@ -2102,7 +2102,7 @@ class Engine:
         self._scene_tokens, self._scene_t = SCENE_BURST, time.perf_counter()
         self.scene_counts = {"taken": 0, "published": 0, "refused": 0, "limited": 0}
         # shared state for /api/state
-        self.last = {"chord": None, "chord_keys": None, "chord_audio": None}
+        self.last: dict[str, dict | None] = {"chord": None, "chord_keys": None, "chord_audio": None}
         self.beat = {"bpm": None, "conf": None, "n": 0, "on_beat": None, "src": None, "ver": 0, "bar": 0}
         self.audio = {
             "source": getattr(source, "name", None),
@@ -2810,15 +2810,19 @@ class Engine:
         """The track thread: every track_poll_s, Windows' now-playing; on a new track, the song database's tempo
         (database_tempo: network calls, never on the audio thread; cached per track; fail-soft), handed to the audio
         thread. Says when it arrives, and publishes a track event."""
+        now_playing, db_lookup = self.now_playing, self.db_lookup
+        assert now_playing is not None, "run() starts the track thread only with both"
+        assert db_lookup is not None, "run() starts the track thread only with both"
         last = None
         while not self._stop.is_set():
             try:
-                np_ = self.now_playing()
+                np_ = now_playing()
             except Exception:
                 np_ = None
             self.track["polls"] += 1
             key = track_key(np_)
             if key is not None and key != last:
+                assert np_ is not None  # track_key found a playing track in it
                 launch = last is None  # the track playing when the engine started
                 last = key
                 label = f"{np_.get('artist') or '?'} - {np_.get('title')}"
@@ -2829,7 +2833,7 @@ class Engine:
                     found = self._db_cache[key]
                 else:
                     try:
-                        found = self.db_lookup(np_.get("artist") or "", np_.get("title") or "")
+                        found = db_lookup(np_.get("artist") or "", np_.get("title") or "")
                     except Exception:
                         found = None
                     self.track["lookups"] += 1
@@ -2837,14 +2841,14 @@ class Engine:
                 if self._stop.is_set():
                     return
                 try:  # the track may have moved on while the databases answered
-                    again = track_key(self.now_playing())
+                    again = track_key(now_playing())
                 except Exception:
                     again = key
                 if again is not None and again != key:
                     continue  # poll again now: the next track is the one to look up
                 bpm = float(found["bpm"]) if found and found.get("bpm") else None
                 hold = launch and self.seed_bpm is not None
-                if bpm:
+                if found and bpm:
                     self.track.update(db_bpm=bpm, sources=list(found.get("sources") or []))
                     self._clock_q.append(("db", bpm, not hold))
                     srcs = ", ".join(found.get("sources") or [])

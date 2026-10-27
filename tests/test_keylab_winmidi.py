@@ -58,8 +58,8 @@ def test_midihdr_lpdata_is_a_plain_pointer_and_the_layout_is_unchanged():
         _fields_ = [("lpData", ctypes.c_char_p), *list(W.MIDIHDR._fields_[1:])]
 
     assert ctypes.sizeof(W.MIDIHDR) == ctypes.sizeof(Before)
-    assert [getattr(W.MIDIHDR, n).offset for n, _t in W.MIDIHDR._fields_] == [
-        getattr(Before, n).offset for n, _t in Before._fields_
+    assert [getattr(W.MIDIHDR, f[0]).offset for f in W.MIDIHDR._fields_] == [
+        getattr(Before, f[0]).offset for f in Before._fields_
     ]
     if sys.platform == "win32":  # Windows' own MIDIHDR: 120 bytes on x64, 64 on x86
         assert ctypes.sizeof(W.MIDIHDR) == (120 if ctypes.sizeof(ctypes.c_void_p) == 8 else 64)

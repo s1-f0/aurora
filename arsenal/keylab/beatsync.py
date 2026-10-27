@@ -17,7 +17,7 @@ beats it flags, so the march stays musical even when the printed BPM octave is o
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeGuard
 
 if TYPE_CHECKING:
     import numpy as np
@@ -454,7 +454,7 @@ def fire_time(
     return fire_at
 
 
-def is_playing(np_: dict | None) -> bool:
+def is_playing(np_: dict | None) -> TypeGuard[dict]:
     """now_playing()'s session is PLAYING (SMTC playback status 4). Windows' current session can be a paused one (a
     paused browser tab or Spotify while FL plays), and its song is not what the speakers carry."""
     return bool(np_) and np_.get("status") == PLAYING

@@ -78,7 +78,7 @@ from __future__ import annotations
 import math
 import statistics
 from collections import deque
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, overload
 
 import numpy as np
 
@@ -143,6 +143,10 @@ def restore_octave(fused: float, raw: Sequence[float], lo: float = BPM_LO, hi: f
     return bpm
 
 
+@overload
+def tracker_seed(bpm: float, lo: float = BPM_LO, hi: float = BPM_HI) -> float: ...
+@overload
+def tracker_seed(bpm: float | None, lo: float = BPM_LO, hi: float = BPM_HI) -> float | None: ...
 def tracker_seed(bpm: float | None, lo: float = BPM_LO, hi: float = BPM_HI) -> float | None:
     """The tempo to seed the beat tracker with: bpm folded into its range (60-200). The only tempo that is capped at
     200: a 205 BPM uptempo track seeds beat_a at 102.5 (it cannot run faster), while the database's tempo for the beat
@@ -397,10 +401,8 @@ class BeatGrid:
         if self.owner != "hand":
             return list(self._ahead)
         t = self._hand_next(now)
-        return [
-            {"t_beat": t + k * self.period, "bpm": 60.0 / self.period, "phase": 0.0, "confidence": 1.0}
-            for k in range(count)
-        ]
+        period = self._hand_grid()[1]
+        return [{"t_beat": t + k * period, "bpm": 60.0 / period, "phase": 0.0, "confidence": 1.0} for k in range(count)]
 
     def snapshot(self) -> dict:
         return {
@@ -424,7 +426,7 @@ class BeatGrid:
     # ------------------------------------------------------------------------------------------------------ inside
     def _next(self, now: float) -> tuple[float, float, float, str] | None:
         if self.owner == "hand":
-            return self._hand_next(now), self.period, 1.0, "tap"
+            return self._hand_next(now), self._hand_grid()[1], 1.0, "tap"
         if self.tr is None:
             return None
         t, period, conf = self.tr
@@ -434,14 +436,21 @@ class BeatGrid:
 
     def _hand_next(self, now: float) -> float:
         """The hand's first beat after now."""
-        return self.anchor + (math.floor((now - self.anchor) / self.period) + 1) * self.period
+        anchor, period = self._hand_grid()
+        return anchor + (math.floor((now - anchor) / period) + 1) * period
+
+    def _hand_grid(self) -> tuple[float, float]:
+        """The hand's grid (a beat time, seconds per beat): set by _take, kept while the hand owns the beat."""
+        assert self.anchor is not None, "the hand has no grid: it does not own the beat"
+        assert self.period is not None, "the hand has no grid: it does not own the beat"
+        return self.anchor, self.period
 
     def _grid(self) -> tuple[float, float] | None:
         """A beat time and the period of the beat being shown: the hand's, else the tracker's (its tempo off its line
         when that is steady: a tap that takes the beat then holds it at the tracker's smoothed tempo, not at whatever
         its bpm field reads that block)."""
         if self.owner == "hand":
-            return self.anchor, self.period
+            return self._hand_grid()
         if self.tr is not None:
             return self.tr[0], self._tracker_period()
         return None
@@ -477,7 +486,10 @@ class BeatGrid:
     def _tracker_period(self) -> float:
         """The tracker's tempo, seconds per beat: off its line when that is steady, else its bpm field."""
         ln = self._steady_line()
-        return ln.period if ln is not None else self.tr[1]
+        if ln is not None:
+            return ln.period
+        assert self.tr is not None, "callers ask for the tracker's tempo only while it has one"
+        return self.tr[1]
 
     def _agrees(self, t_beat: float, period: float) -> bool:
         """The tracker's own beat lands on this beat of the hand's: at the hand's tempo (within 4 %, NOT octave-folded:
@@ -501,7 +513,7 @@ class BeatGrid:
 
     def _set_period(self, now: float, period: float) -> None:
         """The hand's grid at a new tempo from the beat it shows now on (the anchor may be many beats back)."""
-        beat = self._hand_next(now) - self.period
+        beat = self._hand_next(now) - self._hand_grid()[1]
         self.anchor, self.period = beat, float(period)
 
     def _give_back(self, why: str) -> None:
@@ -629,6 +641,7 @@ class BeatGrid:
         a tap well off (about 1/4 of a beat at the end of the run)."""
         keep = list(taps)
         cap = len(keep) // 4
+        r = np.empty(0)  # the free fit's residuals: set and read only when not fixed
         while cap > 0 and len(keep) > 3:
             k, x = cls._line(keep, period)
             if fixed:
@@ -817,6 +830,9 @@ class BeatGrid:
         each beat that lands while it follows, so one line read a per cent off does not set the free run."""
         if self.tr is None:
             return
+        assert self.anchor is not None, "_hold runs while the hand owns the beat"
+        assert self.period is not None, "_hold runs while the hand owns the beat"
+        assert self._p_hold is not None, "_take sets it when the hand takes the beat"
         t_tr = self.tr[0]
         ln = self._steady_line(self.period)
         p_f = None
@@ -855,7 +871,8 @@ class BeatGrid:
         now."""
         pairs, self._e0_taps = self._e0_taps, None
         if len(self._keep) < 2 or self.last_tap is None or self._now - self.last_tap > FRESH_BEATS * p_f:
-            return wrap((t_tr - self.anchor) / self.period)
+            anchor, period = self._hand_grid()
+            return wrap((t_tr - anchor) / period)
         k, x = self._line(self._keep, p_f)
         beat = float(np.mean(x - k * p_f)) + float(k[-1]) * p_f  # the kept taps' beat at the last of them
         e_taps = wrap((t_tr - beat) / p_f)

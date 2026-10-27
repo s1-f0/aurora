@@ -21,6 +21,7 @@ import pytest
 from arsenal.keylab import beatgrid as G
 from arsenal.keylab import vj as V
 from arsenal.keylab.beathand import Hand, TapLog
+from arsenal.keylab.beatref import Referee
 
 RATE = 48000
 BLOCK = V.HOP / RATE
@@ -305,6 +306,7 @@ def test_database_tempo_and_the_beat_commands_seed_keep_the_octave(monkeypatch):
         lambda artist, title, offline=False: [T.SourceBpm("deezer", 150.0, 0.4, 0.3), T.SourceBpm("getsongbpm", 150.0)],
     )
     got = G.database_tempo("Artist", "Title")
+    assert got is not None
     assert got["bpm"] == 150.0
     assert got["sources"] == ["deezer", "getsongbpm"]
     assert 0 < got["confidence"] <= 1
@@ -320,7 +322,7 @@ def _synth(bpm, secs, realtime=False):
     return V.SynthSource(rate=RATE, bpm=bpm, chords=("C",), realtime=realtime, seconds=secs)
 
 
-class _StubReferee:
+class _StubReferee(Referee):  # in BeatClock.ref's place; never calls Referee.__init__
     """The referee's interface (predicted, feed, verdict, pred) with a fixed verdict."""
 
     def __init__(self, on_beat, offset_ms):
@@ -378,6 +380,7 @@ def test_a_reseed_never_stops_the_beat_and_an_agreeing_tracker_is_left_alone():
     assert clk.reseeds == 1
     assert clk.shadow is None
     assert any(n["t"] == "status" and "re-seeded at 100 BPM" in n["msg"] for n in clk.notes)
+    assert reseeded_at is not None
     during = [x for x in landed if reseeded_at - 1.0 < x < reseeded_at + 6.0]
     assert np.max(np.diff(during)) < 1.0, "no beat stopped while the new tracker warmed up (a restart: about 2 s)"
 
@@ -714,13 +717,19 @@ def test_taplog_is_the_hands_math_with_no_port():
     for k in range(6):
         log.add(1.0 + k * 0.4)
     assert log.tap_tempo(5) == pytest.approx(0.4)
-    nxt, per = log.tap_grid(3.1)
+    grid = log.tap_grid(3.1)
+    assert grid is not None
+    nxt, per = grid
     assert per == pytest.approx(0.4)
     assert nxt == pytest.approx(3.4)
-    anchor, rms = log.tap_phase(0.4)
+    phase = log.tap_phase(0.4)
+    assert phase is not None
+    anchor, rms = phase
     assert anchor == pytest.approx(1.0)
     assert rms == pytest.approx(0.0, abs=1e-9)
-    assert log.versus([1.0 + k * 0.4 - 0.02 for k in range(6)], 0.4)["offset_ms"] == pytest.approx(20.0, abs=0.5)
+    vs = log.versus([1.0 + k * 0.4 - 0.02 for k in range(6)], 0.4)
+    assert vs is not None
+    assert vs["offset_ms"] == pytest.approx(20.0, abs=0.5)
     log.prune(20.0)
     assert log.taps == []
 
@@ -1104,6 +1113,7 @@ def test_the_referee_judges_one_owner_at_a_time():
             break
     assert clk.grid.owner == "hand"
     hand = [h["t_beat"] for h in clk.grid.view(clk.audio_t)]
+    assert clk.ref is not None
     preds = list(clk.ref.pred)
     assert preds, (preds, hand)
     assert all(min(abs(p - h) for h in hand) < 1e-6 for p in preds), (preds, hand)
@@ -1194,6 +1204,7 @@ def test_the_tap_lock_snaps_to_the_trackers_smoothed_tempo_not_its_bpm_field():
         k0 = math.ceil(8.0 / p) * p
         d.until(k0 + 6 * p, taps=[k0 + k * p for k in range(6)])
         assert grid.tap_how == "track", (seed, grid.tap_bpm)
+        assert grid.tap_bpm is not None
         assert abs(grid.tap_bpm / 154.14 - 1.0) < 0.003, (seed, grid.tap_bpm)
 
 
@@ -1207,14 +1218,20 @@ def test_the_trackers_line_is_steady_on_jitter_and_not_while_it_pulls_its_phase_
     p = 0.4
     jit = [k * p + rng.uniform(-0.015, 0.015) for k in range(10)]
     ln = G.tracker_line(jit)
+    assert ln is not None
     assert ln.steady(p)
     assert abs(ln.period / p - 1.0) < 0.01
     pull = [k * p for k in range(7)] + [k * p + 0.044 * (k - 6) for k in range(7, 10)]  # 0.11 of a beat a beat
-    assert not G.tracker_line(pull).steady(p)
+    pulled = G.tracker_line(pull)
+    assert pulled is not None
+    assert not pulled.steady(p)
     jump = [k * p for k in range(6)] + [k * p + 0.2 for k in range(6, 10)]  # half a beat over
-    assert not G.tracker_line(jump).steady(p)
+    jumped = G.tracker_line(jump)
+    assert jumped is not None
+    assert not jumped.steady(p)
     settled = [5 * p] + [k * p + 0.2 for k in range(6, 15)]  # the old phase all but gone
     ln = G.tracker_line(settled)
+    assert ln is not None
     assert ln.steady(p)
     assert abs(G.wrap((ln.t_last - 0.2) / p)) < 1e-6
 
@@ -1377,6 +1394,7 @@ def test_an_uptempo_database_tempo_stays_205_for_the_grid_and_seeds_the_tracker_
 
     monkeypatch.setattr(T, "lookup", lambda artist, title, offline=False: [T.SourceBpm("deezer", 205.0)])
     found = G.database_tempo("Artist", "Uptempo")
+    assert found is not None
     assert found["bpm"] == 205.0
     assert G.tracker_seed(205.0) == 102.5
     assert G.tracker_seed(150.0) == 150.0
@@ -1395,6 +1413,7 @@ def test_an_uptempo_database_tempo_stays_205_for_the_grid_and_seeds_the_tracker_
     assert clk.tracker.seed == 102.5
     clk = V.BeatClock(RATE, V.HOP, "a")
     assert clk.reseed(205.0) is True
+    assert clk.shadow is not None
     assert clk.shadow[2] == 102.5
     assert clk.shadow[0].seed == 102.5
 
@@ -1522,6 +1541,7 @@ def test_messy_taps_on_a_wobbly_tracker_still_snap_to_it():
         taps = [k0 + k * p + e for k, e in enumerate((0.081, 0.012, 0.016, -0.052))]
         d.until(taps[-1] + 40.0, taps=taps)
         assert grid.tap_how == "track", (seed, grid.tap_bpm)
+        assert grid.tap_bpm is not None
         assert abs(grid.tap_bpm / 174.0 - 1.0) < 0.01, (seed, grid.tap_bpm)
         late = _landed(d.beats, taps[-1] + 10.0, taps[-1] + 40.0)
         assert grid.owner == "track", seed
@@ -1552,7 +1572,7 @@ def _run_clock_reseed(bpm, taps, secs, db, reseed_at=None):
     t, i, got, done = 0.0, 0, [], reseed_at is None
     while (b := src.read()) is not None:
         t += BLOCK
-        if not done and t >= reseed_at:
+        if not done and reseed_at is not None and t >= reseed_at:
             clk.reseed(db)
             done = True
         while i < len(taps) and taps[i] <= t:
