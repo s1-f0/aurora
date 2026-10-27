@@ -41,6 +41,7 @@ export default async function WalksPage({
   return (
     <>
       <PageHero
+        backdrop="curtains"
         eyebrow="Forest Walks"
         title={
           <>

@@ -16,6 +16,7 @@ import { routes } from "~/modules/marketing/content/site";
 import { CtaBand } from "~/modules/marketing/ui/cta-band";
 import { Container } from "~/modules/marketing/ui/primitives";
 import { ReadingProgress } from "~/modules/marketing/ui/reading-progress";
+import { ShaderBackground } from "~/modules/marketing/ui/shader-background";
 import { minutesToRead, walkLabel } from "~/modules/marketing/walks/meta";
 import { MetaLine } from "~/modules/marketing/walks/meta-line";
 import { getToc } from "~/modules/marketing/walks/toc";
@@ -53,7 +54,8 @@ export default async function WalkPage({
   return (
     <>
       <ReadingProgress />
-      <article className="pt-32 pb-16 sm:pt-40">
+      <article className="relative isolate pt-32 pb-16 sm:pt-40">
+        <ShaderBackground preset="nebula" fade="bottom" className="h-[560px]" />
         <Container className="max-w-6xl">
           <nav aria-label="Breadcrumb" className="mb-10">
             <ol className="text-mk-faint flex flex-wrap items-center gap-1.5 text-[13px]">
