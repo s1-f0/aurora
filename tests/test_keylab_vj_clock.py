@@ -1512,7 +1512,10 @@ def test_the_database_sides_with_the_hand_only_when_the_taps_own_slope_agrees_wi
     p = 60.0 / bpm
     taps = _taps_on_kicks(bpm, 4)
     taps[0] += 0.3 * p
-    late_tracker = lambda now: ahead_at(now, 0.0, p) if now > taps[-1] + 1.5 else []  # noqa: E731
+
+    def late_tracker(now):
+        return ahead_at(now, 0.0, p) if now > taps[-1] + 1.5 else []
+
     for tracker, want in ((late_tracker, "db"), (lambda now: ahead_at(now, 0.0, p), "track")):
         grid = G.BeatGrid()
         grid.set_db(db)
