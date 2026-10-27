@@ -343,8 +343,8 @@ def button_label(
     if not 0 <= s <= 7:
         raise ScreenRefused(f"label slot must be 0..7, got {s}")
     body = b""
-    if type is not None:
-        body += _field(0x00, _byte(type, "type"))
+    if type_ is not None:
+        body += _field(0x00, _byte(type_, "type"))
     if line_number is not None:
         body += _field(0x01, _byte(line_number, "line_number"))
     if color_type is not None:
