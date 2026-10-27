@@ -56,6 +56,13 @@ code older than the runbook.
   is a no-op on a running container; restart bounces a healthy substrate
   and drops every client).
 - PROVE: `py agent_cli.py status` renders again.
+- LINUX BOX (native Valkey since 2026-10-27, no container): LOOK
+  `systemctl --user status aurora-redis`; REACH `systemctl --user start aurora-redis`
+  (it restarts itself on a crash; the unit refuses to start without
+  `~/.aurora/prod/state/redis-native/.migrated`, which is the rollback guard, so
+  never create that file by hand); PROVE `valkey-cli -p 16379 PING`. Never start
+  `python -m core.foundation.embedded_redis` there: it would take the port from Valkey.
+  Runbook: `~/.aurora/prod/redis/README.md`.
 
 ## 3. THE DAEMON — bifrost_daemon (spawns + supervises runners)
 
