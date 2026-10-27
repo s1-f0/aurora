@@ -72,48 +72,52 @@ tap_one (Daniel's call, off until he says he starts tapping on beat 1) the first
 All times are on ONE clock, the audio stream's (seconds of audio fed); the engine maps a tap's arrival onto it. Pure: no
 threads, no I/O. The engine calls step() then announce() once per audio block, from the audio thread.
 """
+
 from __future__ import annotations
 
 import math
 import statistics
 from collections import deque
-from typing import Deque, Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
 from .beathand import LOCK_TAPS, RESEED_DIFF, RESEED_GAP_S, RESEED_TAPS, TapLog, folded_ratio
 
-RUN_GAP_S = 2.0           # a tap with no tap in this long before it starts a new run (an isolated tap)
-NOISE_BEATS = 0.06        # an isolated tap this close to a beat is tap noise: nothing changes
-SLEW_BEATS = 0.125        # ... up to this far the beat moves half way to the tap; further, onto the tap
-SNAP = 0.04               # a tapped tempo within 4 % (octave-folded) of the database's, else the tracker's, takes it
-SNAP_CONF = 0.5           # ... the tracker's only at this confidence or more
-TAP_JITTER_S = 0.025      # ... or within SNAP_SIGMAS of the slope error this much human jitter gives so few taps
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+RUN_GAP_S = 2.0  # a tap with no tap in this long before it starts a new run (an isolated tap)
+NOISE_BEATS = 0.06  # an isolated tap this close to a beat is tap noise: nothing changes
+SLEW_BEATS = 0.125  # ... up to this far the beat moves half way to the tap; further, onto the tap
+SNAP = 0.04  # a tapped tempo within 4 % (octave-folded) of the database's, else the tracker's, takes it
+SNAP_CONF = 0.5  # ... the tracker's only at this confidence or more
+TAP_JITTER_S = 0.025  # ... or within SNAP_SIGMAS of the slope error this much human jitter gives so few taps
 SNAP_SIGMAS = 2.5
-SNAP_OCT = math.log2(1.0 + SNAP)          # 4 % in octaves, the unit folded_ratio answers in (0.04 octaves is 2.8 %)
+SNAP_OCT = math.log2(1.0 + SNAP)  # 4 % in octaves, the unit folded_ratio answers in (0.04 octaves is 2.8 %)
 RESEED_OCT = math.log2(1.0 + RESEED_DIFF)
-HOLD_WIDE = 0.08          # once the taps stop, a confident tracker this close (in the hand's octave) sets the tempo
-HOLD_FAR = 0.15           # ... this close after a run too short to ask for a re-seed (fewer than RESEED_TAPS taps)
-HOLD_EMA = 0.1            # ... and between follows the hand runs at its tempo averaged this much per landed beat
-FRESH_BEATS = 16          # the taps' own offset against the tracker sets the first follow this long after them ...
-FRESH_MOVE = 0.25         # ... unless the tracker moved this much (beats) against the taps since
-LINE_S = 4.0              # the tracker's LINE: drawn through its beats that landed in the last LINE_S ...
-LINE_BEATS = 10           # ... or its last LINE_BEATS beats, whichever reaches further back (a half-time tracker)
-LINE_MIN = 5              # ... at least this many of them on it
-LINE_DROP = 0.25          # ... its worst misses left off, at most this share of the beats (a re-lock's old phase)
-LINE_FLOOR = 0.03         # ... and only a miss over this much of a beat (or 3 sigma of the rest's spread)
-LINE_RMS = 0.06           # steady: the beats on it sit this close to it, RMS, in beats of the lights' period ...
-LINE_NEW = 3              # ... and its newest LINE_NEW beats each land within LINE_PRED of a beat of the line
-LINE_PRED = 0.10          #     through the beats before them (a tracker moving its phase is not steady)
-TEMPO_EMA = 0.1           # the tracker's tempo for a snap: its steady lines' tempi averaged, this much per beat
-OUTLIER_BEATS = 0.125     # a tap this far off the rest of its run (in beats; see _inliers) is left out of the lock
-FREE_DROP_RMS = 0.25      # ... with no tempo to check against, only if the line then misses by a quarter as much
-LOCK_RMS = 0.15           # taps the fitted line misses by more than this (RMS, in beats) are not steady: no lock yet
-AGREE_BEATS = 0.125       # the tracker agrees with the hand's beat within 1/8 of a beat ...
-AGREE_RUN = 8             # ... for this many beats running: the phase goes back to the tracker
-REANCHOR_BEATS = 0.125    # an announced beat this far off the last one's grid is a hard re-anchor (ver + 1)
-SILENCE_RELEASE_S = 3.0   # this long of silence hands the phase back to the tracker
-BPM_LO, BPM_HI = 60.0, 200.0   # the house tracker's range: only the tempo that SEEDS it is folded into it
+HOLD_WIDE = 0.08  # once the taps stop, a confident tracker this close (in the hand's octave) sets the tempo
+HOLD_FAR = 0.15  # ... this close after a run too short to ask for a re-seed (fewer than RESEED_TAPS taps)
+HOLD_EMA = 0.1  # ... and between follows the hand runs at its tempo averaged this much per landed beat
+FRESH_BEATS = 16  # the taps' own offset against the tracker sets the first follow this long after them ...
+FRESH_MOVE = 0.25  # ... unless the tracker moved this much (beats) against the taps since
+LINE_S = 4.0  # the tracker's LINE: drawn through its beats that landed in the last LINE_S ...
+LINE_BEATS = 10  # ... or its last LINE_BEATS beats, whichever reaches further back (a half-time tracker)
+LINE_MIN = 5  # ... at least this many of them on it
+LINE_DROP = 0.25  # ... its worst misses left off, at most this share of the beats (a re-lock's old phase)
+LINE_FLOOR = 0.03  # ... and only a miss over this much of a beat (or 3 sigma of the rest's spread)
+LINE_RMS = 0.06  # steady: the beats on it sit this close to it, RMS, in beats of the lights' period ...
+LINE_NEW = 3  # ... and its newest LINE_NEW beats each land within LINE_PRED of a beat of the line
+LINE_PRED = 0.10  #     through the beats before them (a tracker moving its phase is not steady)
+TEMPO_EMA = 0.1  # the tracker's tempo for a snap: its steady lines' tempi averaged, this much per beat
+OUTLIER_BEATS = 0.125  # a tap this far off the rest of its run (in beats; see _inliers) is left out of the lock
+FREE_DROP_RMS = 0.25  # ... with no tempo to check against, only if the line then misses by a quarter as much
+LOCK_RMS = 0.15  # taps the fitted line misses by more than this (RMS, in beats) are not steady: no lock yet
+AGREE_BEATS = 0.125  # the tracker agrees with the hand's beat within 1/8 of a beat ...
+AGREE_RUN = 8  # ... for this many beats running: the phase goes back to the tracker
+REANCHOR_BEATS = 0.125  # an announced beat this far off the last one's grid is a hard re-anchor (ver + 1)
+SILENCE_RELEASE_S = 3.0  # this long of silence hands the phase back to the tracker
+BPM_LO, BPM_HI = 60.0, 200.0  # the house tracker's range: only the tempo that SEEDS it is folded into it
 
 
 def wrap(x: float) -> float:
@@ -121,7 +125,7 @@ def wrap(x: float) -> float:
     return (x + 0.5) % 1.0 - 0.5
 
 
-def restore_octave(fused: float, raw: Sequence[float], lo: float = BPM_LO, hi: Optional[float] = BPM_HI) -> float:
+def restore_octave(fused: float, raw: Sequence[float], lo: float = BPM_LO, hi: float | None = BPM_HI) -> float:
     """tempo.fuse_bpm folds every database answer into 70-140 BPM to cluster them, so a 150 BPM hardstyle track comes
     back as 75 (and the `beat` command seeded beat_a at half time with it). The databases' own numbers carry the
     octave: the octave multiple of the fused tempo nearest (in octaves) to the median of the raw answers, kept inside
@@ -139,7 +143,7 @@ def restore_octave(fused: float, raw: Sequence[float], lo: float = BPM_LO, hi: O
     return bpm
 
 
-def tracker_seed(bpm: Optional[float], lo: float = BPM_LO, hi: float = BPM_HI) -> Optional[float]:
+def tracker_seed(bpm: float | None, lo: float = BPM_LO, hi: float = BPM_HI) -> float | None:
     """The tempo to seed the beat tracker with: bpm folded into its range (60-200). The only tempo that is capped at
     200: a 205 BPM uptempo track seeds beat_a at 102.5 (it cannot run faster), while the database's tempo for the beat
     grid, the hand's tempo and the snap's octave stay at 205."""
@@ -153,12 +157,13 @@ def tracker_seed(bpm: Optional[float], lo: float = BPM_LO, hi: float = BPM_HI) -
     return bpm
 
 
-def database_tempo(artist: str, title: str, offline: bool = False) -> Optional[Dict]:
+def database_tempo(artist: str, title: str, offline: bool = False) -> dict | None:
     """The song's tempo from the database chain in tempo.py (GetSongBPM / MusicBrainz -> AcousticBrainz / Deezer),
     fused and its octave restored, past 200 too (an uptempo or frenchcore track at 205 is 205): {"bpm", "confidence",
     "sources"}; None when nothing answers or nothing agrees. Seed a tracker with tracker_seed(bpm), never bpm itself.
     Network calls: run it off the audio thread (the VJ engine's track thread does)."""
     from . import tempo as T
+
     found = T.lookup(artist or "", title or "", offline=offline)
     if not found:
         return None
@@ -166,20 +171,20 @@ def database_tempo(artist: str, title: str, offline: bool = False) -> Optional[D
     if not fused.bpm or fused.confidence <= 0:
         return None
     bpm = restore_octave(float(fused.bpm), [s.bpm for s in found], hi=None)
-    return {"bpm": round(bpm, 2), "confidence": round(float(fused.confidence), 2),
-            "sources": [s.name for s in found]}
+    return {"bpm": round(bpm, 2), "confidence": round(float(fused.confidence), 2), "sources": [s.name for s in found]}
 
 
 class TrackerLine(NamedTuple):
     """A least-squares line through the beat tracker's landed beats (tracker_line)."""
-    period: float     # seconds per beat: the tracker's tempo, smoothed over the window
-    t_last: float     # the line's beat at the newest landed beat: the tracker's phase, smoothed
-    t_first: float    # the oldest beat it was drawn through
-    rms: float        # how far the beats kept on it sit from it, RMS, in seconds
-    n: int            # how many beats are on it
-    new_miss: float   # how far the newest LINE_NEW beats land from the line through the beats before them (worst, s)
 
-    def steady(self, period: Optional[float] = None) -> bool:
+    period: float  # seconds per beat: the tracker's tempo, smoothed over the window
+    t_last: float  # the line's beat at the newest landed beat: the tracker's phase, smoothed
+    t_first: float  # the oldest beat it was drawn through
+    rms: float  # how far the beats kept on it sit from it, RMS, in seconds
+    n: int  # how many beats are on it
+    new_miss: float  # how far the newest LINE_NEW beats land from the line through the beats before them (worst, s)
+
+    def steady(self, period: float | None = None) -> bool:
         """At least LINE_MIN beats on it, within LINE_RMS of a beat RMS, and its newest beats where the older ones
         said they would land (within LINE_PRED of a beat); beats of period (the lights' beat) when given, else its
         own."""
@@ -187,13 +192,13 @@ class TrackerLine(NamedTuple):
         return self.n >= LINE_MIN and self.rms <= LINE_RMS * p and self.new_miss <= LINE_PRED * p
 
 
-def _fit_line(k: np.ndarray, x: np.ndarray, keep: np.ndarray) -> Tuple[float, float]:
+def _fit_line(k: np.ndarray, x: np.ndarray, keep: np.ndarray) -> tuple[float, float]:
     A = np.vstack([k[keep], np.ones(int(keep.sum()))]).T
     (a, b), *_ = np.linalg.lstsq(A, x[keep], rcond=None)
     return float(a), float(b)
 
 
-def _robust_line(k: np.ndarray, x: np.ndarray, p0: float) -> Tuple[float, float, np.ndarray, np.ndarray]:
+def _robust_line(k: np.ndarray, x: np.ndarray, p0: float) -> tuple[float, float, np.ndarray, np.ndarray]:
     """(slope, intercept, each beat's miss, which beats are kept) of the least-squares line x = slope * k + b. The
     beat it misses most is left off while, against the line drawn WITHOUT it, it misses by more than LINE_FLOOR of a
     beat and more than 3 sigma of the others' spread (1.4826 x their median miss), at most LINE_DROP of the beats. (The
@@ -216,7 +221,7 @@ def _robust_line(k: np.ndarray, x: np.ndarray, p0: float) -> Tuple[float, float,
     return a, b, np.abs(x - (a * k + b)), keep
 
 
-def tracker_line(beats: Sequence[float]) -> Optional[TrackerLine]:
+def tracker_line(beats: Sequence[float]) -> TrackerLine | None:
     """The line through the tracker's landed beats (oldest first), or None with fewer than LINE_MIN. Beats are
     numbered interval by interval on the median interval (a skipped prediction counts two), the line drawn robustly
     (_robust_line: a re-lock's old phase drops out once it is a quarter of the window, and one stray beat never bends
@@ -249,42 +254,42 @@ class BeatGrid:
 
     def __init__(self, ahead_s: float = 0.25, tap_one: bool = False, round_bpm: bool = True):
         self.ahead_s, self.tap_one, self.round_bpm = float(ahead_s), bool(tap_one), bool(round_bpm)
-        self.run = TapLog(window_s=3600.0)        # the current run of taps (cleared when a new run starts)
-        self.last_tap: Optional[float] = None
-        self.owner = "track"                      # who owns the beat's phase: "track" (the tracker) or "hand"
-        self.locked = False                       # the hand is tapping (tap-lock): the lights follow the taps
-        self.anchor: Optional[float] = None       # the hand's grid: a beat time ...
-        self.period: Optional[float] = None       # ... and seconds per beat
-        self.tap_bpm: Optional[float] = None      # the tempo the taps set (snapped or rounded)
-        self.tap_how: Optional[str] = None        # what it snapped to: "db", "track" or "tap" (the taps' own)
-        self._p_tap = 0.5                         # the interval the hand taps at (the taps stop after two of them)
-        self._e0: Optional[float] = None          # holding: where the tracker's beat sits against the hand's (beats)
-        self._e0_taps: Optional[float] = None     # ... as measured against the taps at the release (_first_offset)
-        self._following = False                   # holding: this block the hand's grid followed the tracker
-        self._p_hold: Optional[float] = None      # holding: the tempo the hand runs at between follows (seconds)
-        self._keep: List[float] = []              # the taps the last lock kept
-        self._own: Optional[float] = None         # ... their own slope (seconds per beat), not the snapped period
-        self._hold_line: Optional["TrackerLine"] = None          # the line last folded into _p_hold
-        self.db_bpm: Optional[float] = None
-        self.tr: Optional[Tuple[float, float, float]] = None     # the tracker's next beat, period, confidence
-        self._tr_next: Optional[float] = None     # the tracker's latest prediction of the beat coming up
-        self._landed: Deque[float] = deque()      # its beats as they landed (its last word on each): the line's window
-        self.line: Optional[TrackerLine] = None   # the line through them (tracker_line)
-        self._tr_bpm: Optional[float] = None      # the tracker's tempo, its steady lines averaged (TEMPO_EMA) ...
-        self._tr_bpm_n = 0                        # ... over this many of them
+        self.run = TapLog(window_s=3600.0)  # the current run of taps (cleared when a new run starts)
+        self.last_tap: float | None = None
+        self.owner = "track"  # who owns the beat's phase: "track" (the tracker) or "hand"
+        self.locked = False  # the hand is tapping (tap-lock): the lights follow the taps
+        self.anchor: float | None = None  # the hand's grid: a beat time ...
+        self.period: float | None = None  # ... and seconds per beat
+        self.tap_bpm: float | None = None  # the tempo the taps set (snapped or rounded)
+        self.tap_how: str | None = None  # what it snapped to: "db", "track" or "tap" (the taps' own)
+        self._p_tap = 0.5  # the interval the hand taps at (the taps stop after two of them)
+        self._e0: float | None = None  # holding: where the tracker's beat sits against the hand's (beats)
+        self._e0_taps: float | None = None  # ... as measured against the taps at the release (_first_offset)
+        self._following = False  # holding: this block the hand's grid followed the tracker
+        self._p_hold: float | None = None  # holding: the tempo the hand runs at between follows (seconds)
+        self._keep: list[float] = []  # the taps the last lock kept
+        self._own: float | None = None  # ... their own slope (seconds per beat), not the snapped period
+        self._hold_line: TrackerLine | None = None  # the line last folded into _p_hold
+        self.db_bpm: float | None = None
+        self.tr: tuple[float, float, float] | None = None  # the tracker's next beat, period, confidence
+        self._tr_next: float | None = None  # the tracker's latest prediction of the beat coming up
+        self._landed: deque[float] = deque()  # its beats as they landed (its last word on each): the line's window
+        self.line: TrackerLine | None = None  # the line through them (tracker_line)
+        self._tr_bpm: float | None = None  # the tracker's tempo, its steady lines averaged (TEMPO_EMA) ...
+        self._tr_bpm_n = 0  # ... over this many of them
         self._now = 0.0
-        self._ahead: List[dict] = []
+        self._ahead: list[dict] = []
         self.ver = 0
         self.n = 0
-        self.last_sent: Optional[float] = None
-        self.src: Optional[str] = None            # the source of the last announced beat
-        self.bar_ref: Optional[Tuple[float, int]] = None          # a beat whose place in the bar is known (tap_one)
+        self.last_sent: float | None = None
+        self.src: str | None = None  # the source of the last announced beat
+        self.bar_ref: tuple[float, int] | None = None  # a beat whose place in the bar is known (tap_one)
         self.agree = 0
         self.last_reseed = -1e9
-        self.notes: List[dict] = []
+        self.notes: list[dict] = []
 
     # ------------------------------------------------------------------------------------------------------ inputs
-    def set_db(self, bpm: Optional[float]) -> None:
+    def set_db(self, bpm: float | None) -> None:
         """The song database's tempo for the track playing (None: none known)."""
         self.db_bpm = float(bpm) if bpm and bpm > 0 else None
 
@@ -303,7 +308,7 @@ class BeatGrid:
         self.last_tap = t
         if isolated:
             self.run.clear()
-            self._keep = []                        # the last lock's taps: a re-phase must not be undone by them
+            self._keep = []  # the last lock's taps: a re-phase must not be undone by them
         self.run.add(t)
         k = len(self.run.taps)
         if isolated:
@@ -330,7 +335,7 @@ class BeatGrid:
             self.tap(float(t))
         if self.locked and self.last_tap is not None and now - self.last_tap > 2.0 * self._p_tap:
             self.locked = False
-            self._e0 = None                        # measured at the first follow (_hold, _first_offset)
+            self._e0 = None  # measured at the first follow (_hold, _first_offset)
             self._e0_taps = self._taps_vs_tracker()
             self._note_tap(len(self.run.taps), "release", bpm=self.tap_bpm)
             self._status(f"taps stopped: the lights keep your beat at {self.tap_bpm:g} BPM until the tracker agrees")
@@ -338,7 +343,7 @@ class BeatGrid:
         # silence hands the beat back, but not while the hand is tapping into it (taps in a pause used to lock and be
         # handed straight back on every tap): only once it has been silent for 3 s since the last tap
         if silent_s >= SILENCE_RELEASE_S and (self.last_tap is None or now - self.last_tap >= SILENCE_RELEASE_S):
-            self.bar_ref = None                    # the music may come back on another phase: the tapped ONE is stale
+            self.bar_ref = None  # the music may come back on another phase: the tapped ONE is stale
             if self.owner == "hand":
                 self._give_back("silence")
         self._following = False
@@ -346,7 +351,7 @@ class BeatGrid:
             self._hold(now)
 
     # ------------------------------------------------------------------------------------------------------ output
-    def announce(self, now: float) -> Optional[dict]:
+    def announce(self, now: float) -> dict | None:
         """The beat to announce now ({"lead_s", "bpm", "conf", "n", "src", "ver", "bar", "bar_src"}), or None. A beat is
         announced the first time it is within ahead_s; a beat closer than half a period to the last one announced is
         the same beat said again, and is not."""
@@ -362,42 +367,62 @@ class BeatGrid:
             if gap < 0.5 * period:
                 return None
             if gap < 4.0 * period and abs(wrap(gap / period)) > REANCHOR_BEATS:
-                self.ver += 1                      # off the last beat's grid: a hard re-anchor
+                self.ver += 1  # off the last beat's grid: a hard re-anchor
         if self.owner == "hand" and not self.locked:
             self.agree = self.agree + 1 if self._agrees(t_next, period) else 0
             if self.agree >= AGREE_RUN:
-                self._give_back("agree")           # this beat is still the hand's; the next is the tracker's
+                self._give_back("agree")  # this beat is still the hand's; the next is the tracker's
         bar, bar_src = 0, None
         if self.tap_one and self.bar_ref is not None:
             t_ref, b_ref = self.bar_ref
-            bar = (b_ref - 1 + int(round((t_next - t_ref) / period))) % 4 + 1
+            bar = (b_ref - 1 + round((t_next - t_ref) / period)) % 4 + 1
             self.bar_ref = (t_next, bar)
             bar_src = "tap"
         self.last_sent = t_next
         self.n += 1
         self.src = src
-        return {"lead_s": lead, "bpm": 60.0 / period, "conf": conf, "n": self.n, "src": src, "ver": self.ver,
-                "bar": bar, "bar_src": bar_src}
+        return {
+            "lead_s": lead,
+            "bpm": 60.0 / period,
+            "conf": conf,
+            "n": self.n,
+            "src": src,
+            "ver": self.ver,
+            "bar": bar,
+            "bar_src": bar_src,
+        }
 
-    def view(self, now: float, count: int = 4) -> List[dict]:
+    def view(self, now: float, count: int = 4) -> list[dict]:
         """The next beats the lights will show, in the tracker's prediction format (for the referee)."""
         if self.owner != "hand":
             return list(self._ahead)
         t = self._hand_next(now)
-        return [{"t_beat": t + k * self.period, "bpm": 60.0 / self.period, "phase": 0.0, "confidence": 1.0}
-                for k in range(count)]
+        return [
+            {"t_beat": t + k * self.period, "bpm": 60.0 / self.period, "phase": 0.0, "confidence": 1.0}
+            for k in range(count)
+        ]
 
     def snapshot(self) -> dict:
-        return {"owner": self.owner, "locked": self.locked, "src": self.src, "ver": self.ver,
-                "db_bpm": self.db_bpm, "tap_bpm": self.tap_bpm, "tap_snapped_to": self.tap_how,
-                "taps": len(self.run.taps), "tap_one": self.tap_one, "round_bpm": self.round_bpm,
-                "agree": self.agree, "hand_offset_beats": None if self._e0 is None else round(self._e0, 3),
-                "following": self._following,
-                "line_bpm": None if self.line is None else round(60.0 / self.line.period, 2),
-                "line_steady": bool(self.line is not None and self.line.steady())}
+        return {
+            "owner": self.owner,
+            "locked": self.locked,
+            "src": self.src,
+            "ver": self.ver,
+            "db_bpm": self.db_bpm,
+            "tap_bpm": self.tap_bpm,
+            "tap_snapped_to": self.tap_how,
+            "taps": len(self.run.taps),
+            "tap_one": self.tap_one,
+            "round_bpm": self.round_bpm,
+            "agree": self.agree,
+            "hand_offset_beats": None if self._e0 is None else round(self._e0, 3),
+            "following": self._following,
+            "line_bpm": None if self.line is None else round(60.0 / self.line.period, 2),
+            "line_steady": bool(self.line is not None and self.line.steady()),
+        }
 
     # ------------------------------------------------------------------------------------------------------ inside
-    def _next(self, now: float) -> Optional[Tuple[float, float, float, str]]:
+    def _next(self, now: float) -> tuple[float, float, float, str] | None:
         if self.owner == "hand":
             return self._hand_next(now), self.period, 1.0, "tap"
         if self.tr is None:
@@ -411,7 +436,7 @@ class BeatGrid:
         """The hand's first beat after now."""
         return self.anchor + (math.floor((now - self.anchor) / self.period) + 1) * self.period
 
-    def _grid(self) -> Optional[Tuple[float, float]]:
+    def _grid(self) -> tuple[float, float] | None:
         """A beat time and the period of the beat being shown: the hand's, else the tracker's (its tempo off its line
         when that is steady: a tap that takes the beat then holds it at the tracker's smoothed tempo, not at whatever
         its bpm field reads that block)."""
@@ -428,7 +453,7 @@ class BeatGrid:
         second, not every block)."""
         prev, self._tr_next = self._tr_next, t_next
         if prev is None or t_next - prev <= 0.5 * period or prev > now:
-            return                                 # the same beat, refined (or moved before it landed)
+            return  # the same beat, refined (or moved before it landed)
         self._landed.append(prev)
         span = max(LINE_S, LINE_BEATS * period)
         while prev - self._landed[0] > span:
@@ -437,12 +462,12 @@ class BeatGrid:
         if ln is not None and ln.steady():
             bpm = 60.0 / ln.period
             if self._tr_bpm is None or abs(bpm / self._tr_bpm - 1.0) >= SNAP:
-                self._tr_bpm, self._tr_bpm_n = bpm, 1          # a tempo of its own (a new track, an octave slip)
+                self._tr_bpm, self._tr_bpm_n = bpm, 1  # a tempo of its own (a new track, an octave slip)
             else:
                 self._tr_bpm_n += 1
                 self._tr_bpm += max(TEMPO_EMA, 1.0 / self._tr_bpm_n) * (bpm - self._tr_bpm)
 
-    def _steady_line(self, period: Optional[float] = None) -> Optional[TrackerLine]:
+    def _steady_line(self, period: float | None = None) -> TrackerLine | None:
         """The tracker's line when it is steady (against the lights' beat, period, when given) and still current."""
         ln = self.line
         if ln is None or self._now - ln.t_last > 3.0 * ln.period or not ln.steady(period):
@@ -464,7 +489,7 @@ class BeatGrid:
         near = min((float(b["t_beat"]) for b in self._ahead), key=lambda t: abs(t - t_beat))
         return abs(wrap((near - t_beat) / period)) < AGREE_BEATS
 
-    def _take(self, anchor: float, period: float, own: Optional[float] = None) -> None:
+    def _take(self, anchor: float, period: float, own: float | None = None) -> None:
         """The hand takes the beat: its grid at anchor + k * period; own is the taps' own slope (seconds per beat of
         the line through the taps a lock kept), what the database is asked to agree with (_db_sides_with_hand)."""
         self.owner = "hand"
@@ -489,20 +514,24 @@ class BeatGrid:
         self.agree = 0
         if was:
             self._note_tap(0, "return")
-            self._status({"agree": "the tracker agrees with your beat: back to the tracker",
-                          "silence": "silence: the beat goes back to the tracker",
-                          "track": "a new track: the beat goes back to the tracker"}[why])
+            self._status(
+                {
+                    "agree": "the tracker agrees with your beat: back to the tracker",
+                    "silence": "silence: the beat goes back to the tracker",
+                    "track": "a new track: the beat goes back to the tracker",
+                }[why]
+            )
 
     def _resync(self, t: float) -> None:
         grid = self._grid()
-        if grid is None:                           # nothing shown yet to re-phase; the tap may still mark the ONE
+        if grid is None:  # nothing shown yet to re-phase; the tap may still mark the ONE
             if self.tap_one:
                 self.bar_ref = (t, 1)
             self._note_tap(1, "resync")
             return
         b0, period = grid
-        own = self._own if self.owner == "hand" else None        # a re-phase keeps the tapped run's own slope
-        d = wrap((t - b0) / period)                # where the tap fell against the beat shown, in beats
+        own = self._own if self.owner == "hand" else None  # a re-phase keeps the tapped run's own slope
+        d = wrap((t - b0) / period)  # where the tap fell against the beat shown, in beats
         if abs(d) < NOISE_BEATS:
             shift, beat = 0.0, t - d * period
         elif abs(d) <= SLEW_BEATS:
@@ -517,7 +546,7 @@ class BeatGrid:
             self.bar_ref = (beat, 1)
         self._note_tap(1, "resync", shift=round(shift, 3))
 
-    def _references(self, p_taps: Optional[float] = None) -> List[Tuple[float, str]]:
+    def _references(self, p_taps: float | None = None) -> list[tuple[float, str]]:
         """The tempi a tap run may snap to, in order: the database's (unfolded: 205 for an uptempo track), then a
         confident tracker's while its line is steady against the taps' beat p_taps: its tempo smoothed, the steady
         lines' tempi averaged (_tr_bpm). On real music its bpm field swings a few per cent from block to block, and a
@@ -541,10 +570,10 @@ class BeatGrid:
         at 205 snapped to the half-time tracker's 102.3 and it took the beat back; only the tracker's seed is capped
         now (tracker_seed)."""
         m = max(0, round(math.log2(tapped / ref)))
-        return ref * 2.0 ** m
+        return ref * 2.0**m
 
     @staticmethod
-    def _line(taps: Sequence[float], period: float) -> Tuple[np.ndarray, np.ndarray]:
+    def _line(taps: Sequence[float], period: float) -> tuple[np.ndarray, np.ndarray]:
         """Each tap's beat number on a grid of this period and the tap times. Numbered interval by interval (each gap
         is a whole number of beats, at least one), not from the first tap: with 30 ms of jitter the median interval
         can be 10 % off, and counting the whole run with it put the 8th tap on beat 6 (a 124 BPM lock from taps at
@@ -554,7 +583,7 @@ class BeatGrid:
         return np.concatenate([[0.0], np.cumsum(steps)]), x
 
     @classmethod
-    def _phase(cls, taps: Sequence[float], period: float) -> Tuple[float, float]:
+    def _phase(cls, taps: Sequence[float], period: float) -> tuple[float, float]:
         """With the period fixed: the beat time that best fits the taps (least squares) and the RMS miss in periods
         (TapLog.tap_phase, with the taps numbered interval by interval)."""
         k, x = cls._line(taps, period)
@@ -576,13 +605,13 @@ class BeatGrid:
             k, xx = cls._line(taps, p_mean)
             if np.all(np.diff(k) == 1):
                 coef, r, _h = cls._lsq(k, xx)
-                if math.sqrt(float(np.mean(r ** 2))) / abs(float(coef[0])) <= LOCK_RMS:
+                if math.sqrt(float(np.mean(r**2))) / abs(float(coef[0])) <= LOCK_RMS:
                     return float(coef[0])
         good = iv[(iv > 0.2) & (iv < 2.0)]
         return cls._slope(taps, float(np.median(good)) if len(good) else 0.5)
 
     @classmethod
-    def _inliers(cls, taps: Sequence[float], period: float, fixed: bool) -> List[float]:
+    def _inliers(cls, taps: Sequence[float], period: float, fixed: bool) -> list[float]:
         """The taps that belong to the run, the worst miss dropped first while it is over OUTLIER_BEATS, at most a
         quarter of the run and never below 3 taps.
 
@@ -611,12 +640,12 @@ class BeatGrid:
             j = int(np.argmax(miss))
             if miss[j] <= OUTLIER_BEATS:
                 break
-            rest = keep[:j] + keep[j + 1:]
+            rest = keep[:j] + keep[j + 1 :]
             if not fixed:
                 k2, x2 = cls._line(rest, period)
                 _c2, r2, _h2 = cls._lsq(k2, x2)
-                rms = math.sqrt(float(np.sum(r ** 2)) / (len(r) - 2))
-                rms2 = math.sqrt(float(np.sum(r2 ** 2)) / max(1, len(r2) - 2))
+                rms = math.sqrt(float(np.sum(r**2)) / (len(r) - 2))
+                rms2 = math.sqrt(float(np.sum(r2**2)) / max(1, len(r2) - 2))
                 if rms2 > FREE_DROP_RMS * rms:
                     break
             keep = rest
@@ -624,7 +653,7 @@ class BeatGrid:
         return keep
 
     @staticmethod
-    def _lsq(k: np.ndarray, x: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _lsq(k: np.ndarray, x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """The least-squares line x = slope * k + t0: (slope, t0), the residuals and the hat matrix's diagonal."""
         A = np.vstack([k, np.ones_like(k)]).T
         coef, *_ = np.linalg.lstsq(A, x, rcond=None)
@@ -669,7 +698,7 @@ class BeatGrid:
         miss = np.abs(x[~kept] - (float(coef[0]) * k[~kept] + float(coef[1]))) / period
         return bool(np.all(miss > OUTLIER_BEATS))
 
-    def _fit(self, taps: Sequence[float]) -> Tuple[float, str, float, List[float], float]:
+    def _fit(self, taps: Sequence[float]) -> tuple[float, str, float, list[float], float]:
         """(bpm, what it snapped to, the period of the taps' own octave, the taps kept, the taps' own slope: seconds
         per beat of the line through the taps kept) for a tap run. Each reference: drop the taps that miss its grid,
         and it is a candidate when the line through the rest is within the snap window of it.
@@ -697,11 +726,11 @@ class BeatGrid:
         for ref, how in refs:
             bpm = self._octave(ref, tapped)
             period = 60.0 / bpm
-            p_line = period * 2.0 ** round(math.log2(p_free / period))    # the taps' own octave (half time is common)
+            p_line = period * 2.0 ** round(math.log2(p_free / period))  # the taps' own octave (half time is common)
             keep = self._inliers(taps, p_line, fixed=True)
             trusted = both or how == "track" or self._stands_out(taps, keep, p_line)
             if not trusted:
-                keep = list(taps)          # a drop that does not stand out may be the grid's own doing: all count
+                keep = list(taps)  # a drop that does not stand out may be the grid's own doing: all count
             k, x = self._line(keep, p_line)
             slope = float(self._lsq(k, x)[0][0])
             miss = abs(slope / p_line - 1.0)
@@ -717,7 +746,7 @@ class BeatGrid:
         return bpm, "tap", 60.0 / bpm, keep, p_in
 
     @staticmethod
-    def _agreeing(found: Sequence[tuple]) -> Optional[tuple]:
+    def _agreeing(found: Sequence[tuple]) -> tuple | None:
         """Which candidate reference a tap run snaps to ((miss, bpm, how, ...) in reference order: the database's,
         then the tracker's). While the two agree with each other (within 4 %, octave-folded), the database's (the
         spec's order: it is the cleaner number). When they DISAGREE, the one the taps' own slope misses least: a
@@ -746,7 +775,7 @@ class BeatGrid:
             self._note_tap(k, "run")
             return
         anchor = fit[0]
-        anchor += round((self.run.taps[-1] - anchor) / period) * period          # a beat at the latest tap
+        anchor += round((self.run.taps[-1] - anchor) / period) * period  # a beat at the latest tap
         first = not self.locked
         self._take(anchor, period, own=own)
         self.locked = True
@@ -792,7 +821,7 @@ class BeatGrid:
         ln = self._steady_line(self.period)
         p_f = None
         if ln is not None:
-            p_f = ln.period / 2.0 ** round(math.log2(ln.period / self.period))      # in the hand's octave
+            p_f = ln.period / 2.0 ** round(math.log2(ln.period / self.period))  # in the hand's octave
             off = abs(p_f / self.period - 1.0)
             if off >= SNAP and not self._hold_wide(p_f, off):
                 p_f = None
@@ -805,7 +834,7 @@ class BeatGrid:
         else:
             e = wrap((t_tr - self.anchor) / self.period)
             if abs(wrap(e - self._e0)) > REANCHOR_BEATS:
-                self._e0 = e                       # a re-lock (or the lights drifted while it was not steady)
+                self._e0 = e  # a re-lock (or the lights drifted while it was not steady)
                 return
         self._following = True
         if ln is not self._hold_line:
@@ -828,11 +857,11 @@ class BeatGrid:
         if len(self._keep) < 2 or self.last_tap is None or self._now - self.last_tap > FRESH_BEATS * p_f:
             return wrap((t_tr - self.anchor) / self.period)
         k, x = self._line(self._keep, p_f)
-        beat = float(np.mean(x - k * p_f)) + float(k[-1]) * p_f        # the kept taps' beat at the last of them
+        beat = float(np.mean(x - k * p_f)) + float(k[-1]) * p_f  # the kept taps' beat at the last of them
         e_taps = wrap((t_tr - beat) / p_f)
         return pairs if pairs is not None and abs(wrap(e_taps - pairs)) <= FRESH_MOVE else e_taps
 
-    def _taps_vs_tracker(self) -> Optional[float]:
+    def _taps_vs_tracker(self) -> float | None:
         """Where the tracker's beats sat against the taps while the hand tapped, in beats of the hand's period: the
         circular mean, over the taps kept by the lock, of each tap's nearest tracker beat (landed, or coming up) within
         half of the TRACKER's beat, wrapped to the hand's beat. Both at the same moment, so no tempo carries it across
@@ -890,9 +919,16 @@ class BeatGrid:
         self.last_reseed = now
         self.notes.append({"t": "reseed", "bpm": self.tap_bpm})
 
-    def _note_tap(self, count: int, mode: str, bpm: Optional[float] = None, shift: Optional[float] = None) -> None:
-        self.notes.append({"t": "tap", "count": int(count), "mode": mode,
-                           "bpm": None if bpm is None else round(float(bpm), 2), "shift": shift})
+    def _note_tap(self, count: int, mode: str, bpm: float | None = None, shift: float | None = None) -> None:
+        self.notes.append(
+            {
+                "t": "tap",
+                "count": int(count),
+                "mode": mode,
+                "bpm": None if bpm is None else round(float(bpm), 2),
+                "shift": shift,
+            }
+        )
 
     def _status(self, msg: str) -> None:
         self.notes.append({"t": "status", "msg": msg})

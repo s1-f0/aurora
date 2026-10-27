@@ -371,7 +371,7 @@ class MidiOut:
         with self._io:
             codes["midiOutReset"] = self.mm.midiOutReset(self.handle)
             bad = self._reclaim()
-            for hdr, _buf in self._parked:  # not even marked done after the reset
+            for _hdr, _buf in self._parked:  # not even marked done after the reset
                 bad.append(MIDIERR_STILLPLAYING)
             codes["midiOutUnprepareHeader"] = bad[0] if bad else MMSYSERR_NOERROR
             codes["midiOutClose"] = self.mm.midiOutClose(self.handle)

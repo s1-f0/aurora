@@ -2502,7 +2502,7 @@ class Engine:
                         self._keys_changed(t)
                 if self.harmony is not None and kind == "midi":
                     self._sense_note({"sustain": d2}, t)
-                return
+                return None
             if self._tap_ids:
                 self._tap_control(kind, f"cc{d1}", d2, t)
             dec, note = self.cc.feed(f"{kind}:{ch}:cc{d1}", d1, d2, t)
@@ -2995,10 +2995,8 @@ def run(
                 say("FL Studio is not running: if the pads stay dark, rerun with --connect")
         except Exception as exc:
             if led_out is not None:  # opened, then the connect failed: give the port back
-                try:
+                with contextlib.suppress(Exception):
                     led_out.close()
-                except Exception:
-                    pass
             led_out, refusal, refusal_status = None, f"no KeyLab DAW output ({exc})", 503
 
     # the song database per track: only for the live loopback (now-playing says nothing about a replayed file)

@@ -195,7 +195,8 @@ def test_sse_stream_delivers_every_event_type_with_the_contract_fields():
         assert 0 <= b["due_ms"] <= 300, b  # announced ahead, inside the contract's window
         assert 0 <= b["conf"] <= 1
         assert b["on_beat"] is None or -1 <= b["on_beat"] <= 1  # negative = locked on the off-beat
-        assert b["src"] in ("db", "track", "tap") and b["bar"] in (0, 1, 2, 3, 4)
+        assert b["src"] in ("db", "track", "tap")
+        assert b["bar"] in (0, 1, 2, 3, 4)
         assert abs(b["wall_ms"] / 1000.0 - time.time()) < 60
     assert [b["n"] for b in beats] == list(range(beats[0]["n"], beats[0]["n"] + len(beats))), "one per beat"
     assert abs(beats[-1]["bpm"] - 120.0) < 3.0
@@ -723,7 +724,8 @@ def test_scene_route_publishes_the_page_scene_validates_and_rate_limits():
         assert sse.wait_for(lambda: sse.of("hello"), 5)
         scene = {"name": "Laser Cathedral", "index": 0, "count": 14, "color": "#FF4FD8", "browsing": False}
         st, r, body = _post_raw(port, "/api/scene", json.dumps(scene).encode())  # a plain-text body, as the page sends
-        assert st == 202 and body == {"ok": True, "changed": True}
+        assert st == 202
+        assert body == {"ok": True, "changed": True}
         assert r.getheader("Access-Control-Allow-Origin") == "*"
         assert sse.wait_for(lambda: sse.of("scene"), 3)
         assert sse.of("scene")[0] == {
@@ -740,7 +742,8 @@ def test_scene_route_publishes_the_page_scene_validates_and_rate_limits():
         st, _r, body = _post_raw(
             port, "/api/scene", json.dumps({**scene, "name": "Reactor", "index": 1, "browsing": True}).encode()
         )
-        assert st == 202 and body["changed"] is True
+        assert st == 202
+        assert body["changed"] is True
         assert sse.wait_for(lambda: len(sse.of("scene")) == 2 and sse.of("scene")[1]["browsing"] is True, 3)
         for bad in (
             b"not json",
@@ -753,7 +756,8 @@ def test_scene_route_publishes_the_page_scene_validates_and_rate_limits():
         ):
             assert _post_raw(port, "/api/scene", bad)[0] == 400, bad
         st, _r, state = _get_json(port, "/api/state")
-        assert state["scene"]["name"] == "Reactor" and state["scene_counts"]["refused"] >= 6
+        assert state["scene"]["name"] == "Reactor"
+        assert state["scene_counts"]["refused"] >= 6
         late = _SSE(port)
         try:
             assert late.wait_for(lambda: late.of("scene"), 3), "a page that connects later is told the scene"
@@ -768,7 +772,8 @@ def test_scene_route_publishes_the_page_scene_validates_and_rate_limits():
         )
         rr = c.getresponse()
         rr.read()
-        assert rr.status == 204 and "POST" in rr.getheader("Access-Control-Allow-Methods")
+        assert rr.status == 204
+        assert "POST" in rr.getheader("Access-Control-Allow-Methods")
         c.close()
     finally:
         eng.stop()
@@ -783,7 +788,8 @@ def test_scene_route_holds_a_flood_to_eight_a_second():
         eng.scene_request({"name": f"Scene {i}", "index": i % 14, "count": 14}, now=100.0 + i * 0.01)[0]
         for i in range(20)
     ]  # 20 in 0.2 s
-    assert codes[:8] == [202] * 8 and codes.count(429) >= 10
+    assert codes[:8] == [202] * 8
+    assert codes.count(429) >= 10
     assert eng.scene_counts["limited"] == codes.count(429)
     assert len([e for e in seen if e["t"] == "scene"]) == codes.count(202)
     assert eng.scene_request({"name": "Later"}, now=102.0)[0] == 202, "the bucket refills"
@@ -800,7 +806,8 @@ def test_scene_route_answers_with_retry_after_when_flooded():
             statuses.append(st)
             if st == 429:
                 retry = r.getheader("Retry-After")
-        assert 429 in statuses and retry == "1"
+        assert 429 in statuses
+        assert retry == "1"
     finally:
         eng.stop()
 
@@ -819,10 +826,16 @@ def test_rewind_fast_forward_and_the_dial_reach_the_page_as_ctl_events():
         eng.stop()
     ctl = [e for e in seen if e["t"] == "ctl"]
     by = [(e["id"], e["kind"], e["value"], e["delta"]) for e in ctl]
-    assert by[0][:3] == ("cc25", "abs", 1.0) and by[1][:3] == ("cc25", "abs", 0.0)
-    assert by[2][:3] == ("cc26", "abs", 1.0) and by[3][:3] == ("cc26", "abs", 0.0)
-    assert by[4][0] == "cc116" and by[4][1] == "rel" and by[4][3] == 1
-    assert by[5][0] == "cc116" and by[5][1] == "rel" and by[5][3] == -1
+    assert by[0][:3] == ("cc25", "abs", 1.0)
+    assert by[1][:3] == ("cc25", "abs", 0.0)
+    assert by[2][:3] == ("cc26", "abs", 1.0)
+    assert by[3][:3] == ("cc26", "abs", 0.0)
+    assert by[4][0] == "cc116"
+    assert by[4][1] == "rel"
+    assert by[4][3] == 1
+    assert by[5][0] == "cc116"
+    assert by[5][1] == "rel"
+    assert by[5][3] == -1
     assert by[6][:3] == ("cc117", "abs", 1.0)
     assert all(e["port"] == "daw" for e in ctl)
 
@@ -1348,7 +1361,8 @@ def test_run_closes_the_daw_output_when_the_connect_send_fails(monkeypatch, tmp_
     assert V.run(port=_free_port(), leds=True, connect=True, audio=False, midi=False, secs=0.2, quiet=True) == 0
     assert len(fake.long_msgs) == 1, "the connect SysEx reached the driver"
     assert not fake.out_open, "the output was closed, not dropped"
-    assert fake.refused_unprepares == [] and len(fake.out_unprepared) == 1, "its header came back after the reset"
+    assert fake.refused_unprepares == [], "its header came back after the reset"
+    assert len(fake.out_unprepared) == 1, "its header came back after the reset"
 
 
 # 3. the zombie stream: a stopped engine serves nothing, not even on a kept-alive connection

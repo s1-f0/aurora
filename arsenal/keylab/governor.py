@@ -44,6 +44,7 @@ The clock and sleep are injectable, so the property tests run on a fake clock an
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import json
 import mmap
@@ -53,9 +54,11 @@ import sys
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import NamedTuple, TypeVar
+from typing import TYPE_CHECKING, NamedTuple, TypeVar
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
 
 T = TypeVar("T")
 
@@ -419,11 +422,11 @@ class PortGovernor(BurstGovernor):
             self.gated += 1
             self.gate_waited_s += waited
             if token is None or not self._acquire():  # unregistered, or a frozen holder: it goes stale
-                return
+                return None
             try:
                 now = self._clock()
                 st = self._read(now)
-                self._write(st._replace(flight=[f for f in st.flight if f[0] != token], ends=st.ends + [now]), now)
+                self._write(st._replace(flight=[f for f in st.flight if f[0] != token], ends=[*st.ends, now]), now)
             finally:
                 _unlock_fd(self._fd)
 
@@ -495,21 +498,15 @@ class PortGovernor(BurstGovernor):
             fd, self._fd = self._fd, None
             self.shared = False
         if mm is not None:
-            try:
+            with contextlib.suppress(BufferError, OSError, ValueError):
                 mm.close()
-            except (BufferError, OSError, ValueError):
-                pass
         if fd is not None:
-            try:
+            with contextlib.suppress(OSError):
                 os.close(fd)
-            except OSError:
-                pass
 
     def __del__(self):
-        try:
+        with contextlib.suppress(Exception):
             self.close()
-        except Exception:
-            pass
 
 
 def max_in_window(times, window: float) -> int:

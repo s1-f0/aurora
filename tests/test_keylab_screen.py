@@ -718,7 +718,8 @@ def test_the_vj_page_scene_shows_on_line_2_and_the_dial_browse_is_marked():
     r.feed({"t": "hello"}, 0)
     r.feed({"t": "beat", "bpm": 128, "conf": 0.9, "n": 1}, 0)
     r.feed({"t": "scene", "name": "Laser Cathedral", "index": 0, "count": 14, "color": "#ff4fd8", "browsing": False}, 0)
-    assert r.view()[2] == "128 BPM | Laser Cathedral" and r.view()[3] == S.rgb7("#ff4fd8")
+    assert r.view()[2] == "128 BPM | Laser Cathedral"
+    assert r.view()[3] == S.rgb7("#ff4fd8")
     r.feed({"t": "scene", "name": "Reactor", "index": 1, "count": 14, "color": "#ff4fd8", "browsing": True}, 1)
     assert r.view()[2] == "128 BPM | > Reactor"
     assert b"128 BPM | > REACTOR" in S.render(r.view()), "line 2 is upper-cased by the script's rule"
@@ -729,14 +730,20 @@ def test_the_vj_page_scene_shows_on_line_2_and_the_dial_browse_is_marked():
 def test_the_engine_scene_reaches_the_keylab_screen_end_to_end():
     """The real engine on a test port: a scene POSTed by a page comes out of `screen --live` on line 2."""
     from arsenal.keylab import vj as V
+
     port = _free_test_port()
     eng = V.Engine(http_port=port, say=lambda _m: None).start()
     try:
         st, _b = None, None
         import http.client
+
         c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-        c.request("POST", "/api/scene", body=json.dumps({"name": "Synthwave Grid", "index": 7, "count": 14}).encode(),
-                  headers={"Content-Type": "text/plain"})
+        c.request(
+            "POST",
+            "/api/scene",
+            body=json.dumps({"name": "Synthwave Grid", "index": 7, "count": 14}).encode(),
+            headers={"Content-Type": "text/plain"},
+        )
         st = c.getresponse().status
         c.close()
         assert st == 202

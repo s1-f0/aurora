@@ -15,13 +15,13 @@ as Microsoft documents it (Learn: midiInAddBuffer, midiOutLongMsg, midiOutUnprep
 `calls` as (name, perf_counter time), in order. SysEx bytes are written into the buffer's memory at the address the
 header holds, whatever ctypes type winmidi declares `lpData` as, and read back the same way.
 """
+
 from __future__ import annotations
 
 import ctypes
 import threading
 import time
 from ctypes import wintypes
-from typing import Dict, List, Optional, Tuple
 
 MMSYSERR_NOERROR = 0
 MMSYSERR_ERROR = 1
@@ -43,34 +43,54 @@ def _obj(arg):
     return getattr(arg, "_obj", arg)
 
 
-def buffer_address(hdr) -> Optional[int]:
+def buffer_address(hdr) -> int | None:
     """The header's lpData as an address, whatever ctypes type the field is declared with."""
     return ctypes.c_void_p.from_buffer(hdr, type(hdr).lpData.offset).value
 
 
 class FakeWinMM:
-    FUNCS = ("midiOutGetNumDevs", "midiOutGetDevCapsW", "midiInGetNumDevs", "midiInGetDevCapsW",
-             "midiOutOpen", "midiOutShortMsg", "midiOutPrepareHeader", "midiOutLongMsg", "midiOutUnprepareHeader",
-             "midiOutReset", "midiOutClose",
-             "midiInOpen", "midiInPrepareHeader", "midiInUnprepareHeader", "midiInAddBuffer", "midiInStart",
-             "midiInStop", "midiInReset", "midiInClose")
+    FUNCS = (
+        "midiOutGetNumDevs",
+        "midiOutGetDevCapsW",
+        "midiInGetNumDevs",
+        "midiInGetDevCapsW",
+        "midiOutOpen",
+        "midiOutShortMsg",
+        "midiOutPrepareHeader",
+        "midiOutLongMsg",
+        "midiOutUnprepareHeader",
+        "midiOutReset",
+        "midiOutClose",
+        "midiInOpen",
+        "midiInPrepareHeader",
+        "midiInUnprepareHeader",
+        "midiInAddBuffer",
+        "midiInStart",
+        "midiInStop",
+        "midiInReset",
+        "midiInClose",
+    )
 
-    def __init__(self, outs=("KeyLab 88 mk3 MIDI", "KeyLab 88 mk3 DAW"),
-                 ins=("KeyLab 88 mk3 MIDI", "KeyLab 88 mk3 DAW"), out_done_on_send: bool = True):
+    def __init__(
+        self,
+        outs=("KeyLab 88 mk3 MIDI", "KeyLab 88 mk3 DAW"),
+        ins=("KeyLab 88 mk3 MIDI", "KeyLab 88 mk3 DAW"),
+        out_done_on_send: bool = True,
+    ):
         self.out_names, self.in_names = list(outs), list(ins)
         self.out_done_on_send = out_done_on_send
-        self.calls: List[Tuple[str, float]] = []
-        self.rc: Dict[str, int] = {}
-        self.violations: List[str] = []                    # WinMM calls made from inside the input callback
-        self.refused_unprepares: List[str] = []            # unprepare tried on a header the driver still owns
-        self.long_msgs: List[Tuple[float, bytes]] = []     # every SysEx midiOutLongMsg accepted
-        self.out_pending: list = []                        # output headers queued, not yet handed back
-        self.out_unprepared: List[int] = []                # addresses of output headers unprepared
-        self.in_queue: list = []                           # input headers queued by midiInAddBuffer, FIFO
+        self.calls: list[tuple[str, float]] = []
+        self.rc: dict[str, int] = {}
+        self.violations: list[str] = []  # WinMM calls made from inside the input callback
+        self.refused_unprepares: list[str] = []  # unprepare tried on a header the driver still owns
+        self.long_msgs: list[tuple[float, bytes]] = []  # every SysEx midiOutLongMsg accepted
+        self.out_pending: list = []  # output headers queued, not yet handed back
+        self.out_unprepared: list[int] = []  # addresses of output headers unprepared
+        self.in_queue: list = []  # input headers queued by midiInAddBuffer, FIFO
         self.in_cb = None
         self.in_open = False
         self.out_open = False
-        self.started_at: Optional[float] = None
+        self.started_at: float | None = None
         self.dropped = 0
         self._tl = threading.local()
         self._cv = threading.Condition()
@@ -79,8 +99,9 @@ class FakeWinMM:
 
             def fn(*a, _impl=impl, _name=name):
                 return self._call(_name, _impl, *a)
+
             fn.__name__ = name
-            setattr(self, name, fn)        # plain function attributes: winmidi sets argtypes/restype on them
+            setattr(self, name, fn)  # plain function attributes: winmidi sets argtypes/restype on them
 
     # --- bookkeeping ---------------------------------------------------------------------------------------------
     def _call(self, name, impl, *a):
@@ -91,7 +112,7 @@ class FakeWinMM:
             return self.rc[name]
         return impl(*a)
 
-    def names(self) -> List[str]:
+    def names(self) -> list[str]:
         return [n for n, _t in self.calls]
 
     def first(self, name: str) -> int:
@@ -202,7 +223,7 @@ class FakeWinMM:
     def _midiInReset(self, h):
         with self._cv:
             back, self.in_queue = list(self.in_queue), []
-        for hd in back:                                  # every queued buffer comes back, empty
+        for hd in back:  # every queued buffer comes back, empty
             hd.dwBytesRecorded = 0
             hd.dwFlags = (hd.dwFlags | MHDR_DONE) & ~MHDR_INQUEUE
             self._fire(MIM_LONGDATA, ctypes.addressof(hd))
@@ -217,12 +238,14 @@ class FakeWinMM:
     # --- the device side -----------------------------------------------------------------------------------------
     def _fire(self, msg, p1) -> None:
         """Call the app's MidiInProc on a driver thread, as Windows does, and wait for it to return."""
+
         def run():
             self._tl.in_cb = True
             try:
                 self.in_cb(IN_HANDLE, msg, 0, p1, 0)
             finally:
                 self._tl.in_cb = False
+
         t = threading.Thread(target=run, name="fake-winmm-driver")
         t.start()
         t.join(timeout=5)

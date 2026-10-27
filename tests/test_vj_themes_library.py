@@ -11,12 +11,12 @@ import pytest
 
 LIBRARY = json.loads((Path(__file__).resolve().parent.parent / "arsenal" / "web" / "vj-themes.json").read_text("utf-8"))
 THEMES = LIBRARY["themes"]
-WASH_ZONE = (15.0, 100.0)   # as tests/test_keylab_w0.py: orange through lime renders close to white on the pads
+WASH_ZONE = (15.0, 100.0)  # as tests/test_keylab_w0.py: orange through lime renders close to white on the pads
 ROLES = ("A", "B", "W")
 
 
 def _rgb(hexcode):
-    return tuple(int(hexcode[i:i + 2], 16) for i in (1, 3, 5))
+    return tuple(int(hexcode[i : i + 2], 16) for i in (1, 3, 5))
 
 
 def _lin(c):
@@ -45,7 +45,8 @@ def test_every_pad_stand_in_reads_on_the_pads(theme):
         assert s > 0.5, f"{theme['id']} led.{role} {theme['led'][role]} is too unsaturated to read on the pads"
         assert not (WASH_ZONE[0] <= h <= WASH_ZONE[1]), f"{theme['id']} led.{role} (hue {h:.0f}) washes to white"
     for role, level in theme.get("led_level", {}).items():
-        assert theme["led"][role] == "#ffffff" and 0 < level <= 1, f"{theme['id']} led_level.{role}"
+        assert theme["led"][role] == "#ffffff", f"{theme['id']} led_level.{role}"
+        assert 0 < level <= 1, f"{theme['id']} led_level.{role}"
 
 
 @pytest.mark.parametrize("theme", THEMES, ids=[t["id"] for t in THEMES])
@@ -67,4 +68,5 @@ def test_six_distinct_saturated_reds_and_a_fader_detent_for_every_theme():
     assert sorted(reds) == ["#85063f", "#ab0a1c", "#d63b09", "#db0001", "#ea7720", "#ff1a3c"]
     order = LIBRARY["fader_order"]
     assert sorted(order) == sorted([t["id"] for t in THEMES] + ["custom"])
-    assert len(THEMES) == 21 and len({t["family"] for t in THEMES}) == 8
+    assert len(THEMES) == 21
+    assert len({t["family"] for t in THEMES}) == 8
