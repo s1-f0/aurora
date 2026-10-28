@@ -44,6 +44,7 @@ this repo would ever have found it.
 | **5000** | external | container | voice service; no live repo refs | `ai-voice` |
 | **5001** | external | container | voice service (second port) | `ai-voice` |
 | **3090** | dev | app | Aurora website dev server (next dev); no bus or world data | `apps/web` |
+| **3091** | dev | app | Aurora docs dev server (next dev); no bus or world data | `apps/docs` |
 | **8790** | beta | app | beta console (was: sandbox) | `<beta checkout>/scripts/bifrost_ui.py` |
 | **8800** | alpha | app | alpha console | `<alpha checkout>/scripts/bifrost_ui.py` |
 | **16380** | beta | container | beta Redis, isolated from prod and alpha | `akashic-redis-beta` |

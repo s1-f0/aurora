@@ -191,6 +191,12 @@ PORT_REGISTRY = {
         "what": "Aurora website dev server (next dev); no bus or world data",
         "owner": "apps/web",
     },
+    3091: {
+        "world": "dev",
+        "bound_by": "app",
+        "what": "Aurora docs dev server (next dev); no bus or world data",
+        "owner": "apps/docs",
+    },
     # Found by check_ports on its FIRST run, and it was live-broken rather than merely
     # undocumented: model_roster's default_host said 11435, nothing listens there, and a real
     # call to an installed model failed with WinError 10061. Registering the port is what

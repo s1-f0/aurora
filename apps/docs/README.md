@@ -11,7 +11,7 @@ bun install
 bun run --filter docs dev
 ```
 
-Open http://localhost:3000 with your browser to see the result.
+Open http://localhost:3091 with your browser to see the result.
 
 ## Explore
 

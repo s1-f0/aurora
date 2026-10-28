@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "next build",
-    "dev": "next dev",
+    "dev": "next dev --port 3091",
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
     "check:docs": "node scripts/check-docs.mjs"
